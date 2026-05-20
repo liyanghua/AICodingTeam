@@ -1,0 +1,37 @@
+domain_id: web_monitoring
+title: Web Monitoring Domain Pack
+summary: Monitor a target web page for content changes, create a concise summary, and keep screenshot or structured evidence in the run directory.
+input_schema:
+  target_url: string
+  keyword: string
+  change_window: string
+  screenshot: boolean
+output_schema:
+  target_url: string
+  observed_at: string
+  summary: string
+  diff_status: string
+  evidence_paths: list
+defaults:
+  target_url: https://example.com
+  keyword: homepage
+  change_window: latest
+  screenshot: true
+frameworks:
+  - deterministic-fetch
+risk_rules:
+  - respect_robots_and_terms
+  - no_login_bypass
+  - no_paywall_bypass
+  - low_frequency_only
+  - store_evidence_locally
+evaluation_rules:
+  - target_reachable_or_failure_recorded
+  - summary_present
+  - diff_status_present
+  - evidence_paths_recorded
+  - runtime_reused_without_code_changes
+artifact_contract:
+  primary_output: final_report.md
+  verifier_mode: artifact_presence
+  result_schema: WebMonitorResult

@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Any
+
+from tests.test_team_models import DOMAIN_YAML, TEAM_YAML, _field, _load_with_model
+
+
+def _load_specs(temp_dir: Path) -> tuple[Any, Any]:
+    from growth_dev.team.models import DomainSpec, TeamSpec
+
+    team_path = temp_dir / "team.yaml"
+    domain_path = temp_dir / "domain.yaml"
+    team_path.write_text(TEAM_YAML, encoding="utf-8")
+    domain_path.write_text(DOMAIN_YAML, encoding="utf-8")
+    return _load_with_model(TeamSpec, team_path), _load_with_model(DomainSpec, domain_path)
+
+
+def _new_runtime(team_spec: Any, domain_spec: Any, runs_dir: Path) -> Any:
+    from growth_dev.team.runtime import TeamRuntime
+
+    try:
+        return TeamRuntime(team_spec=team_spec, domain_spec=domain_spec, runs_dir=runs_dir)
+    except TypeError:
+        return TeamRuntime(team_spec, domain_spec, runs_dir)
+
+
+def _check_gate(runtime: Any, run_dir: Path, gate_id: str) -> None:
+    for method_name in ("check_gate", "enforce_gate", "run_gate"):
+        method = getattr(runtime, method_name, None)
+        if method is not None:
+            method(run_dir, gate_id)
+            return
+    raise AssertionError("TeamRuntime needs a public gate-checking method")
+
+
+class TeamRuntimeTests(unittest.TestCase):
+    def test_gate_fails_when_required_artifact_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+            run_dir = root / "run"
+            run_dir.mkdir()
+            (run_dir / "prd.md").write_text("# PRD\n", encoding="utf-8")
+            (run_dir / "tech_spec.md").write_text("# Technical Spec\n", encoding="utf-8")
+            (run_dir / "ui_spec.md").write_text("# UI Spec\n", encoding="utf-8")
+
+            with self.assertRaises(Exception) as raised:
+                _check_gate(runtime, run_dir, "before_coding")
+
+        self.assertIn("eval.md", str(raised.exception))
+
+    def test_gate_passes_when_all_required_artifacts_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+            run_dir = root / "run"
+            run_dir.mkdir()
+            for name in ("prd.md", "tech_spec.md", "ui_spec.md", "eval.md"):
+                (run_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+            _check_gate(runtime, run_dir, "before_coding")
+
+    def test_team_run_record_round_trips_through_dict(self) -> None:
+        from growth_dev.team.models import AgentRun, TeamRunRecord
+
+        agent_run = AgentRun(
+            agent_id="product",
+            status="completed",
+            started_at="2026-05-20T00:00:00Z",
+            finished_at="2026-05-20T00:00:01Z",
+            risk_events=[],
+            output_paths=["prd.md"],
+        )
+        record = TeamRunRecord(
+            run_id="team-run-1",
+            domain_id="xhs_browser_benchmark",
+            brief="对比 5 个浏览器自动化框架完成小红书采集任务",
+            status="completed",
+            started_at="2026-05-20T00:00:00Z",
+            finished_at="2026-05-20T00:00:09Z",
+            agent_runs=[agent_run],
+            output_paths=["final_report.md"],
+            risk_events=[],
+            run_dir="runs/team-run-1",
+        )
+
+        payload = record.to_dict()
+        restored = TeamRunRecord.from_dict(payload)
+
+        self.assertEqual(_field(restored, "run_id"), "team-run-1")
+        self.assertEqual(_field(restored, "domain_id"), "xhs_browser_benchmark")
+        self.assertEqual(_field(restored, "status"), "completed")
+        self.assertEqual(_field(_field(restored, "agent_runs")[0], "output_paths"), ["prd.md"])
+
+
+if __name__ == "__main__":
+    unittest.main()

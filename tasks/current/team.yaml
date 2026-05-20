@@ -1,0 +1,23 @@
+team_id: ai_native_engineering_team
+agents:
+  - id: orchestrator
+    outputs: [task.yaml, context.md]
+  - id: product
+    outputs: [prd.md]
+  - id: architect
+    outputs: [tech_spec.md]
+  - id: ux
+    outputs: [ui_spec.md]
+  - id: qa
+    outputs: [eval.md]
+  - id: coder
+    outputs: [coding_prompt.md, code_run_record.json]
+  - id: reviewer
+    outputs: [review_report.md]
+  - id: verifier
+    outputs: [test_report.md]
+  - id: publisher
+    outputs: [final_report.md]
+gates:
+  before_coding: [prd.md, tech_spec.md, ui_spec.md, eval.md]
+  before_publish: [review_report.md, test_report.md]

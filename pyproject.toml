@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "growth-dev"
+version = "0.1.0"
+description = "AI-native browser automation benchmark harness for XHS-style collection tasks"
+readme = "README.md"
+requires-python = ">=3.14"
+
+[project.scripts]
+growth-dev = "growth_dev.cli:main"
+
+[tool.setuptools]
+packages = ["growth_dev", "growth_dev.adapters", "growth_dev.team"]

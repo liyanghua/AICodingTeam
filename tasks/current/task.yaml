@@ -1,0 +1,19 @@
+{
+  "task_id": "xhs-framework-benchmark",
+  "title": "XHS browser framework benchmark harness",
+  "keyword": "露营",
+  "top_n": 20,
+  "candidate_pool": 100,
+  "max_comments_per_note": 500,
+  "mode": "headed_low_frequency",
+  "profile_dir": ".local/browser-profiles/xhs",
+  "frameworks": [
+    "playwright-mcp",
+    "stagehand",
+    "skyvern",
+    "hyperagent",
+    "browser-use"
+  ],
+  "base_url": "http://127.0.0.1:8787",
+  "suite": "pilot"
+}

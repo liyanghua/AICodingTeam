@@ -1,0 +1,53 @@
+domain_id: xhs_browser_benchmark
+title: XHS Browser Framework Benchmark
+summary: Compare five browser automation frameworks against the same XHS style collection task using manual login, low frequency execution, shared schemas, and explicit risk gates.
+input_schema:
+  keyword: string
+  top_n: integer
+  candidate_pool: integer
+  max_comments_per_note: integer
+  mode: string
+  profile_dir: string
+  frameworks: list
+output_schema:
+  note_id: string
+  url: string
+  title: string
+  body: string
+  author: object
+  counts: object
+  media: list
+  comments: list
+  extraction_meta: object
+defaults:
+  keyword: 露营
+  top_n: 20
+  candidate_pool: 100
+  max_comments_per_note: 500
+  mode: headed_low_frequency
+  profile_dir: .local/browser-profiles/xhs
+frameworks:
+  - playwright-mcp
+  - stagehand
+  - skyvern
+  - hyperagent
+  - browser-use
+risk_rules:
+  - manual_login_only
+  - no_captcha_bypass
+  - no_fingerprint_spoofing
+  - no_proxy_rotation
+  - no_private_api_reverse_engineering
+  - pause_on_verification_challenge
+evaluation_rules:
+  - schema_validity
+  - extraction_completeness
+  - stability_success_rate
+  - risk_event_count
+  - elapsed_time
+  - manual_intervention_count
+  - framework_availability
+artifact_contract:
+  primary_output: final_report.md
+  verifier_mode: xhs_mock_benchmark
+  result_schema: XhsNote
