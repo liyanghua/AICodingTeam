@@ -12,6 +12,11 @@ The framework-specific runners are scaffolded as integration points and can be w
 ```bash
 python -m growth_dev team init --domain xhs_browser_benchmark
 python -m growth_dev team run --brief "对比 5 个浏览器自动化框架完成小红书采集任务"
+python -m growth_dev team run \
+  --executor codex \
+  --model gpt-5.3-codex \
+  --reasoning-effort medium \
+  --brief "实现一个新的 domain pack"
 python -m growth_dev team status --run-id <run-id>
 python -m growth_dev team report --run-id <run-id>
 
@@ -36,6 +41,28 @@ The `team` command turns a single brief into a gated artifact pipeline:
 - `publisher`: `final_report.md`
 
 Runs are written to `runs/<run_id>/`. Domain packs live under `domains/`; `xhs_browser_benchmark` is the first domain and `web_monitoring` proves the runtime can be reused without changing orchestration code.
+
+## Codex executor
+
+`team run` defaults to the deterministic file-based agents. Add `--executor codex` to let the `coder` stage run `codex exec`, the `reviewer` stage run `codex review --uncommitted`, and the `verifier` stage run deterministic verification commands in the isolated worktree.
+
+The Codex executor writes replayable context into `runs/<run_id>/codex/`:
+
+- `codex_prompt.md`: compact machine prompt for `codex exec`
+- `state_summary.md`: run state, allowed paths, verification commands, risk rules, and previous attempt summary
+- `codex_response_schema.json`: required final JSON schema
+- `last_message.json`: schema-constrained Codex final response
+- `diff.patch` and `git_status.txt`: implementation evidence from the worktree
+- `reviewer_stdout.log` and `verification_record.json`: review and verification evidence
+
+Use `--inputs-json` to narrow scope and verification:
+
+```bash
+python -m growth_dev team run \
+  --executor codex \
+  --brief "给 web_monitoring 增加截图证据" \
+  --inputs-json '{"allowed_paths":["growth_dev/","tests/"],"verification_commands":["python3 -m unittest discover -s tests -v"]}'
+```
 
 ## Safety
 

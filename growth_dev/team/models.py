@@ -224,6 +224,7 @@ class AgentRun:
     risk_events: list[str] = field(default_factory=list)
     output_paths: list[str] = field(default_factory=list)
     message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
@@ -235,6 +236,7 @@ class AgentRun:
             risk_events=[str(item) for item in data.get("risk_events", [])],
             output_paths=[str(item) for item in data.get("output_paths", [])],
             message=str(data.get("message", "")),
+            metadata=dict(data.get("metadata") or {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -257,6 +259,8 @@ class TeamRunRecord:
     artifacts: dict[str, str] = field(default_factory=dict)
     output_paths: list[str] = field(default_factory=list)
     risk_events: list[str] = field(default_factory=list)
+    executor: str = "deterministic"
+    executor_config: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
@@ -275,6 +279,8 @@ class TeamRunRecord:
             artifacts={str(key): str(value) for key, value in data.get("artifacts", {}).items()},
             output_paths=[str(item) for item in data.get("output_paths", [])],
             risk_events=[str(item) for item in data.get("risk_events", [])],
+            executor=str(data.get("executor", "deterministic")),
+            executor_config=dict(data.get("executor_config") or {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -293,6 +299,8 @@ class TeamRunRecord:
             "artifacts": self.artifacts,
             "output_paths": self.output_paths,
             "risk_events": self.risk_events,
+            "executor": self.executor,
+            "executor_config": self.executor_config,
         }
 
     def add_agent_run(self, agent_run: AgentRun) -> None:

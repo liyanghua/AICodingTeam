@@ -75,6 +75,11 @@ def _build_parser() -> argparse.ArgumentParser:
     team_run.add_argument("--runs-dir", default="runs")
     team_run.add_argument("--run-id", default=None)
     team_run.add_argument("--inputs-json", default="")
+    team_run.add_argument("--executor", choices=["deterministic", "codex"], default="deterministic")
+    team_run.add_argument("--model", default="gpt-5.3-codex")
+    team_run.add_argument("--reasoning-effort", default="medium")
+    team_run.add_argument("--codex-binary", default="codex")
+    team_run.add_argument("--repo-root", default=".")
     team_run.set_defaults(func=_cmd_team_run)
 
     team_status = team_sub.add_parser("status", help="Show a team run record status")
@@ -225,6 +230,11 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
         args.domain,
         domains_dir=Path(args.domains_dir),
         runs_dir=Path(args.runs_dir),
+        repo_root=Path(args.repo_root),
+        executor=args.executor,
+        codex_binary=args.codex_binary,
+        codex_model=args.model,
+        codex_reasoning_effort=args.reasoning_effort,
     )
     record = runtime.run(args.brief, inputs=inputs, run_id=args.run_id)
     print(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))

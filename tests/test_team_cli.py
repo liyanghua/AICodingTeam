@@ -36,6 +36,7 @@ class TeamCliTests(unittest.TestCase):
         examples = [
             ["team", "init", "--domain", "xhs_browser_benchmark"],
             ["team", "run", "--brief", "对比 5 个浏览器自动化框架完成小红书采集任务"],
+            ["team", "run", "--brief", "接入 Codex", "--executor", "codex", "--model", "gpt-5.3-codex", "--reasoning-effort", "medium"],
             ["team", "status", "--run-id", "team-run-1"],
             ["team", "report", "--run-id", "team-run-1"],
         ]

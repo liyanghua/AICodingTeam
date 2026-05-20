@@ -1,0 +1,762 @@
+from __future__ import annotations
+
+import json
+import shlex
+import shutil
+import subprocess
+from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+from pathlib import Path
+from typing import Any
+
+from ..utils import ensure_dir, now_iso, read_json, write_json
+
+
+REQUIRED_CODEX_RESPONSE_FIELDS = ["summary", "files_changed", "tests_run", "risk_events", "blockers", "next_action"]
+
+CODEX_RESPONSE_SCHEMA: dict[str, Any] = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "additionalProperties": False,
+    "required": REQUIRED_CODEX_RESPONSE_FIELDS,
+    "properties": {
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+        "tests_run": {"type": "array", "items": {"type": "string"}},
+        "risk_events": {"type": "array", "items": {"type": "string"}},
+        "blockers": {"type": "array", "items": {"type": "string"}},
+        "next_action": {"type": "string"},
+    },
+}
+
+DEFAULT_ALLOWED_PATHS = ["growth_dev/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md"]
+DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
+UPSTREAM_CONTEXT_ARTIFACTS = ["task.yaml", "context.md", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "AGENTS.md"]
+
+IMPLEMENTATION_RISK_PATTERNS = [
+    "2captcha",
+    "anti-captcha",
+    "anticaptcha",
+    "captcha_solver",
+    "solve_captcha",
+    "puppeteer-extra-plugin-stealth",
+    "undetected_chromedriver",
+    "undetected-chromedriver",
+    "fingerprint spoof",
+    "fingerprint_spoof",
+    "proxy rotation",
+    "proxy_pool",
+    "anti-detect",
+    "antidetect",
+    "x-sign",
+    "private api reverse",
+]
+
+
+@dataclass(slots=True)
+class CodexExecutorConfig:
+    binary: str = "codex"
+    model: str = "gpt-5.3-codex"
+    reasoning_effort: str = "medium"
+    sandbox: str = "workspace-write"
+    approval_policy: str = "never"
+    timeout_seconds: int = 7200
+    extra_add_dirs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class CodexPromptBundle:
+    stage: str
+    prompt_path: Path
+    state_summary_path: Path
+    output_schema_path: Path
+    output_last_message_path: Path
+    stdout_path: Path
+    stderr_path: Path
+    command_path: Path
+    prompt_hash: str
+    state_hash: str
+    allowed_paths: list[str] = field(default_factory=list)
+    verification_commands: list[str] = field(default_factory=list)
+
+    def relative_paths(self, run_dir: Path) -> list[str]:
+        return [
+            _relative_to(self.prompt_path, run_dir),
+            _relative_to(self.state_summary_path, run_dir),
+            _relative_to(self.output_schema_path, run_dir),
+            _relative_to(self.output_last_message_path, run_dir),
+            _relative_to(self.stdout_path, run_dir),
+            _relative_to(self.stderr_path, run_dir),
+            _relative_to(self.command_path, run_dir),
+        ]
+
+
+@dataclass(slots=True)
+class CodexStageResult:
+    status: str
+    output_paths: list[str]
+    risk_events: list[str] = field(default_factory=list)
+    message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def build_codex_exec_command(
+    config: CodexExecutorConfig,
+    *,
+    worktree_dir: Path,
+    run_dir: Path,
+    output_schema_path: Path,
+    output_last_message_path: Path,
+) -> list[str]:
+    command = _codex_base_command(config, worktree_dir=worktree_dir, run_dir=run_dir)
+    command.extend(
+        [
+            "exec",
+            "--json",
+            "--output-last-message",
+            str(output_last_message_path),
+            "--output-schema",
+            str(output_schema_path),
+            "-",
+        ]
+    )
+    return command
+
+
+def build_codex_review_command(
+    config: CodexExecutorConfig,
+    *,
+    worktree_dir: Path,
+    run_dir: Path,
+    title: str,
+) -> list[str]:
+    command = _codex_base_command(config, worktree_dir=worktree_dir, run_dir=run_dir)
+    command.extend(["review", "--uncommitted", "--title", title, "-"])
+    return command
+
+
+class CodexExecutor:
+    def __init__(
+        self,
+        config: CodexExecutorConfig | None = None,
+        *,
+        repo_root: Path,
+        run_dir: Path,
+    ) -> None:
+        self.config = config or CodexExecutorConfig()
+        self.repo_root = Path(repo_root)
+        self.run_dir = Path(run_dir)
+        self.codex_dir = ensure_dir(self.run_dir / "codex")
+        self.worktree_dir = self.run_dir / "worktree"
+
+    def write_prompt_bundle(self, stage: str, context: Any) -> CodexPromptBundle:
+        ensure_dir(self.codex_dir)
+        allowed_paths = _allowed_paths(context)
+        verification_commands = _verification_commands(context)
+        state_text = _build_state_summary(stage, context, allowed_paths, verification_commands, self.worktree_dir)
+        prompt_text = _build_prompt(stage, context, state_text, allowed_paths, verification_commands)
+
+        prefix = "codex" if stage == "coder" else f"codex_{stage}"
+        prompt_path = self.codex_dir / f"{prefix}_prompt.md"
+        state_summary_path = self.codex_dir / ("state_summary.md" if stage == "coder" else f"{stage}_state_summary.md")
+        output_schema_path = self.codex_dir / "codex_response_schema.json"
+        output_last_message_path = self.codex_dir / ("last_message.json" if stage == "coder" else f"{stage}_last_message.json")
+        stdout_path = self.codex_dir / ("stdout.jsonl" if stage == "coder" else f"{stage}_stdout.log")
+        stderr_path = self.codex_dir / ("stderr.log" if stage == "coder" else f"{stage}_stderr.log")
+        command_path = self.codex_dir / ("command.json" if stage == "coder" else f"{stage}_command.json")
+
+        prompt_path.write_text(prompt_text, encoding="utf-8")
+        state_summary_path.write_text(state_text, encoding="utf-8")
+        write_json(output_schema_path, CODEX_RESPONSE_SCHEMA)
+        output_last_message_path.write_text("", encoding="utf-8")
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+
+        bundle = CodexPromptBundle(
+            stage=stage,
+            prompt_path=prompt_path,
+            state_summary_path=state_summary_path,
+            output_schema_path=output_schema_path,
+            output_last_message_path=output_last_message_path,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            command_path=command_path,
+            prompt_hash=_sha256_text(prompt_text),
+            state_hash=_sha256_text(state_text),
+            allowed_paths=allowed_paths,
+            verification_commands=verification_commands,
+        )
+        prompt_bundle_path = self.codex_dir / ("prompt_bundle.json" if stage == "coder" else f"{stage}_prompt_bundle.json")
+        write_json(
+            prompt_bundle_path,
+            {
+                "stage": stage,
+                "prompt_path": _relative_to(prompt_path, self.run_dir),
+                "state_summary_path": _relative_to(state_summary_path, self.run_dir),
+                "output_schema_path": _relative_to(output_schema_path, self.run_dir),
+                "prompt_hash": bundle.prompt_hash,
+                "state_hash": bundle.state_hash,
+                "allowed_paths": allowed_paths,
+                "verification_commands": verification_commands,
+                "created_at": now_iso(),
+            },
+        )
+        return bundle
+
+    def run_coder(self, context: Any) -> CodexStageResult:
+        bundle = self.write_prompt_bundle("coder", context)
+        human_prompt = _human_coding_prompt(context, bundle, self.worktree_dir)
+        output_paths = [context.write_text("coding_prompt.md", human_prompt)]
+        output_paths.extend(bundle.relative_paths(self.run_dir))
+
+        if not self._binary_available():
+            record = self._failure_record("coder", bundle, "codex_binary_missing", extra={"binary": self.config.binary})
+            output_paths.append(context.write_json("code_run_record.json", record))
+            return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+
+        try:
+            worktree_dir = self.prepare_worktree()
+        except Exception as exc:  # noqa: BLE001 - persisted in run artifacts for offline inspection.
+            record = self._failure_record("coder", bundle, f"worktree_prepare_failed:{type(exc).__name__}:{exc}")
+            output_paths.append(context.write_json("code_run_record.json", record))
+            return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+
+        command = build_codex_exec_command(
+            self.config,
+            worktree_dir=worktree_dir,
+            run_dir=self.run_dir,
+            output_schema_path=bundle.output_schema_path,
+            output_last_message_path=bundle.output_last_message_path,
+        )
+        write_json(bundle.command_path, {"command": command, "cwd": str(worktree_dir), "created_at": now_iso()})
+        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path)
+
+        response, validation_events = _read_codex_response(bundle.output_last_message_path)
+        changed_files = _changed_files(worktree_dir)
+        diff_path, status_path = _write_diff_artifacts(worktree_dir, self.codex_dir)
+        risk_events = _string_list(response.get("risk_events", []))
+        risk_events.extend(validation_events)
+        risk_events.extend(_scan_implementation_risks(diff_path.read_text(encoding="utf-8") if diff_path.exists() else ""))
+        blockers = _string_list(response.get("blockers", []))
+        if completed.returncode != 0:
+            risk_events.append(f"codex_exit_code:{completed.returncode}")
+            blockers.append(f"codex exited with {completed.returncode}")
+        if not changed_files:
+            blockers.append("no_changed_files")
+
+        status = "completed" if not risk_events and not blockers else "failed"
+        files_changed = sorted(set(changed_files + _string_list(response.get("files_changed", []))))
+        record = {
+            "agent": "coder",
+            "executor": "codex",
+            "status": status,
+            "run_id": context.run_id,
+            "domain_id": context.domain.domain_id,
+            "model": self.config.model,
+            "reasoning_effort": self.config.reasoning_effort,
+            "worktree_path": str(worktree_dir),
+            "summary": str(response.get("summary", "")) or "Codex coding run finished without a structured summary.",
+            "files_changed": files_changed,
+            "tests_run": _string_list(response.get("tests_run", [])),
+            "verification_commands": bundle.verification_commands,
+            "risk_events": risk_events,
+            "blockers": blockers,
+            "next_action": str(response.get("next_action", "")),
+            "prompt_hash": bundle.prompt_hash,
+            "state_hash": bundle.state_hash,
+            "exit_code": completed.returncode,
+            "artifacts": {
+                "prompt": _relative_to(bundle.prompt_path, self.run_dir),
+                "state_summary": _relative_to(bundle.state_summary_path, self.run_dir),
+                "last_message": _relative_to(bundle.output_last_message_path, self.run_dir),
+                "stdout": _relative_to(bundle.stdout_path, self.run_dir),
+                "stderr": _relative_to(bundle.stderr_path, self.run_dir),
+                "diff": _relative_to(diff_path, self.run_dir),
+                "status": _relative_to(status_path, self.run_dir),
+                "command": _relative_to(bundle.command_path, self.run_dir),
+            },
+        }
+        output_paths.extend([_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)])
+        output_paths.append(context.write_json("code_run_record.json", record))
+        return CodexStageResult(status, _dedupe(output_paths), risk_events, record["summary"], record)
+
+    def run_reviewer(self, context: Any) -> CodexStageResult:
+        bundle = self.write_prompt_bundle("reviewer", context)
+        output_paths = bundle.relative_paths(self.run_dir)
+        worktree_dir = self.worktree_dir
+        risk_events: list[str] = []
+        if not _is_git_worktree(worktree_dir):
+            risk_events.append("codex_worktree_missing")
+            report = _review_report_text(context, "", [], risk_events, "Codex worktree is missing; no diff was reviewed.")
+            output_paths.append(context.write_text("review_report.md", report))
+            return CodexStageResult("failed", _dedupe(output_paths), risk_events, "Codex worktree is missing", {"risk_events": risk_events})
+        if not self._binary_available():
+            risk_events.append("codex_binary_missing")
+            report = _review_report_text(context, "", _changed_files(worktree_dir), risk_events, f"Codex binary not found: {self.config.binary}")
+            output_paths.append(context.write_text("review_report.md", report))
+            return CodexStageResult("failed", _dedupe(output_paths), risk_events, "Codex binary missing", {"risk_events": risk_events})
+
+        changed_files = _changed_files(worktree_dir)
+        if not changed_files:
+            risk_events.append("codex_review_no_diff")
+        diff_path, status_path = _write_diff_artifacts(worktree_dir, self.codex_dir)
+        risk_events.extend(_scan_implementation_risks(diff_path.read_text(encoding="utf-8") if diff_path.exists() else ""))
+
+        command = build_codex_review_command(
+            self.config,
+            worktree_dir=worktree_dir,
+            run_dir=self.run_dir,
+            title=f"{context.run_id} code review",
+        )
+        write_json(bundle.command_path, {"command": command, "cwd": str(worktree_dir), "created_at": now_iso()})
+        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path)
+        review_text = bundle.stdout_path.read_text(encoding="utf-8")
+        if completed.returncode != 0:
+            risk_events.append(f"codex_review_exit_code:{completed.returncode}")
+
+        report = _review_report_text(context, review_text, changed_files, risk_events, "")
+        output_paths.extend([_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)])
+        output_paths.append(context.write_text("review_report.md", report))
+        metadata = {
+            "executor": "codex",
+            "status": "completed" if not risk_events else "failed",
+            "changed_files": changed_files,
+            "risk_events": risk_events,
+            "exit_code": completed.returncode,
+            "artifacts": {
+                "review_stdout": _relative_to(bundle.stdout_path, self.run_dir),
+                "review_stderr": _relative_to(bundle.stderr_path, self.run_dir),
+                "command": _relative_to(bundle.command_path, self.run_dir),
+                "diff": _relative_to(diff_path, self.run_dir),
+            },
+        }
+        return CodexStageResult(metadata["status"], _dedupe(output_paths), risk_events, "codex review finished", metadata)
+
+    def run_verifier(self, context: Any) -> CodexStageResult:
+        worktree_dir = self.worktree_dir
+        commands = _verification_commands(context)
+        risk_events: list[str] = []
+        output_paths: list[str] = []
+        if not _is_git_worktree(worktree_dir):
+            risk_events.append("codex_worktree_missing")
+            report = "# Test Report\n\n- Status: failed\n- Error: Codex worktree is missing.\n"
+            output_paths.append(context.write_text("test_report.md", report))
+            return CodexStageResult("failed", output_paths, risk_events, "Codex worktree is missing", {"risk_events": risk_events})
+
+        results: list[dict[str, Any]] = []
+        for index, command in enumerate(commands, start=1):
+            stdout_path = self.codex_dir / f"verify_{index}_stdout.log"
+            stderr_path = self.codex_dir / f"verify_{index}_stderr.log"
+            started_at = now_iso()
+            try:
+                completed = subprocess.run(
+                    shlex.split(command),
+                    cwd=worktree_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=self.config.timeout_seconds,
+                    check=False,
+                )
+                stdout_path.write_text(completed.stdout, encoding="utf-8")
+                stderr_path.write_text(completed.stderr, encoding="utf-8")
+                exit_code = completed.returncode
+            except Exception as exc:  # noqa: BLE001 - persisted into verification artifacts.
+                stdout_path.write_text("", encoding="utf-8")
+                stderr_path.write_text(f"{type(exc).__name__}: {exc}", encoding="utf-8")
+                exit_code = 1
+
+            if exit_code != 0:
+                risk_events.append(f"verification_failed:{command}:{exit_code}")
+            output_paths.extend([_relative_to(stdout_path, self.run_dir), _relative_to(stderr_path, self.run_dir)])
+            results.append(
+                {
+                    "command": command,
+                    "exit_code": exit_code,
+                    "started_at": started_at,
+                    "finished_at": now_iso(),
+                    "stdout_path": _relative_to(stdout_path, self.run_dir),
+                    "stderr_path": _relative_to(stderr_path, self.run_dir),
+                }
+            )
+
+        verification_record = {
+            "executor": "codex",
+            "status": "completed" if not risk_events else "failed",
+            "worktree_path": str(worktree_dir),
+            "commands": results,
+            "risk_events": risk_events,
+        }
+        verification_record_path = self.codex_dir / "verification_record.json"
+        write_json(verification_record_path, verification_record)
+        output_paths.append(_relative_to(verification_record_path, self.run_dir))
+
+        report_lines = [
+            "# Test Report",
+            "",
+            "## Codex Worktree Verification",
+            f"- Status: {verification_record['status']}",
+            f"- Worktree: {worktree_dir}",
+            "",
+            "## Commands",
+        ]
+        for result in results:
+            report_lines.append(f"- `{result['command']}` -> exit `{result['exit_code']}`")
+        if risk_events:
+            report_lines.extend(["", "## Risk Events", *[f"- {event}" for event in risk_events]])
+
+        output_paths.append(context.write_text("test_report.md", "\n".join(report_lines).rstrip() + "\n"))
+        return CodexStageResult(verification_record["status"], _dedupe(output_paths), risk_events, "verification finished", verification_record)
+
+    def prepare_worktree(self) -> Path:
+        if _is_git_worktree(self.worktree_dir):
+            return self.worktree_dir
+        ensure_dir(self.worktree_dir.parent)
+        if self.worktree_dir.exists() and any(self.worktree_dir.iterdir()):
+            raise RuntimeError(f"Worktree path exists but is not a git worktree: {self.worktree_dir}")
+        _run_checked(["git", "rev-parse", "--show-toplevel"], cwd=self.repo_root)
+        _run_checked(["git", "worktree", "add", "--detach", str(self.worktree_dir), "HEAD"], cwd=self.repo_root)
+        return self.worktree_dir
+
+    def _binary_available(self) -> bool:
+        return Path(self.config.binary).exists() or shutil.which(self.config.binary) is not None
+
+    def _run_process(self, command: list[str], prompt_text: str, cwd: Path, stdout_path: Path, stderr_path: Path) -> subprocess.CompletedProcess[str]:
+        try:
+            completed = subprocess.run(
+                command,
+                input=prompt_text,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=self.config.timeout_seconds,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - subprocess failures are persisted as artifacts.
+            completed = subprocess.CompletedProcess(command, 1, "", f"{type(exc).__name__}: {exc}")
+        stdout_path.write_text(completed.stdout, encoding="utf-8")
+        stderr_path.write_text(completed.stderr, encoding="utf-8")
+        return completed
+
+    def _failure_record(self, stage: str, bundle: CodexPromptBundle, reason: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "agent": stage,
+            "executor": "codex",
+            "status": "failed",
+            "summary": reason,
+            "files_changed": [],
+            "tests_run": [],
+            "verification_commands": bundle.verification_commands,
+            "risk_events": [reason],
+            "blockers": [reason],
+            "next_action": "fix_executor",
+            "prompt_hash": bundle.prompt_hash,
+            "state_hash": bundle.state_hash,
+            "model": self.config.model,
+            "reasoning_effort": self.config.reasoning_effort,
+            "artifacts": {
+                "prompt": _relative_to(bundle.prompt_path, self.run_dir),
+                "state_summary": _relative_to(bundle.state_summary_path, self.run_dir),
+                "stderr": _relative_to(bundle.stderr_path, self.run_dir),
+            },
+            **(extra or {}),
+        }
+
+
+def _codex_base_command(config: CodexExecutorConfig, *, worktree_dir: Path, run_dir: Path) -> list[str]:
+    command = [config.binary, "--cd", str(worktree_dir), "--add-dir", str(run_dir)]
+    for extra_dir in config.extra_add_dirs:
+        command.extend(["--add-dir", str(extra_dir)])
+    if config.sandbox:
+        command.extend(["--sandbox", config.sandbox])
+    if config.approval_policy:
+        command.extend(["--ask-for-approval", config.approval_policy])
+    if config.model:
+        command.extend(["-m", config.model])
+    if config.reasoning_effort:
+        command.extend(["-c", f'reasoning_effort="{config.reasoning_effort}"'])
+    return command
+
+
+def _allowed_paths(context: Any) -> list[str]:
+    inputs = getattr(context, "inputs", {}) or {}
+    domain = getattr(context, "domain", None)
+    metadata = getattr(domain, "metadata", {}) or {}
+    return _string_list(inputs.get("allowed_paths") or inputs.get("allowed_files") or metadata.get("allowed_paths") or metadata.get("allowed_files") or DEFAULT_ALLOWED_PATHS)
+
+
+def _verification_commands(context: Any) -> list[str]:
+    inputs = getattr(context, "inputs", {}) or {}
+    domain = getattr(context, "domain", None)
+    metadata = getattr(domain, "metadata", {}) or {}
+    return _string_list(inputs.get("verification_commands") or metadata.get("verification_commands") or DEFAULT_VERIFICATION_COMMANDS)
+
+
+def _build_state_summary(stage: str, context: Any, allowed_paths: list[str], verification_commands: list[str], worktree_dir: Path) -> str:
+    previous_record = _previous_code_record(context)
+    domain = getattr(context, "domain", None)
+    risk_rules = getattr(domain, "risk_rules", []) or []
+    evaluation_rules = getattr(domain, "evaluation_rules", []) or []
+    inputs = getattr(context, "inputs", {}) or {}
+    lines = [
+        "# State Summary",
+        "",
+        f"- Stage: `{stage}`",
+        f"- Run: `{context.run_id}`",
+        f"- Domain: `{domain.domain_id if domain else ''}`",
+        f"- Brief: {context.brief}",
+        f"- Worktree: `{worktree_dir}`",
+        "",
+        "## Inputs",
+        "```json",
+        json.dumps(inputs, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Upstream Artifacts",
+        *_artifact_excerpt_lines(context),
+        "",
+        "## Allowed Files",
+        *[f"- {path}" for path in allowed_paths],
+        "",
+        "## Verification Commands",
+        *[f"- `{command}`" for command in verification_commands],
+        "",
+        "## Risk Rules",
+        *[f"- {rule}" for rule in risk_rules],
+        "",
+        "## Evaluation Rules",
+        *[f"- {rule}" for rule in evaluation_rules],
+    ]
+    if previous_record:
+        lines.extend(
+            [
+                "",
+                "## Previous Attempt",
+                f"- Status: {previous_record.get('status', '')}",
+                f"- Summary: {previous_record.get('summary', '')}",
+                f"- Files changed: {', '.join(_string_list(previous_record.get('files_changed', []))) or 'none'}",
+                f"- Blockers: {', '.join(_string_list(previous_record.get('blockers', []))) or 'none'}",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _artifact_excerpt_lines(context: Any, max_chars: int = 1800) -> list[str]:
+    run_dir = Path(getattr(context, "run_dir", "."))
+    repo_root = Path(getattr(context, "repo_root", "."))
+    lines: list[str] = []
+    for name in UPSTREAM_CONTEXT_ARTIFACTS:
+        path = repo_root / name if name == "AGENTS.md" else run_dir / name
+        if not path.exists() or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "\n...[truncated]"
+        lines.extend([f"### {name}", "```text", text.rstrip(), "```", ""])
+    return lines or ["- No upstream artifacts found yet"]
+
+
+def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: list[str], verification_commands: list[str]) -> str:
+    role = "coding agent" if stage == "coder" else "code reviewer"
+    action = "Implement the requested vertical slice in the isolated worktree." if stage == "coder" else "Review the uncommitted diff in the isolated worktree."
+    return "\n".join(
+        [
+            f"# Codex {stage.title()} Prompt",
+            "",
+            f"You are the `{role}` for this Agent Team Runtime stage.",
+            action,
+            "",
+            "## Non-Negotiable Rules",
+            "- Use only the local repository and provided run artifacts as context.",
+            "- Do not rely on prior chat history.",
+            "- Keep the change scoped to the allowed files unless the task cannot be completed without a nearby supporting file.",
+            "- Do not implement captcha solving, fingerprint spoofing, proxy rotation, anti-detect behavior, private API reverse engineering, or platform security bypasses.",
+            "- Stop and report a blocker if the task would require a prohibited behavior.",
+            "",
+            "## Required Final Response",
+            "Return JSON that matches `codex/codex_response_schema.json` exactly.",
+            "",
+            "## State Summary",
+            state_summary.rstrip(),
+            "",
+            "## Acceptance Criteria",
+            "- The requested change is represented by a git diff in the worktree.",
+            "- The final response names changed files and verification commands actually run.",
+            "- Risk events and blockers are explicit and not hidden in prose.",
+            "",
+            "## Allowed Files",
+            *[f"- {path}" for path in allowed_paths],
+            "",
+            "## Verification Commands",
+            *[f"- `{command}`" for command in verification_commands],
+        ]
+    ).rstrip() + "\n"
+
+
+def _human_coding_prompt(context: Any, bundle: CodexPromptBundle, worktree_dir: Path) -> str:
+    return "\n".join(
+        [
+            "# Coding Prompt",
+            "",
+            f"Executor: `codex`",
+            f"Run: `{context.run_id}`",
+            f"Domain: `{context.domain.domain_id}`",
+            f"Worktree: `{worktree_dir}`",
+            "",
+            "The machine prompt bundle is stored separately so the coding context is replayable and compact.",
+            "",
+            "## Prompt Bundle",
+            f"- Prompt: `{_relative_to(bundle.prompt_path, context.run_dir)}`",
+            f"- State summary: `{_relative_to(bundle.state_summary_path, context.run_dir)}`",
+            f"- Output schema: `{_relative_to(bundle.output_schema_path, context.run_dir)}`",
+            f"- Prompt hash: `{bundle.prompt_hash}`",
+            "",
+            "## Safety",
+            "Manual login only when browser automation is involved. Stop on verification challenges and never bypass platform security.",
+        ]
+    ).rstrip() + "\n"
+
+
+def _review_report_text(context: Any, review_text: str, changed_files: list[str], risk_events: list[str], fallback: str) -> str:
+    lines = [
+        "# Review Report",
+        "",
+        "## Executor",
+        "- `codex review --uncommitted`",
+        "",
+        "## Changed Files",
+        *([f"- {path}" for path in changed_files] if changed_files else ["- No changed files detected"]),
+        "",
+        "## Codex Review",
+        review_text.rstrip() or fallback or "No review output was produced.",
+    ]
+    if risk_events:
+        lines.extend(["", "## Risk Events", *[f"- {event}" for event in risk_events]])
+    lines.extend(["", "## Safety Boundary", *[f"- {rule}" for rule in getattr(context.domain, "risk_rules", [])]])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _read_codex_response(path: Path) -> tuple[dict[str, Any], list[str]]:
+    if not path.exists() or not path.read_text(encoding="utf-8").strip():
+        return {}, ["codex_missing_last_message"]
+    try:
+        payload = read_json(path)
+    except Exception as exc:  # noqa: BLE001 - turns schema failure into an explicit risk event.
+        return {}, [f"codex_response_parse_failed:{type(exc).__name__}"]
+    events: list[str] = []
+    for field_name in REQUIRED_CODEX_RESPONSE_FIELDS:
+        if field_name not in payload:
+            events.append(f"codex_response_missing_field:{field_name}")
+    return payload if isinstance(payload, dict) else {}, events
+
+
+def _changed_files(worktree_dir: Path) -> list[str]:
+    if not _is_git_worktree(worktree_dir):
+        return []
+    files: set[str] = set()
+    for command in (
+        ["git", "diff", "--name-only"],
+        ["git", "diff", "--cached", "--name-only"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        completed = subprocess.run(command, cwd=worktree_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        if completed.returncode == 0:
+            files.update(line.strip() for line in completed.stdout.splitlines() if line.strip())
+    return sorted(files)
+
+
+def _write_diff_artifacts(worktree_dir: Path, codex_dir: Path) -> tuple[Path, Path]:
+    diff_path = codex_dir / "diff.patch"
+    status_path = codex_dir / "git_status.txt"
+    if not _is_git_worktree(worktree_dir):
+        diff_path.write_text("", encoding="utf-8")
+        status_path.write_text("worktree missing\n", encoding="utf-8")
+        return diff_path, status_path
+
+    diff = _git_text(["git", "diff", "--patch", "--binary"], cwd=worktree_dir)
+    cached = _git_text(["git", "diff", "--cached", "--patch", "--binary"], cwd=worktree_dir)
+    untracked_patches = []
+    for file_name in _git_lines(["git", "ls-files", "--others", "--exclude-standard"], cwd=worktree_dir):
+        file_path = worktree_dir / file_name
+        if file_path.is_file() and file_path.stat().st_size <= 200_000:
+            untracked_patches.append(_git_text_allow_diff(["git", "diff", "--no-index", "--", "/dev/null", file_name], cwd=worktree_dir))
+    status = _git_text(["git", "status", "--short"], cwd=worktree_dir)
+    diff_path.write_text("\n".join(item for item in [diff, cached, *untracked_patches] if item).strip() + "\n", encoding="utf-8")
+    status_path.write_text(status, encoding="utf-8")
+    return diff_path, status_path
+
+
+def _scan_implementation_risks(text: str) -> list[str]:
+    lowered = text.lower()
+    return [f"prohibited_implementation_pattern:{pattern}" for pattern in IMPLEMENTATION_RISK_PATTERNS if pattern in lowered]
+
+
+def _previous_code_record(context: Any) -> dict[str, Any] | None:
+    path = Path(context.run_dir) / "code_run_record.json"
+    if not path.exists():
+        return None
+    try:
+        payload = read_json(path)
+    except Exception:  # noqa: BLE001 - previous state is optional context.
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _sha256_text(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _relative_to(path: Path, run_dir: Path) -> str:
+    try:
+        return path.resolve().relative_to(run_dir.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def _is_git_worktree(path: Path) -> bool:
+    return path.exists() and ((path / ".git").exists() or (path / ".git").is_file())
+
+
+def _run_checked(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+
+
+def _git_text(command: list[str], cwd: Path) -> str:
+    completed = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    return completed.stdout if completed.returncode == 0 else completed.stderr
+
+
+def _git_text_allow_diff(command: list[str], cwd: Path) -> str:
+    completed = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    return completed.stdout or completed.stderr
+
+
+def _git_lines(command: list[str], cwd: Path) -> list[str]:
+    completed = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    if completed.returncode != 0:
+        return []
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]

@@ -18,6 +18,9 @@ class AgentContext:
     domain: DomainSpec
     inputs: dict[str, Any]
     record: TeamRunRecord
+    repo_root: Path = field(default_factory=Path.cwd)
+    executor: str = "deterministic"
+    codex_config: Any | None = None
 
     def artifact_path(self, name: str) -> Path:
         path = Path(name)
@@ -46,6 +49,7 @@ class AgentOutput:
     risk_events: list[str] = field(default_factory=list)
     status: str = "completed"
     message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 AgentHandler = Callable[[AgentSpec, AgentContext], AgentOutput]
@@ -75,6 +79,7 @@ def run_deterministic_agent(agent: AgentSpec, context: AgentContext) -> AgentRun
         risk_events=output.risk_events,
         output_paths=output.output_paths,
         message=output.message,
+        metadata=output.metadata,
     )
 
 
@@ -267,6 +272,9 @@ def _qa(agent: AgentSpec, context: AgentContext) -> AgentOutput:
 
 
 def _coder(agent: AgentSpec, context: AgentContext) -> AgentOutput:
+    if context.executor == "codex":
+        return _codex_stage_output("coder", context)
+
     text = _lines(
         "# Coding Prompt",
         "",
@@ -309,6 +317,9 @@ def _coder(agent: AgentSpec, context: AgentContext) -> AgentOutput:
 
 
 def _reviewer(agent: AgentSpec, context: AgentContext) -> AgentOutput:
+    if context.executor == "codex":
+        return _codex_stage_output("reviewer", context)
+
     missing_live = _missing_live_frameworks(context.domain)
     lines = [
         "# Review Report",
@@ -342,6 +353,9 @@ def _reviewer(agent: AgentSpec, context: AgentContext) -> AgentOutput:
 
 
 def _verifier(agent: AgentSpec, context: AgentContext) -> AgentOutput:
+    if context.executor == "codex":
+        return _codex_stage_output("verifier", context)
+
     risk_events: list[str] = []
     sections = [
         "# Test Report",
@@ -523,6 +537,28 @@ def _missing_live_frameworks(domain: DomainSpec) -> list[str]:
         for framework in frameworks
         if framework != "mock"
     ]
+
+
+def _codex_stage_output(stage: str, context: AgentContext) -> AgentOutput:
+    from .codex import CodexExecutor, CodexExecutorConfig
+
+    config = context.codex_config if isinstance(context.codex_config, CodexExecutorConfig) else CodexExecutorConfig()
+    executor = CodexExecutor(config, repo_root=context.repo_root, run_dir=context.run_dir)
+    if stage == "coder":
+        result = executor.run_coder(context)
+    elif stage == "reviewer":
+        result = executor.run_reviewer(context)
+    elif stage == "verifier":
+        result = executor.run_verifier(context)
+    else:  # pragma: no cover - guarded by caller.
+        raise ValueError(f"Unsupported Codex stage: {stage}")
+    return AgentOutput(
+        output_paths=result.output_paths,
+        risk_events=result.risk_events,
+        status=result.status,
+        message=result.message,
+        metadata=result.metadata,
+    )
 
 
 AGENT_HANDLERS: dict[str, AgentHandler] = {

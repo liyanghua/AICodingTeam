@@ -14,6 +14,8 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Keep the team runtime domain-agnostic. New tasks should add `domains/<domain_id>/` packs instead of rewriting orchestration code.
 - Treat agents as fixed input/output workers, not free-form chat participants.
 - Keep adapters isolated. Each framework gets its own runner and does not share mutable browser state.
+- When `--executor codex` is used, keep orchestration deterministic: Codex may implement and review code, but context must come from run artifacts rather than prior chat history.
+- Codex coding runs must use an isolated git worktree and persist prompt, state summary, schema, stdout/stderr, diff, review, and verification records under `runs/<run_id>/codex/`.
 
 ## File Ownership
 
@@ -31,6 +33,8 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Keep modules focused and small.
 - Use deterministic fixture generation for tests.
 - Keep v1 team agents deterministic and file-driven.
+- Keep Codex prompts narrow: include the goal, allowed paths, current state summary, failed tests, acceptance criteria, stop conditions, and verification commands.
+- Codex final responses must be structured JSON with `summary`, `files_changed`, `tests_run`, `risk_events`, `blockers`, and `next_action`.
 - Do not add unrelated refactors.
 
 ## Testing Rules
@@ -38,6 +42,7 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Unit tests must cover count parsing, fixture generation, schema validation, and scoring.
 - Integration tests must cover the mock site and report generation.
 - Team runtime tests must cover team/domain parsing, gates, run record serialization, CLI entrypoints, and domain reuse.
+- Codex executor tests must cover command construction, prompt bundle generation, missing binary failures, fake Codex execution, review output, and worktree verification.
 - If a real framework package is missing, the adapter must fail clearly and mark itself unavailable.
 
 ## Review Rules

@@ -5,6 +5,7 @@ from typing import Any
 
 from ..utils import ensure_dir, now_iso, timestamp_slug, write_json
 from .agents import AgentContext, run_deterministic_agent
+from .codex import CodexExecutorConfig
 from .domain import load_domain_spec, load_team_spec
 from .models import AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 
@@ -74,6 +75,11 @@ class TeamRuntime:
         *,
         team_spec: TeamSpec | None = None,
         domain_spec=None,
+        repo_root: Path | None = None,
+        executor: str = "deterministic",
+        codex_binary: str = "codex",
+        codex_model: str = "gpt-5.3-codex",
+        codex_reasoning_effort: str = "medium",
     ) -> None:
         self.team = team if team is not None else team_spec
         self.domain = domain if domain is not None else domain_spec
@@ -81,7 +87,16 @@ class TeamRuntime:
             raise ValueError("team spec is required")
         if self.domain is None:
             raise ValueError("domain spec is required")
+        if executor not in {"deterministic", "codex"}:
+            raise ValueError(f"Unsupported executor: {executor}")
         self.runs_dir = runs_dir
+        self.repo_root = Path(repo_root or Path.cwd())
+        self.executor = executor
+        self.codex_config = CodexExecutorConfig(
+            binary=codex_binary,
+            model=codex_model,
+            reasoning_effort=codex_reasoning_effort,
+        )
 
     @classmethod
     def from_files(
@@ -90,11 +105,21 @@ class TeamRuntime:
         domain_id: str,
         domains_dir: Path = Path("domains"),
         runs_dir: Path = Path("runs"),
+        repo_root: Path | None = None,
+        executor: str = "deterministic",
+        codex_binary: str = "codex",
+        codex_model: str = "gpt-5.3-codex",
+        codex_reasoning_effort: str = "medium",
     ) -> "TeamRuntime":
         return cls(
             team=load_team_spec(team_path),
             domain=load_domain_spec(domain_id, domains_dir=domains_dir),
             runs_dir=runs_dir,
+            repo_root=repo_root,
+            executor=executor,
+            codex_binary=codex_binary,
+            codex_model=codex_model,
+            codex_reasoning_effort=codex_reasoning_effort,
         )
 
     @classmethod
@@ -104,11 +129,21 @@ class TeamRuntime:
         domains_dir: Path = Path("domains"),
         runs_dir: Path = Path("runs"),
         team: TeamSpec | None = None,
+        repo_root: Path | None = None,
+        executor: str = "deterministic",
+        codex_binary: str = "codex",
+        codex_model: str = "gpt-5.3-codex",
+        codex_reasoning_effort: str = "medium",
     ) -> "TeamRuntime":
         return cls(
             team=team or default_team_spec(),
             domain=load_domain_spec(domain_id, domains_dir=domains_dir),
             runs_dir=runs_dir,
+            repo_root=repo_root,
+            executor=executor,
+            codex_binary=codex_binary,
+            codex_model=codex_model,
+            codex_reasoning_effort=codex_reasoning_effort,
         )
 
     def run(
@@ -129,6 +164,8 @@ class TeamRuntime:
             run_dir=run_dir,
             started_at=now_iso(),
             inputs=dict(inputs or {}),
+            executor=self.executor,
+            executor_config=self.codex_config.to_dict() if self.executor == "codex" else {},
         )
         self._write_record(record)
         write_json(run_dir / "team_spec.json", self.team.to_dict())
@@ -150,6 +187,9 @@ class TeamRuntime:
                 domain=self.domain,
                 inputs=dict(inputs or {}),
                 record=record,
+                repo_root=self.repo_root,
+                executor=self.executor,
+                codex_config=self.codex_config,
             )
             agent_run = run_deterministic_agent(agent, agent_context)
             missing_outputs = self._missing_declared_outputs(agent, run_dir)
