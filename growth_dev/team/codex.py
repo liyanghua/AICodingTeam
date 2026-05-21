@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -54,6 +55,36 @@ IMPLEMENTATION_RISK_PATTERNS = [
 
 
 @dataclass(slots=True)
+class CodexProviderConfig:
+    name: str
+    base_url: str
+    env_key: str
+    secret_value: str = ""
+    wire_api: str = "responses"
+    requires_openai_auth: bool = False
+
+    def command_overrides(self) -> list[str]:
+        return [
+            f'model_provider="{self.name}"',
+            f'model_providers.{self.name}.name="{self.name}"',
+            f'model_providers.{self.name}.base_url="{self.base_url}"',
+            f'model_providers.{self.name}.env_key="{self.env_key}"',
+            f'model_providers.{self.name}.wire_api="{self.wire_api}"',
+            f"model_providers.{self.name}.requires_openai_auth={str(self.requires_openai_auth).lower()}",
+        ]
+
+    def redacted_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "base_url": self.base_url,
+            "env_key": self.env_key,
+            "wire_api": self.wire_api,
+            "requires_openai_auth": self.requires_openai_auth,
+            "secret_configured": bool(self.secret_value),
+        }
+
+
+@dataclass(slots=True)
 class CodexExecutorConfig:
     binary: str = "codex"
     model: str = "gpt-5.3-codex"
@@ -62,9 +93,13 @@ class CodexExecutorConfig:
     approval_policy: str = "never"
     timeout_seconds: int = 7200
     extra_add_dirs: list[str] = field(default_factory=list)
+    provider: CodexProviderConfig | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if self.provider:
+            payload["provider"] = self.provider.redacted_dict()
+        return payload
 
 
 @dataclass(slots=True)
@@ -117,9 +152,9 @@ def build_codex_exec_command(
             "exec",
             "--json",
             "--output-last-message",
-            str(output_last_message_path),
+            str(output_last_message_path.resolve()),
             "--output-schema",
-            str(output_schema_path),
+            str(output_schema_path.resolve()),
             "-",
         ]
     )
@@ -134,8 +169,29 @@ def build_codex_review_command(
     title: str,
 ) -> list[str]:
     command = _codex_base_command(config, worktree_dir=worktree_dir, run_dir=run_dir)
-    command.extend(["review", "--uncommitted", "--title", title, "-"])
+    command.extend(["review", "--uncommitted", "--title", title])
     return command
+
+
+def load_aicodemirror_provider_from_env(env_path: Path) -> CodexProviderConfig:
+    values = _read_env_file(env_path)
+    base_url = values.get("aicodemirror_base_url") or values.get("AICODEMIRROR_BASE_URL")
+    secret = values.get("aicodemirror_key") or values.get("AICODEMIRROR_KEY")
+    missing = []
+    if not base_url:
+        missing.append("aicodemirror_base_url")
+    if not secret:
+        missing.append("aicodemirror_key")
+    if missing:
+        raise ValueError(f"Missing aicodemirror provider setting(s) in {env_path}: {', '.join(missing)}")
+    return CodexProviderConfig(
+        name="aicodemirror",
+        base_url=base_url,
+        env_key="AICODEMIRROR_KEY",
+        secret_value=secret,
+        wire_api="responses",
+        requires_openai_auth=False,
+    )
 
 
 class CodexExecutor:
@@ -147,8 +203,8 @@ class CodexExecutor:
         run_dir: Path,
     ) -> None:
         self.config = config or CodexExecutorConfig()
-        self.repo_root = Path(repo_root)
-        self.run_dir = Path(run_dir)
+        self.repo_root = Path(repo_root).resolve()
+        self.run_dir = Path(run_dir).resolve()
         self.codex_dir = ensure_dir(self.run_dir / "codex")
         self.worktree_dir = self.run_dir / "worktree"
 
@@ -257,6 +313,7 @@ class CodexExecutor:
             "domain_id": context.domain.domain_id,
             "model": self.config.model,
             "reasoning_effort": self.config.reasoning_effort,
+            "provider": self.config.provider.redacted_dict() if self.config.provider else {"name": "default"},
             "worktree_path": str(worktree_dir),
             "summary": str(response.get("summary", "")) or "Codex coding run finished without a structured summary.",
             "files_changed": files_changed,
@@ -326,6 +383,7 @@ class CodexExecutor:
             "changed_files": changed_files,
             "risk_events": risk_events,
             "exit_code": completed.returncode,
+            "provider": self.config.provider.redacted_dict() if self.config.provider else {"name": "default"},
             "artifacts": {
                 "review_stdout": _relative_to(bundle.stdout_path, self.run_dir),
                 "review_stderr": _relative_to(bundle.stderr_path, self.run_dir),
@@ -360,6 +418,7 @@ class CodexExecutor:
                     text=True,
                     timeout=self.config.timeout_seconds,
                     check=False,
+                    env=self._process_env(),
                 )
                 stdout_path.write_text(completed.stdout, encoding="utf-8")
                 stderr_path.write_text(completed.stderr, encoding="utf-8")
@@ -435,12 +494,21 @@ class CodexExecutor:
                 text=True,
                 timeout=self.config.timeout_seconds,
                 check=False,
+                env=self._process_env(),
             )
         except Exception as exc:  # noqa: BLE001 - subprocess failures are persisted as artifacts.
             completed = subprocess.CompletedProcess(command, 1, "", f"{type(exc).__name__}: {exc}")
         stdout_path.write_text(completed.stdout, encoding="utf-8")
         stderr_path.write_text(completed.stderr, encoding="utf-8")
         return completed
+
+    def _process_env(self) -> dict[str, str] | None:
+        if not self.config.provider:
+            return None
+        env = dict(os.environ)
+        if self.config.provider.secret_value:
+            env[self.config.provider.env_key] = self.config.provider.secret_value
+        return env
 
     def _failure_record(self, stage: str, bundle: CodexPromptBundle, reason: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -458,6 +526,7 @@ class CodexExecutor:
             "state_hash": bundle.state_hash,
             "model": self.config.model,
             "reasoning_effort": self.config.reasoning_effort,
+            "provider": self.config.provider.redacted_dict() if self.config.provider else {"name": "default"},
             "artifacts": {
                 "prompt": _relative_to(bundle.prompt_path, self.run_dir),
                 "state_summary": _relative_to(bundle.state_summary_path, self.run_dir),
@@ -468,9 +537,9 @@ class CodexExecutor:
 
 
 def _codex_base_command(config: CodexExecutorConfig, *, worktree_dir: Path, run_dir: Path) -> list[str]:
-    command = [config.binary, "--cd", str(worktree_dir), "--add-dir", str(run_dir)]
+    command = [config.binary, "--cd", str(worktree_dir.resolve()), "--add-dir", str(run_dir.resolve())]
     for extra_dir in config.extra_add_dirs:
-        command.extend(["--add-dir", str(extra_dir)])
+        command.extend(["--add-dir", str(Path(extra_dir).resolve())])
     if config.sandbox:
         command.extend(["--sandbox", config.sandbox])
     if config.approval_policy:
@@ -479,7 +548,26 @@ def _codex_base_command(config: CodexExecutorConfig, *, worktree_dir: Path, run_
         command.extend(["-m", config.model])
     if config.reasoning_effort:
         command.extend(["-c", f'reasoning_effort="{config.reasoning_effort}"'])
+    if config.provider:
+        for override in config.provider.command_overrides():
+            command.extend(["-c", override])
     return command
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Env file not found: {path}")
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            values[key] = value
+    return values
 
 
 def _allowed_paths(context: Any) -> list[str]:

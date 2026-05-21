@@ -79,6 +79,8 @@ def _build_parser() -> argparse.ArgumentParser:
     team_run.add_argument("--model", default="gpt-5.3-codex")
     team_run.add_argument("--reasoning-effort", default="medium")
     team_run.add_argument("--codex-binary", default="codex")
+    team_run.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
+    team_run.add_argument("--env-file", default=".env")
     team_run.add_argument("--repo-root", default=".")
     team_run.set_defaults(func=_cmd_team_run)
 
@@ -235,6 +237,8 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
         codex_binary=args.codex_binary,
         codex_model=args.model,
         codex_reasoning_effort=args.reasoning_effort,
+        codex_provider=args.codex_provider,
+        codex_env_file=Path(args.env_file),
     )
     record = runtime.run(args.brief, inputs=inputs, run_id=args.run_id)
     print(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))

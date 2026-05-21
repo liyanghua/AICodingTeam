@@ -5,9 +5,11 @@ from .codex import (
     CodexExecutor,
     CodexExecutorConfig,
     CodexPromptBundle,
+    CodexProviderConfig,
     CodexStageResult,
     build_codex_exec_command,
     build_codex_review_command,
+    load_aicodemirror_provider_from_env,
 )
 from .domain import load_domain_spec, load_team_spec
 from .models import AgentRun, AgentSpec, DomainSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
@@ -27,9 +29,11 @@ __all__ = [
     "CodexExecutor",
     "CodexExecutorConfig",
     "CodexPromptBundle",
+    "CodexProviderConfig",
     "CodexStageResult",
     "build_codex_exec_command",
     "build_codex_review_command",
+    "load_aicodemirror_provider_from_env",
     "check_gate",
     "default_team_spec",
     "enforce_gate",

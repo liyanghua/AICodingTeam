@@ -5,7 +5,7 @@ from typing import Any
 
 from ..utils import ensure_dir, now_iso, timestamp_slug, write_json
 from .agents import AgentContext, run_deterministic_agent
-from .codex import CodexExecutorConfig
+from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
 from .domain import load_domain_spec, load_team_spec
 from .models import AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 
@@ -80,6 +80,8 @@ class TeamRuntime:
         codex_binary: str = "codex",
         codex_model: str = "gpt-5.3-codex",
         codex_reasoning_effort: str = "medium",
+        codex_provider: str = "default",
+        codex_env_file: Path | None = None,
     ) -> None:
         self.team = team if team is not None else team_spec
         self.domain = domain if domain is not None else domain_spec
@@ -92,10 +94,19 @@ class TeamRuntime:
         self.runs_dir = runs_dir
         self.repo_root = Path(repo_root or Path.cwd())
         self.executor = executor
+        provider_config = None
+        if codex_provider == "aicodemirror":
+            env_path = Path(codex_env_file or ".env")
+            if not env_path.is_absolute():
+                env_path = self.repo_root / env_path
+            provider_config = load_aicodemirror_provider_from_env(env_path)
+        elif codex_provider not in {"default", ""}:
+            raise ValueError(f"Unsupported codex provider: {codex_provider}")
         self.codex_config = CodexExecutorConfig(
             binary=codex_binary,
             model=codex_model,
             reasoning_effort=codex_reasoning_effort,
+            provider=provider_config,
         )
 
     @classmethod
@@ -110,6 +121,8 @@ class TeamRuntime:
         codex_binary: str = "codex",
         codex_model: str = "gpt-5.3-codex",
         codex_reasoning_effort: str = "medium",
+        codex_provider: str = "default",
+        codex_env_file: Path | None = None,
     ) -> "TeamRuntime":
         return cls(
             team=load_team_spec(team_path),
@@ -120,6 +133,8 @@ class TeamRuntime:
             codex_binary=codex_binary,
             codex_model=codex_model,
             codex_reasoning_effort=codex_reasoning_effort,
+            codex_provider=codex_provider,
+            codex_env_file=codex_env_file,
         )
 
     @classmethod
@@ -134,6 +149,8 @@ class TeamRuntime:
         codex_binary: str = "codex",
         codex_model: str = "gpt-5.3-codex",
         codex_reasoning_effort: str = "medium",
+        codex_provider: str = "default",
+        codex_env_file: Path | None = None,
     ) -> "TeamRuntime":
         return cls(
             team=team or default_team_spec(),
@@ -144,6 +161,8 @@ class TeamRuntime:
             codex_binary=codex_binary,
             codex_model=codex_model,
             codex_reasoning_effort=codex_reasoning_effort,
+            codex_provider=codex_provider,
+            codex_env_file=codex_env_file,
         )
 
     def run(

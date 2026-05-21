@@ -78,6 +78,73 @@ sys.exit(2)
     return script
 
 
+def _write_provider_asserting_fake_codex(path: Path, expected_key: str) -> Path:
+    script = path / "codex-provider"
+    script.write_text(
+        f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+required_fragments = [
+    'model_provider="aicodemirror"',
+    'model_providers.aicodemirror.env_key="AICODEMIRROR_KEY"',
+    'model_providers.aicodemirror.wire_api="responses"',
+    'model_providers.aicodemirror.requires_openai_auth=false',
+]
+missing = [fragment for fragment in required_fragments if fragment not in args]
+if missing:
+    print("missing provider config: " + ",".join(missing), file=sys.stderr)
+    sys.exit(4)
+if os.environ.get("AICODEMIRROR_KEY") != {expected_key!r}:
+    print("missing provider key env", file=sys.stderr)
+    sys.exit(5)
+
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    target = os.path.join(workspace, "growth_dev", "fake_target.py")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "a", encoding="utf-8") as handle:
+        handle.write("\\n# fake provider codex change\\n")
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {{
+        "summary": "fake provider codex implemented the requested change",
+        "files_changed": ["growth_dev/fake_target.py"],
+        "tests_run": ["python3 -c \\"print('ok')\\""],
+        "risk_events": [],
+        "blockers": [],
+        "next_action": "review",
+    }}
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({{"event": "exec.completed", "provider_env_present": True}}))
+    sys.exit(0)
+
+if "review" in args:
+    print("# Fake Provider Codex Review\\n\\nNo blocking issues found.")
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 class CodexExecutorTests(unittest.TestCase):
     def test_codex_exec_command_contains_context_controls(self) -> None:
         from growth_dev.team.codex import CodexExecutorConfig, build_codex_exec_command
@@ -101,6 +168,86 @@ class CodexExecutorTests(unittest.TestCase):
         self.assertIn("-m", command)
         self.assertIn("gpt-5.3-codex", command)
         self.assertIn("reasoning_effort=\"high\"", command)
+
+    def test_codex_exec_command_uses_absolute_paths(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig, build_codex_exec_command
+
+        command = build_codex_exec_command(
+            CodexExecutorConfig(binary="/tmp/codex"),
+            worktree_dir=Path("runs/demo-codex/worktree"),
+            run_dir=Path("runs/demo-codex"),
+            output_schema_path=Path("runs/demo-codex/codex/codex_response_schema.json"),
+            output_last_message_path=Path("runs/demo-codex/codex/last_message.json"),
+        )
+
+        self.assertTrue(Path(command[command.index("--cd") + 1]).is_absolute())
+        self.assertTrue(Path(command[command.index("--add-dir") + 1]).is_absolute())
+        self.assertTrue(Path(command[command.index("--output-last-message") + 1]).is_absolute())
+        self.assertTrue(Path(command[command.index("--output-schema") + 1]).is_absolute())
+
+    def test_load_aicodemirror_provider_from_env_file(self) -> None:
+        from growth_dev.team.codex import load_aicodemirror_provider_from_env
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "aicodemirror_base_url=https://provider.example/api/codex\n"
+                "aicodemirror_key=sk-ant-test-secret\n",
+                encoding="utf-8",
+            )
+
+            provider = load_aicodemirror_provider_from_env(env_path)
+
+        self.assertEqual(provider.name, "aicodemirror")
+        self.assertEqual(provider.base_url, "https://provider.example/api/codex")
+        self.assertEqual(provider.env_key, "AICODEMIRROR_KEY")
+        self.assertEqual(provider.secret_value, "sk-ant-test-secret")
+        self.assertEqual(provider.wire_api, "responses")
+        self.assertFalse(provider.requires_openai_auth)
+
+    def test_aicodemirror_provider_command_redacts_secret(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig, CodexProviderConfig, build_codex_exec_command
+
+        config = CodexExecutorConfig(
+            binary="/tmp/codex",
+            provider=CodexProviderConfig(
+                name="aicodemirror",
+                base_url="https://provider.example/api/codex",
+                env_key="AICODEMIRROR_KEY",
+                secret_value="sk-ant-test-secret",
+                wire_api="responses",
+                requires_openai_auth=False,
+            ),
+        )
+
+        command = build_codex_exec_command(
+            config,
+            worktree_dir=Path("/repo/worktree"),
+            run_dir=Path("/repo/runs/run-1"),
+            output_schema_path=Path("/repo/runs/run-1/codex/codex_response_schema.json"),
+            output_last_message_path=Path("/repo/runs/run-1/codex/last_message.json"),
+        )
+        command_text = "\n".join(command)
+
+        self.assertIn('model_provider="aicodemirror"', command)
+        self.assertIn('model_providers.aicodemirror.base_url="https://provider.example/api/codex"', command)
+        self.assertIn('model_providers.aicodemirror.env_key="AICODEMIRROR_KEY"', command)
+        self.assertIn('model_providers.aicodemirror.requires_openai_auth=false', command)
+        self.assertNotIn("sk-ant-test-secret", command_text)
+
+    def test_codex_review_command_does_not_pass_prompt_with_uncommitted(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig, build_codex_review_command
+
+        command = build_codex_review_command(
+            CodexExecutorConfig(binary="/tmp/codex"),
+            worktree_dir=Path("/repo/worktree"),
+            run_dir=Path("/repo/runs/run-1"),
+            title="run-1 code review",
+        )
+
+        self.assertIn("review", command)
+        self.assertIn("--uncommitted", command)
+        self.assertNotIn("-", command)
 
     def test_prompt_bundle_writes_state_summary_and_schema(self) -> None:
         from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
@@ -216,6 +363,56 @@ class CodexExecutorTests(unittest.TestCase):
             self.assertTrue(diff_exists)
             self.assertIn("Fake Codex Review", review_report)
             self.assertIn("python3 -c", test_report)
+
+    def test_team_runtime_aicodemirror_provider_uses_env_key_without_recording_secret(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            secret = "sk-ant-test-secret"
+            env_path = root / ".env"
+            env_path.write_text(
+                "aicodemirror_base_url=https://provider.example/api/codex\n"
+                f"aicodemirror_key={secret}\n",
+                encoding="utf-8",
+            )
+            fake_codex = _write_provider_asserting_fake_codex(root, secret)
+
+            runtime = TeamRuntime(
+                team=default_team_spec(),
+                domain=DomainSpec(domain_id="demo", summary="Demo coding domain", risk_rules=["manual_login_only"]),
+                runs_dir=root / "runs",
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.5",
+                codex_reasoning_effort="medium",
+                codex_provider="aicodemirror",
+                codex_env_file=env_path,
+            )
+            record = runtime.run(
+                "Implement a tiny change",
+                inputs={
+                    "allowed_paths": ["growth_dev/fake_target.py"],
+                    "verification_commands": ["python3 -c \"print('ok')\""],
+                },
+                run_id="run-1",
+            )
+
+            run_dir = root / "runs" / "run-1"
+            command_text = (run_dir / "codex" / "command.json").read_text(encoding="utf-8")
+            command_payload = json.loads(command_text)
+            code_record_text = (run_dir / "code_run_record.json").read_text(encoding="utf-8")
+            code_record = json.loads(code_record_text)
+
+            self.assertEqual(record.status, "completed")
+            self.assertIn('model_provider="aicodemirror"', command_payload["command"])
+            self.assertNotIn(secret, command_text)
+            self.assertNotIn(secret, code_record_text)
+            self.assertEqual(code_record["provider"]["name"], "aicodemirror")
+            self.assertEqual(code_record["provider"]["env_key"], "AICODEMIRROR_KEY")
 
 
 if __name__ == "__main__":
