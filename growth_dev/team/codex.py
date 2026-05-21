@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import threading
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -300,6 +301,7 @@ class CodexExecutor:
         if completed.returncode != 0:
             risk_events.append(f"codex_exit_code:{completed.returncode}")
             blockers.append(f"codex exited with {completed.returncode}")
+        failure_category = classify_codex_failure(completed.stderr, completed.returncode, "coder")
         if not changed_files:
             blockers.append("no_changed_files")
 
@@ -325,6 +327,7 @@ class CodexExecutor:
             "prompt_hash": bundle.prompt_hash,
             "state_hash": bundle.state_hash,
             "exit_code": completed.returncode,
+            "failure_category": failure_category,
             "artifacts": {
                 "prompt": _relative_to(bundle.prompt_path, self.run_dir),
                 "state_summary": _relative_to(bundle.state_summary_path, self.run_dir),
@@ -373,6 +376,7 @@ class CodexExecutor:
         review_text = bundle.stdout_path.read_text(encoding="utf-8")
         if completed.returncode != 0:
             risk_events.append(f"codex_review_exit_code:{completed.returncode}")
+        failure_category = classify_codex_failure(completed.stderr + "\n" + completed.stdout, completed.returncode, "reviewer")
 
         report = _review_report_text(context, review_text, changed_files, risk_events, "")
         output_paths.extend([_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)])
@@ -383,6 +387,7 @@ class CodexExecutor:
             "changed_files": changed_files,
             "risk_events": risk_events,
             "exit_code": completed.returncode,
+            "failure_category": failure_category,
             "provider": self.config.provider.redacted_dict() if self.config.provider else {"name": "default"},
             "artifacts": {
                 "review_stdout": _relative_to(bundle.stdout_path, self.run_dir),
@@ -430,11 +435,19 @@ class CodexExecutor:
 
             if exit_code != 0:
                 risk_events.append(f"verification_failed:{command}:{exit_code}")
+            failure_category = classify_codex_failure(
+                stderr_path.read_text(encoding="utf-8", errors="replace")
+                + "\n"
+                + stdout_path.read_text(encoding="utf-8", errors="replace"),
+                exit_code,
+                "verifier",
+            )
             output_paths.extend([_relative_to(stdout_path, self.run_dir), _relative_to(stderr_path, self.run_dir)])
             results.append(
                 {
                     "command": command,
                     "exit_code": exit_code,
+                    "failure_category": failure_category,
                     "started_at": started_at,
                     "finished_at": now_iso(),
                     "stdout_path": _relative_to(stdout_path, self.run_dir),
@@ -448,6 +461,7 @@ class CodexExecutor:
             "worktree_path": str(worktree_dir),
             "commands": results,
             "risk_events": risk_events,
+            "failure_category": next((item["failure_category"] for item in results if item.get("failure_category")), ""),
         }
         verification_record_path = self.codex_dir / "verification_record.json"
         write_json(verification_record_path, verification_record)
@@ -484,23 +498,75 @@ class CodexExecutor:
         return Path(self.config.binary).exists() or shutil.which(self.config.binary) is not None
 
     def _run_process(self, command: list[str], prompt_text: str, cwd: Path, stdout_path: Path, stderr_path: Path) -> subprocess.CompletedProcess[str]:
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 command,
-                input=prompt_text,
                 cwd=cwd,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.config.timeout_seconds,
-                check=False,
+                bufsize=1,
                 env=self._process_env(),
             )
         except Exception as exc:  # noqa: BLE001 - subprocess failures are persisted as artifacts.
             completed = subprocess.CompletedProcess(command, 1, "", f"{type(exc).__name__}: {exc}")
-        stdout_path.write_text(completed.stdout, encoding="utf-8")
-        stderr_path.write_text(completed.stderr, encoding="utf-8")
-        return completed
+            stderr_path.write_text(completed.stderr, encoding="utf-8")
+            return completed
+
+        def stream_output(stream, path: Path, chunks: list[str]) -> None:
+            if stream is None:
+                return
+            with path.open("a", encoding="utf-8") as handle:
+                with stream:
+                    while True:
+                        chunk = stream.readline()
+                        if chunk == "":
+                            break
+                        chunks.append(chunk)
+                        handle.write(chunk)
+                        handle.flush()
+
+        stdout_thread = threading.Thread(target=stream_output, args=(process.stdout, stdout_path, stdout_chunks), daemon=True)
+        stderr_thread = threading.Thread(target=stream_output, args=(process.stderr, stderr_path, stderr_chunks), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        try:
+            if process.stdin:
+                with process.stdin:
+                    process.stdin.write(prompt_text)
+            return_code = process.wait(timeout=self.config.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                pass
+            return_code = 1
+            message = f"TimeoutExpired: command exceeded {self.config.timeout_seconds} seconds\n"
+            stderr_chunks.append(message)
+            with stderr_path.open("a", encoding="utf-8") as handle:
+                handle.write(message)
+        except Exception as exc:  # noqa: BLE001 - subprocess failures are persisted as artifacts.
+            process.kill()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                pass
+            return_code = 1
+            message = f"{type(exc).__name__}: {exc}\n"
+            stderr_chunks.append(message)
+            with stderr_path.open("a", encoding="utf-8") as handle:
+                handle.write(message)
+
+        stdout_thread.join(timeout=1.0)
+        stderr_thread.join(timeout=1.0)
+        return subprocess.CompletedProcess(command, return_code, "".join(stdout_chunks), "".join(stderr_chunks))
 
     def _process_env(self) -> dict[str, str] | None:
         if not self.config.provider:
@@ -526,6 +592,7 @@ class CodexExecutor:
             "state_hash": bundle.state_hash,
             "model": self.config.model,
             "reasoning_effort": self.config.reasoning_effort,
+            "failure_category": classify_codex_failure(reason, 1, stage),
             "provider": self.config.provider.redacted_dict() if self.config.provider else {"name": "default"},
             "artifacts": {
                 "prompt": _relative_to(bundle.prompt_path, self.run_dir),
@@ -781,6 +848,53 @@ def _write_diff_artifacts(worktree_dir: Path, codex_dir: Path) -> tuple[Path, Pa
 def _scan_implementation_risks(text: str) -> list[str]:
     lowered = text.lower()
     return [f"prohibited_implementation_pattern:{pattern}" for pattern in IMPLEMENTATION_RISK_PATTERNS if pattern in lowered]
+
+
+def classify_codex_failure(text: str, exit_code: int, stage: str) -> str:
+    if exit_code == 0:
+        return ""
+    lowered = text.lower()
+    provider_markers = [
+        "401",
+        "403",
+        "unauthorized",
+        "forbidden",
+        "api key",
+        "invalid key",
+        "provider",
+        "rate limit",
+        "quota",
+        "base_url",
+        "connection",
+        "tls",
+        "timeout",
+    ]
+    cli_arg_markers = [
+        "unrecognized option",
+        "unexpected argument",
+        "invalid value",
+        "no such file or directory",
+        "os error 2",
+        "usage:",
+    ]
+    test_markers = [
+        "failed",
+        "failure",
+        "error:",
+        "traceback",
+        "assertionerror",
+        "pytest",
+        "unittest",
+    ]
+    if any(marker in lowered for marker in provider_markers):
+        return "provider_error"
+    if any(marker in lowered for marker in cli_arg_markers) or exit_code == 2:
+        return "codex_cli_args"
+    if stage == "reviewer":
+        return "review_failed"
+    if stage == "verifier" or any(marker in lowered for marker in test_markers):
+        return "test_failed"
+    return "codex_runtime_error"
 
 
 def _previous_code_record(context: Any) -> dict[str, Any] | None:

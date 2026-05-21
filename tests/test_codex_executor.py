@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -145,7 +146,38 @@ sys.exit(2)
     return script
 
 
+def _write_slow_fake_codex(path: Path) -> Path:
+    script = path / "codex-slow"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+import time
+
+sys.stdin.read()
+print("stdout-before-sleep", flush=True)
+print("stderr-before-sleep", file=sys.stderr, flush=True)
+time.sleep(2.0)
+print("stdout-after-sleep", flush=True)
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 class CodexExecutorTests(unittest.TestCase):
+    def test_codex_failure_category_distinguishes_provider_cli_review_and_test_errors(self) -> None:
+        from growth_dev.team.codex import classify_codex_failure
+
+        self.assertEqual(classify_codex_failure("401 Unauthorized: invalid api key", 1, "coder"), "provider_error")
+        self.assertEqual(classify_codex_failure("error: unrecognized option '--bad-flag'", 2, "coder"), "codex_cli_args")
+        self.assertEqual(classify_codex_failure("review model failed", 1, "reviewer"), "review_failed")
+        self.assertEqual(classify_codex_failure("FAILED tests/test_demo.py", 1, "verifier"), "test_failed")
+        self.assertEqual(classify_codex_failure("", 0, "coder"), "")
+
     def test_codex_exec_command_contains_context_controls(self) -> None:
         from growth_dev.team.codex import CodexExecutorConfig, build_codex_exec_command
 
@@ -413,6 +445,48 @@ class CodexExecutorTests(unittest.TestCase):
             self.assertNotIn(secret, code_record_text)
             self.assertEqual(code_record["provider"]["name"], "aicodemirror")
             self.assertEqual(code_record["provider"]["env_key"], "AICODEMIRROR_KEY")
+
+    def test_run_process_streams_stdout_and_stderr_before_exit(self) -> None:
+        from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_codex = _write_slow_fake_codex(root)
+            run_dir = root / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            stdout_path = run_dir / "stdout.log"
+            stderr_path = run_dir / "stderr.log"
+            executor = CodexExecutor(
+                CodexExecutorConfig(binary=str(fake_codex), timeout_seconds=10),
+                repo_root=root,
+                run_dir=run_dir,
+            )
+            command = [str(fake_codex)]
+            completed_holder: dict[str, subprocess.CompletedProcess[str]] = {}
+
+            import threading
+
+            thread = threading.Thread(
+                target=lambda: completed_holder.setdefault(
+                    "completed",
+                    executor._run_process(command, "prompt", root, stdout_path, stderr_path),  # noqa: SLF001 - stream behavior is the unit under test.
+                )
+            )
+            thread.start()
+            deadline = time.time() + 1.0
+            saw_streamed_line = False
+            while time.time() < deadline:
+                if stdout_path.exists() and "stdout-before-sleep" in stdout_path.read_text(encoding="utf-8", errors="replace"):
+                    saw_streamed_line = True
+                    break
+                time.sleep(0.05)
+            self.assertTrue(saw_streamed_line)
+            self.assertNotIn("completed", completed_holder)
+            thread.join(timeout=5.0)
+
+            self.assertIn("completed", completed_holder)
+            self.assertEqual(completed_holder["completed"].returncode, 0)
+            self.assertIn("stderr-before-sleep", stderr_path.read_text(encoding="utf-8", errors="replace"))
 
 
 if __name__ == "__main__":

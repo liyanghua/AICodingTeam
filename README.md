@@ -20,6 +20,20 @@ python -m growth_dev team run \
 python -m growth_dev team status --run-id <run-id>
 python -m growth_dev team report --run-id <run-id>
 
+python -m growth_dev code \
+  --domain web_monitoring \
+  --executor codex \
+  --codex-provider aicodemirror \
+  --env-file .env \
+  --codex-binary /opt/homebrew/bin/codex \
+  --model gpt-5.5 \
+  --brief "给 web_monitoring domain 增加截图证据字段，并补充对应测试"
+python -m growth_dev team status --run-id <run-id> --summary
+python -m growth_dev team diff --run-id <run-id>
+python -m growth_dev review --run-id <run-id>
+python -m growth_dev test --run-id <run-id>
+python -m growth_dev report --run-id <run-id>
+
 python -m growth_dev xhs init
 python -m growth_dev xhs serve-mock --port 8787
 python -m growth_dev xhs benchmark --suite mock
@@ -63,6 +77,18 @@ python -m growth_dev team run \
   --brief "给 web_monitoring 增加截图证据" \
   --inputs-json '{"allowed_paths":["growth_dev/","tests/"],"verification_commands":["python3 -m unittest discover -s tests -v"]}'
 ```
+
+### Week 2 coding loop
+
+The Week 2 loop is intentionally observable before it is automatically merged:
+
+- `growth-dev code` is a Codex-first alias for `team run --executor codex`.
+- `growth-dev team status --summary` shows the current/last agent, recent Codex stdout/stderr lines, risk events, and diff size.
+- `growth-dev team diff` prints the isolated worktree diff.
+- `growth-dev review`, `growth-dev test`, and `growth-dev report` print the stage artifacts without needing to inspect files manually.
+- `growth-dev team apply` only applies the worktree diff when the run is `completed`, no risk events are present, and the verifier stage completed.
+
+Project-level third-party provider config is read from `.env` only for the child Codex process. The key is injected as `AICODEMIRROR_KEY` and is not written to run artifacts.
 
 ## Safety
 
