@@ -7,7 +7,7 @@ from ..utils import ensure_dir, now_iso, timestamp_slug, write_json
 from .agents import AgentContext, run_deterministic_agent
 from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
 from .domain import load_domain_spec, load_team_spec
-from .models import AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
+from .models import AgentRun, AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 
 
 class GateFailure(RuntimeError):
@@ -210,13 +210,25 @@ class TeamRuntime:
                 executor=self.executor,
                 codex_config=self.codex_config,
             )
+            running_run = AgentRun(
+                agent_id=agent.id,
+                status="running",
+                started_at=now_iso(),
+                finished_at="",
+                risk_events=[],
+                output_paths=[],
+                message="agent started",
+            )
+            record.agent_runs.append(running_run)
+            self._write_record(record)
             agent_run = run_deterministic_agent(agent, agent_context)
             missing_outputs = self._missing_declared_outputs(agent, run_dir)
             if missing_outputs and agent_run.status == "completed":
                 agent_run.status = "failed"
                 agent_run.risk_events.append(f"missing_declared_outputs:{','.join(missing_outputs)}")
                 agent_run.message = f"Missing declared outputs: {', '.join(missing_outputs)}"
-            record.add_agent_run(agent_run)
+            record.agent_runs[-1] = agent_run
+            record.add_agent_run_outputs(agent_run)
             self._write_record(record)
 
             if agent_run.status != "completed":

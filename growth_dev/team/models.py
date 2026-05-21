@@ -305,6 +305,9 @@ class TeamRunRecord:
 
     def add_agent_run(self, agent_run: AgentRun) -> None:
         self.agent_runs.append(agent_run)
+        self.add_agent_run_outputs(agent_run)
+
+    def add_agent_run_outputs(self, agent_run: AgentRun) -> None:
         for output_path in agent_run.output_paths:
             self.artifacts[Path(output_path).name] = output_path
             if output_path not in self.output_paths:

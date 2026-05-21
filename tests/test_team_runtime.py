@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from tests.test_team_models import DOMAIN_YAML, TEAM_YAML, _field, _load_with_model
 
@@ -96,6 +98,42 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(_field(restored, "domain_id"), "xhs_browser_benchmark")
         self.assertEqual(_field(restored, "status"), "completed")
         self.assertEqual(_field(_field(restored, "agent_runs")[0], "output_paths"), ["prd.md"])
+
+    def test_runtime_persists_running_agent_before_stage_completes(self) -> None:
+        from growth_dev.team.models import AgentRun, AgentSpec, DomainSpec, TeamRunRecord
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "runs" / "run-1"
+            runtime = TeamRuntime(
+                team_spec=type(
+                    "Team",
+                    (),
+                    {
+                        "team_id": "team",
+                        "agents": [AgentSpec(id="slow", outputs=["slow.md"])],
+                        "gates": [],
+                        "to_dict": lambda self: {"team_id": "team", "agents": [], "gates": []},
+                        "gates_before": lambda self, agent_id: [],
+                    },
+                )(),
+                domain_spec=DomainSpec(domain_id="demo"),
+                runs_dir=root / "runs",
+            )
+
+            def slow_agent(agent, context):
+                payload = TeamRunRecord.from_dict(json.loads((run_dir / "team_run_record.json").read_text(encoding="utf-8")))
+                self.assertEqual(payload.agent_runs[-1].agent_id, "slow")
+                self.assertEqual(payload.agent_runs[-1].status, "running")
+                return AgentRun(agent_id="slow", status="completed", output_paths=[context.write_text("slow.md", "# Slow\n")], message="slow finished")
+
+            with patch("growth_dev.team.runtime.run_deterministic_agent", side_effect=slow_agent):
+                record = runtime.run("demo", run_id="run-1")
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(len(record.agent_runs), 1)
+        self.assertEqual(record.agent_runs[-1].status, "completed")
 
 
 if __name__ == "__main__":
