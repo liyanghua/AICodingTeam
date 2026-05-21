@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -62,6 +63,7 @@ class TeamCliTests(unittest.TestCase):
             ["team", "status", "--run-id", "team-run-1"],
             ["team", "status", "--run-id", "team-run-1", "--summary"],
             ["team", "report", "--run-id", "team-run-1"],
+            ["team", "watch", "--run-id", "team-run-1", "--once"],
             ["team", "diff", "--run-id", "team-run-1"],
             ["team", "apply", "--run-id", "team-run-1"],
         ]
@@ -270,6 +272,156 @@ class TeamCliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual((repo_root / "a.txt").read_text(encoding="utf-8"), "changed\n")
+
+    def test_code_alias_starts_background_run_and_writes_process_record(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            domains_dir = root / "domains"
+            runs_dir = root / "runs"
+            _write_domain_pack(domains_dir, "web_monitoring", WEB_MONITORING_DOMAIN_YAML)
+            run_id = "background-run-1"
+
+            with _captured_stdout() as output:
+                exit_code = main(
+                    [
+                        "code",
+                        "--run-id",
+                        run_id,
+                        "--domain",
+                        "web_monitoring",
+                        "--domains-dir",
+                        str(domains_dir),
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--brief",
+                        "后台运行测试",
+                        "--executor",
+                        "deterministic",
+                    ]
+                )
+            process_path = runs_dir / run_id / "process.json"
+            deadline = time.time() + 5
+            while time.time() < deadline and not (runs_dir / run_id / "team_run_record.json").exists():
+                time.sleep(0.05)
+
+            process_record = json.loads(process_path.read_text(encoding="utf-8"))
+            command_text = json.dumps(process_record, ensure_ascii=False)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Run started: background-run-1", output.getvalue())
+        self.assertIn("Watch: python -m growth_dev.cli team watch --run-id background-run-1", output.getvalue())
+        self.assertEqual(process_record["run_id"], run_id)
+        self.assertGreater(process_record["pid"], 0)
+        self.assertIn(process_record["status"], {"running", "completed"})
+        self.assertNotIn("sk-", command_text)
+
+    def test_team_watch_once_shows_events_gates_logs_and_next_actions(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "team-run-1"
+            codex_dir = run_dir / "codex"
+            codex_dir.mkdir(parents=True)
+            record = {
+                "run_id": "team-run-1",
+                "team_id": "ai_native_engineering_team",
+                "domain_id": "web_monitoring",
+                "brief": "demo",
+                "status": "completed",
+                "run_dir": str(run_dir),
+                "started_at": "2026-05-21T00:00:00+00:00",
+                "finished_at": "2026-05-21T00:00:05+00:00",
+                "agent_runs": [
+                    {"agent_id": "coder", "status": "completed", "started_at": "a", "finished_at": "b", "risk_events": [], "output_paths": [], "message": "", "metadata": {"failure_category": ""}},
+                    {"agent_id": "verifier", "status": "completed", "started_at": "c", "finished_at": "d", "risk_events": [], "output_paths": ["test_report.md"], "message": "", "metadata": {}},
+                ],
+                "gate_results": [
+                    {
+                        "gate_id": "before_coding",
+                        "status": "passed",
+                        "required_artifacts": ["prd.md"],
+                        "missing_artifacts": [],
+                        "checked_at": "now",
+                        "before_agent": "coder",
+                    }
+                ],
+                "risk_events": [],
+                "executor": "codex",
+            }
+            (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+            (run_dir / "process.json").write_text(
+                json.dumps({"run_id": "team-run-1", "pid": 12345, "status": "running", "run_dir": str(run_dir)}),
+                encoding="utf-8",
+            )
+            (run_dir / "events.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event": "run_started", "run_id": "team-run-1"}),
+                        json.dumps({"event": "agent_started", "agent_id": "coder"}),
+                        json.dumps({"event": "gate_checked", "gate_id": "before_coding", "status": "passed"}),
+                        json.dumps({"event": "run_completed", "run_id": "team-run-1"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (codex_dir / "stdout.jsonl").write_text("working\nfinished\n", encoding="utf-8")
+            (codex_dir / "diff.patch").write_text("+hello\n", encoding="utf-8")
+
+            with _captured_stdout() as output:
+                exit_code = main(["team", "watch", "--run-id", "team-run-1", "--runs-dir", str(runs_dir), "--once"])
+
+        text = output.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Run: team-run-1", text)
+        self.assertIn("before_coding: passed", text)
+        self.assertIn("agent_started", text)
+        self.assertIn("working", text)
+        self.assertIn("Process:", text)
+        self.assertIn("Apply gate:", text)
+        self.assertIn("Next actions:", text)
+
+    def test_team_status_summary_shows_failure_category(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "team-run-1"
+            run_dir.mkdir(parents=True)
+            record = {
+                "run_id": "team-run-1",
+                "team_id": "ai_native_engineering_team",
+                "domain_id": "web_monitoring",
+                "brief": "demo",
+                "status": "failed",
+                "run_dir": str(run_dir),
+                "agent_runs": [
+                    {
+                        "agent_id": "coder",
+                        "status": "failed",
+                        "started_at": "a",
+                        "finished_at": "b",
+                        "risk_events": ["codex_exit_code:1"],
+                        "output_paths": [],
+                        "message": "failed",
+                        "metadata": {"failure_category": "provider_error"},
+                    }
+                ],
+                "risk_events": ["codex_exit_code:1"],
+                "executor": "codex",
+            }
+            (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+
+            with _captured_stdout() as output:
+                exit_code = main(["team", "status", "--run-id", "team-run-1", "--runs-dir", str(runs_dir), "--summary"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Failure category: provider_error", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -187,6 +188,13 @@ class TeamRuntime:
             executor_config=self.codex_config.to_dict() if self.executor == "codex" else {},
         )
         self._write_record(record)
+        self._write_event(
+            record,
+            "run_started",
+            team_id=record.team_id,
+            domain_id=record.domain_id,
+            executor=record.executor,
+        )
         write_json(run_dir / "team_spec.json", self.team.to_dict())
         write_json(run_dir / "domain_spec.json", self.domain.to_dict())
 
@@ -196,6 +204,7 @@ class TeamRuntime:
                 record.status = "failed"
                 record.finished_at = now_iso()
                 self._write_record(record)
+                self._write_event(record, "run_failed", reason="gate_failed")
                 return record
 
             agent_context = AgentContext(
@@ -221,6 +230,7 @@ class TeamRuntime:
             )
             record.agent_runs.append(running_run)
             self._write_record(record)
+            self._write_event(record, "agent_started", agent_id=agent.id)
             agent_run = run_deterministic_agent(agent, agent_context)
             missing_outputs = self._missing_declared_outputs(agent, run_dir)
             if missing_outputs and agent_run.status == "completed":
@@ -230,16 +240,28 @@ class TeamRuntime:
             record.agent_runs[-1] = agent_run
             record.add_agent_run_outputs(agent_run)
             self._write_record(record)
+            self._write_event(
+                record,
+                "agent_completed",
+                agent_id=agent.id,
+                status=agent_run.status,
+                risk_events=agent_run.risk_events,
+                output_paths=agent_run.output_paths,
+            )
+            for event in agent_run.risk_events:
+                self._write_event(record, "risk_event", agent_id=agent.id, risk_event=event)
 
             if agent_run.status != "completed":
                 record.status = "failed"
                 record.finished_at = now_iso()
                 self._write_record(record)
+                self._write_event(record, "run_failed", reason=f"agent_failed:{agent.id}")
                 return record
 
         record.status = "completed"
         record.finished_at = now_iso()
         self._write_record(record)
+        self._write_event(record, "run_completed")
         return record
 
     def check_gate(self, run_dir: Path, gate_id: str) -> GateResult:
@@ -256,6 +278,15 @@ class TeamRuntime:
         for gate in self.team.gates_before(agent_id):
             result = check_gate(gate, record.run_dir)
             record.gate_results.append(result)
+            self._write_event(
+                record,
+                "gate_checked",
+                gate_id=result.gate_id,
+                status=result.status,
+                before_agent=result.before_agent,
+                required_artifacts=result.required_artifacts,
+                missing_artifacts=result.missing_artifacts,
+            )
             if result.status != "passed":
                 failed = True
         return failed
@@ -265,6 +296,16 @@ class TeamRuntime:
 
     def _write_record(self, record: TeamRunRecord) -> None:
         write_json(record.run_dir / "team_run_record.json", record.to_dict())
+
+    def _write_event(self, record: TeamRunRecord, event: str, **payload: Any) -> None:
+        event_payload = {
+            "event": event,
+            "run_id": record.run_id,
+            "created_at": now_iso(),
+            **payload,
+        }
+        with (record.run_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event_payload, ensure_ascii=False, sort_keys=True) + "\n")
 
     @staticmethod
     def load_record(run_id: str, runs_dir: Path = Path("runs")) -> TeamRunRecord:

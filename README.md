@@ -29,6 +29,7 @@ python -m growth_dev code \
   --model gpt-5.5 \
   --brief "给 web_monitoring domain 增加截图证据字段，并补充对应测试"
 python -m growth_dev team status --run-id <run-id> --summary
+python -m growth_dev team watch --run-id <run-id>
 python -m growth_dev team diff --run-id <run-id>
 python -m growth_dev review --run-id <run-id>
 python -m growth_dev test --run-id <run-id>
@@ -83,12 +84,16 @@ python -m growth_dev team run \
 The Week 2 loop is intentionally observable before it is automatically merged:
 
 - `growth-dev code` is a Codex-first alias for `team run --executor codex`.
+- `growth-dev code` starts in the background by default and immediately prints the run id, pid, watch command, and artifacts directory. Add `--foreground` when you want the old synchronous behavior.
+- `growth-dev team watch` follows the run record, events, gates, recent logs, diff summary, and next actions.
 - `growth-dev team status --summary` shows the current/last agent, recent Codex stdout/stderr lines, risk events, and diff size.
 - `growth-dev team diff` prints the isolated worktree diff.
 - `growth-dev review`, `growth-dev test`, and `growth-dev report` print the stage artifacts without needing to inspect files manually.
 - `growth-dev team apply` only applies the worktree diff when the run is `completed`, no risk events are present, and the verifier stage completed.
 
 Project-level third-party provider config is read from `.env` only for the child Codex process. The key is injected as `AICODEMIRROR_KEY` and is not written to run artifacts.
+
+Every team run also writes `events.jsonl` as a stage timeline and `process.json` for background process metadata.
 
 ## Safety
 

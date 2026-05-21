@@ -135,6 +135,49 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(len(record.agent_runs), 1)
         self.assertEqual(record.agent_runs[-1].status, "completed")
 
+    def test_runtime_writes_ordered_events_jsonl(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+
+            record = runtime.run("demo", run_id="run-1")
+
+            events_path = root / "runs" / "run-1" / "events.jsonl"
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(events[0]["event"], "run_started")
+        self.assertIn("agent_started", [event["event"] for event in events])
+        self.assertIn("gate_checked", [event["event"] for event in events])
+        self.assertEqual(events[-1]["event"], "run_completed")
+
+    def test_runtime_writes_failed_gate_event_with_missing_artifacts(self) -> None:
+        from growth_dev.team.models import AgentSpec, DomainSpec, GateSpec, TeamSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team = TeamSpec(
+                team_id="team",
+                agents=[AgentSpec(id="coder", outputs=["coding_prompt.md"])],
+                gates=[GateSpec(id="before_coding", before_agent="coder", required_artifacts=["prd.md"])],
+            )
+            runtime = TeamRuntime(team_spec=team, domain_spec=DomainSpec(domain_id="demo"), runs_dir=root / "runs")
+
+            record = runtime.run("demo", run_id="run-1")
+
+            events_path = root / "runs" / "run-1" / "events.jsonl"
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+            gate_events = [event for event in events if event["event"] == "gate_checked"]
+
+        self.assertEqual(record.status, "failed")
+        self.assertEqual(gate_events[0]["status"], "failed")
+        self.assertEqual(gate_events[0]["missing_artifacts"], ["prd.md"])
+        self.assertEqual(events[-1]["event"], "run_failed")
+
 
 if __name__ == "__main__":
     unittest.main()

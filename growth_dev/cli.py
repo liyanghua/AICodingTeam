@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import time
 import webbrowser
 from pathlib import Path
 
@@ -14,6 +16,8 @@ from .models import TaskSpec
 from .reporting import write_report
 from .tasks import default_task_spec, write_task_package
 from .utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
+
+_BACKGROUND_PROCESSES: list[subprocess.Popen] = []
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -96,6 +100,13 @@ def _build_parser() -> argparse.ArgumentParser:
     team_report.add_argument("--runs-dir", default="runs")
     team_report.set_defaults(func=_cmd_team_report)
 
+    team_watch = team_sub.add_parser("watch", help="Watch a team run status, logs, gates, and next actions")
+    team_watch.add_argument("--run-id", required=True)
+    team_watch.add_argument("--runs-dir", default="runs")
+    team_watch.add_argument("--interval", type=float, default=1.5)
+    team_watch.add_argument("--once", action="store_true")
+    team_watch.set_defaults(func=_cmd_team_watch)
+
     team_diff = team_sub.add_parser("diff", help="Show the uncommitted diff from a run worktree")
     team_diff.add_argument("--run-id", required=True)
     team_diff.add_argument("--runs-dir", default="runs")
@@ -143,6 +154,7 @@ def _add_team_run_args(command: argparse.ArgumentParser) -> None:
     command.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
     command.add_argument("--env-file", default=".env")
     command.add_argument("--repo-root", default=".")
+    command.add_argument("--foreground", action="store_true")
 
 
 def _load_task(path_value: str | None) -> TaskSpec:
@@ -294,8 +306,102 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_code_alias(args: argparse.Namespace) -> int:
-    args.executor = "codex"
-    return _cmd_team_run(args)
+    if getattr(args, "foreground", False):
+        return _cmd_team_run(args)
+    return _cmd_code_background(args)
+
+
+def _cmd_code_background(args: argparse.Namespace) -> int:
+    run_id = args.run_id or f"{args.domain}-{timestamp_slug()}"
+    runs_dir = Path(args.runs_dir)
+    run_dir = ensure_dir(runs_dir / run_id)
+    command = _background_team_run_command(args, run_id)
+    process_record = {
+        "run_id": run_id,
+        "pid": 0,
+        "status": "starting",
+        "started_at": now_iso(),
+        "last_seen_at": now_iso(),
+        "command": _redacted_command(command),
+        "run_dir": str(run_dir),
+    }
+    write_json(run_dir / "process.json", process_record)
+    stdout_path = run_dir / "background_stdout.log"
+    stderr_path = run_dir / "background_stderr.log"
+    stdout_handle = stdout_path.open("a", encoding="utf-8")
+    stderr_handle = stderr_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path(args.repo_root),
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        stdout_handle.close()
+        stderr_handle.close()
+    process_record.update({"pid": process.pid, "status": "running", "last_seen_at": now_iso()})
+    write_json(run_dir / "process.json", process_record)
+    _BACKGROUND_PROCESSES.append(process)
+    print(f"Run started: {run_id}")
+    print(f"PID: {process.pid}")
+    print(f"Watch: python -m growth_dev.cli team watch --run-id {run_id}")
+    print(f"Artifacts: {run_dir}/")
+    return 0
+
+
+def _background_team_run_command(args: argparse.Namespace, run_id: str) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "growth_dev.cli",
+        "team",
+        "run",
+        "--run-id",
+        run_id,
+        "--brief",
+        args.brief,
+        "--domain",
+        args.domain,
+        "--domains-dir",
+        args.domains_dir,
+        "--runs-dir",
+        args.runs_dir,
+        "--inputs-json",
+        args.inputs_json,
+        "--executor",
+        args.executor,
+        "--model",
+        args.model,
+        "--reasoning-effort",
+        args.reasoning_effort,
+        "--codex-binary",
+        args.codex_binary,
+        "--codex-provider",
+        args.codex_provider,
+        "--env-file",
+        args.env_file,
+        "--repo-root",
+        args.repo_root,
+    ]
+    return command
+
+
+def _redacted_command(command: list[str]) -> list[str]:
+    redacted: list[str] = []
+    skip_next = False
+    for index, item in enumerate(command):
+        if skip_next:
+            skip_next = False
+            continue
+        if item in {"--env-file"} and index + 1 < len(command):
+            redacted.extend([item, "<env-file>"])
+            skip_next = True
+        else:
+            redacted.append(item)
+    return redacted
 
 
 def _cmd_team_status(args: argparse.Namespace) -> int:
@@ -321,6 +427,19 @@ def _cmd_team_report(args: argparse.Namespace) -> int:
         return 1
     print(report_path.read_text(encoding="utf-8"))
     return 0
+
+
+def _cmd_team_watch(args: argparse.Namespace) -> int:
+    run_dir = Path(args.runs_dir) / args.run_id
+    if not run_dir.exists():
+        print(f"Run not found: {run_dir}", file=sys.stderr)
+        return 1
+    while True:
+        snapshot = _team_watch_snapshot(args.run_id, run_dir)
+        print(snapshot)
+        if args.once or _watch_terminal_state(run_dir):
+            return 0
+        time.sleep(max(args.interval, 0.1))
 
 
 def _cmd_review_alias(args: argparse.Namespace) -> int:
@@ -426,8 +545,16 @@ def _team_status_summary(record, run_dir: Path) -> str:
                 f"Agent elapsed: {_elapsed_label(current.started_at, current.finished_at)}",
             ]
         )
+        failure_category = (current.metadata or {}).get("failure_category")
+        if failure_category:
+            lines.append(f"Failure category: {failure_category}")
     if record.risk_events:
         lines.extend(["Risk events:", *[f"- {event}" for event in record.risk_events]])
+    gate_lines = _gate_lines(record)
+    if gate_lines:
+        lines.extend(["Gates:", *[f"- {line}" for line in gate_lines]])
+    apply_status, apply_reason = _apply_gate_status(record)
+    lines.extend(["Apply gate:", f"- {apply_status}: {apply_reason}"])
     latest_logs = _latest_log_lines(run_dir)
     if latest_logs:
         lines.extend(["Latest logs:", *[f"- {line}" for line in latest_logs]])
@@ -435,6 +562,115 @@ def _team_status_summary(record, run_dir: Path) -> str:
     if diff_summary:
         lines.extend(["Diff summary:", *[f"- {line}" for line in diff_summary]])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _team_watch_snapshot(run_id: str, run_dir: Path) -> str:
+    from .team.runtime import TeamRuntime
+
+    record_path = run_dir / "team_run_record.json"
+    if record_path.exists():
+        record = TeamRuntime.load_record(run_id, runs_dir=run_dir.parent)
+        lines = [_team_status_summary(record, run_dir).rstrip()]
+    else:
+        lines = [f"Run: {run_id}", "Status: starting"]
+    process_path = run_dir / "process.json"
+    if process_path.exists():
+        process = read_json(process_path)
+        status = _process_status(process)
+        process["status"] = status
+        process["last_seen_at"] = now_iso()
+        write_json(process_path, process)
+        lines.extend(["Process:", f"- pid: {process.get('pid', 0)}", f"- status: {status}"])
+    events = _read_events(run_dir)
+    if events:
+        lines.extend(["Recent events:", *[f"- {event.get('event', '')}: {_event_label(event)}" for event in events[-5:]]])
+    if record_path.exists():
+        record = TeamRuntime.load_record(run_id, runs_dir=run_dir.parent)
+        if record.status == "completed":
+            lines.extend(
+                [
+                    "Next actions:",
+                    f"- python -m growth_dev.cli team diff --run-id {run_id}",
+                    f"- python -m growth_dev.cli review --run-id {run_id}",
+                    f"- python -m growth_dev.cli test --run-id {run_id}",
+                    f"- python -m growth_dev.cli report --run-id {run_id}",
+                    f"- python -m growth_dev.cli team apply --run-id {run_id}",
+                ]
+            )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _watch_terminal_state(run_dir: Path) -> bool:
+    record_path = run_dir / "team_run_record.json"
+    if not record_path.exists():
+        return False
+    payload = read_json(record_path)
+    return payload.get("status") in {"completed", "failed"}
+
+
+def _read_events(run_dir: Path) -> list[dict]:
+    events_path = run_dir / "events.jsonl"
+    if not events_path.exists():
+        return []
+    events: list[dict] = []
+    for line in events_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events
+
+
+def _event_label(event: dict) -> str:
+    if event.get("agent_id"):
+        return str(event.get("agent_id"))
+    if event.get("gate_id"):
+        missing = event.get("missing_artifacts") or []
+        suffix = f" missing={','.join(missing)}" if missing else ""
+        return f"{event.get('gate_id')} {event.get('status', '')}{suffix}".strip()
+    return str(event.get("status") or event.get("reason") or event.get("run_id") or "")
+
+
+def _process_status(process: dict) -> str:
+    status = str(process.get("status", "unknown"))
+    pid = int(process.get("pid") or 0)
+    run_dir = process.get("run_dir")
+    if run_dir:
+        record_path = Path(str(run_dir)) / "team_run_record.json"
+        if record_path.exists():
+            record_status = str(read_json(record_path).get("status", ""))
+            if record_status in {"completed", "failed"}:
+                return record_status
+    if status == "running" and pid and not _pid_is_running(pid):
+        return "exited"
+    return status
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _gate_lines(record) -> list[str]:
+    return [
+        f"{gate.gate_id}: {gate.status} before {gate.before_agent}"
+        + (f" missing {', '.join(gate.missing_artifacts)}" if gate.missing_artifacts else "")
+        for gate in record.gate_results
+    ]
+
+
+def _apply_gate_status(record) -> tuple[str, str]:
+    allowed, reason = _run_can_apply(record)
+    if allowed:
+        return "passed", "run completed, no risk events, verifier completed"
+    return "blocked", reason
 
 
 def _current_agent(record):
