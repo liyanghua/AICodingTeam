@@ -99,6 +99,24 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(_field(restored, "status"), "completed")
         self.assertEqual(_field(_field(restored, "agent_runs")[0], "output_paths"), ["prd.md"])
 
+    def test_runtime_normalizes_relative_runs_dir_to_absolute_record_path(self) -> None:
+        from growth_dev.team.models import AgentSpec, DomainSpec, TeamSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = TeamRuntime(
+                team=TeamSpec(team_id="team", agents=[AgentSpec(id="orchestrator", outputs=["task.yaml", "context.md"])]),
+                domain=DomainSpec(domain_id="demo"),
+                runs_dir=Path("runs"),
+                repo_root=root,
+            )
+
+            record = runtime.run("demo", run_id="run-1")
+
+        self.assertTrue(record.run_dir.is_absolute())
+        self.assertTrue(str(record.run_dir).endswith("runs/run-1"))
+
     def test_runtime_persists_running_agent_before_stage_completes(self) -> None:
         from growth_dev.team.models import AgentRun, AgentSpec, DomainSpec, TeamRunRecord
         from growth_dev.team.runtime import TeamRuntime

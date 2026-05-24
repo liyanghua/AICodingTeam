@@ -1,0 +1,126 @@
+skills:
+  - id: requirement_grilling
+    stage: requirement
+    priority: P0
+    source_inspiration: mattpocock/skills/grill-with-docs
+    path: skills/10_requirement/requirement_grilling
+    inputs:
+      - business brief
+      - current context
+      - glossary
+    outputs:
+      - tasks/current/context.md
+      - optional ADR
+    quality_gates:
+      - terms are aligned
+      - scope is explicit
+      - open questions are captured
+    templates:
+      - question_bank.md
+      - context_format.md
+      - adr_format.md
+
+  - id: requirement_to_prd
+    stage: requirement
+    priority: P0
+    source_inspiration: mattpocock/skills/to-prd
+    path: skills/10_requirement/requirement_to_prd
+    inputs:
+      - brief
+      - context.md
+      - design.md
+    outputs:
+      - tasks/current/prd.md
+      - tasks/current/acceptance_criteria.md
+    quality_gates:
+      - business goal is clear
+      - user roles are explicit
+      - acceptance criteria are testable
+    templates:
+      - prd_template.md
+      - acceptance_criteria_template.md
+
+  - id: repo_context_compiler
+    stage: requirement
+    priority: P0
+    source_inspiration: mattpocock/skills/zoom-out
+    path: skills/10_requirement/repo_context_compiler
+    inputs:
+      - repo structure
+      - domain pack
+      - current task package
+    outputs:
+      - tasks/current/context.md
+      - tasks/current/impact_analysis.md
+    quality_gates:
+      - impacted modules are listed
+      - constraints are explicit
+      - nearby boundaries are noted
+    templates:
+      - context_template.md
+      - impact_analysis_template.md
+
+  - id: prd_to_task_slices
+    stage: planning
+    priority: P0
+    source_inspiration: mattpocock/skills/to-issues
+    path: skills/20_planning/prd_to_task_slices
+    inputs:
+      - prd.md
+      - tech_spec.md
+      - ui_spec.md
+    outputs:
+      - tasks/current/slices/*.yaml
+      - tasks/current/slices/*.md
+    quality_gates:
+      - slices are vertical
+      - slices are demoable
+      - slices are testable
+    templates:
+      - task_slice_template.yaml
+      - issue_body_template.md
+
+  - id: tech_spec_to_tdd
+    stage: engineering
+    priority: P0
+    source_inspiration: mattpocock/skills/tdd
+    path: skills/30_engineering/tech_spec_to_tdd
+    inputs:
+      - tech_spec.md
+      - ui_spec.md
+      - data model
+      - design.md
+    outputs:
+      - tasks/current/eval.md
+      - tasks/current/tdd_cases.md
+      - tasks/current/review_checklist.md
+    quality_gates:
+      - tests cover public behavior
+      - red-green-refactor is explicit
+      - UI states are covered
+    templates:
+      - backend_test_patterns.md
+      - frontend_test_patterns.md
+      - integration_test_patterns.md
+      - eval_template.md
+
+  - id: diagnose_failure
+    stage: execution
+    priority: P0
+    source_inspiration: mattpocock/skills/diagnose
+    path: skills/40_execution/diagnose_failure
+    inputs:
+      - failing tests
+      - logs
+      - diff
+      - run record
+    outputs:
+      - fix_plan.md
+      - regression test suggestions
+    quality_gates:
+      - failure category is explicit
+      - reproduction is noted
+      - regression coverage is proposed
+    templates:
+      - failure_taxonomy.md
+      - fix_plan_template.md

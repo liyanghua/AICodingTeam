@@ -217,6 +217,37 @@ class CodexExecutorTests(unittest.TestCase):
         self.assertTrue(Path(command[command.index("--output-last-message") + 1]).is_absolute())
         self.assertTrue(Path(command[command.index("--output-schema") + 1]).is_absolute())
 
+    def test_codex_exec_command_includes_git_metadata_add_dirs(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig, build_codex_exec_command
+
+        command = build_codex_exec_command(
+            CodexExecutorConfig(binary="/tmp/codex", extra_add_dirs=["/repo/.git/worktrees/run-1", "/repo/.git"]),
+            worktree_dir=Path("/repo/runs/run-1/worktree"),
+            run_dir=Path("/repo/runs/run-1"),
+            output_schema_path=Path("/repo/runs/run-1/codex/codex_response_schema.json"),
+            output_last_message_path=Path("/repo/runs/run-1/codex/last_message.json"),
+        )
+
+        add_dirs = [command[index + 1] for index, item in enumerate(command) if item == "--add-dir"]
+        self.assertIn("/repo/runs/run-1", add_dirs)
+        self.assertIn("/repo/.git/worktrees/run-1", add_dirs)
+        self.assertIn("/repo/.git", add_dirs)
+
+    def test_prepare_worktree_adds_git_metadata_dirs_without_repo_root(self) -> None:
+        from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            executor = CodexExecutor(CodexExecutorConfig(binary="/tmp/codex"), repo_root=root, run_dir=root / "runs" / "run-1")
+
+            worktree = executor.prepare_worktree()
+            extra_dirs = executor.config.extra_add_dirs
+            self.assertTrue((worktree / ".git").exists())
+            self.assertIn(str((root / ".git").resolve()), extra_dirs)
+            self.assertTrue(any(".git/worktrees" in path for path in extra_dirs))
+            self.assertNotIn(str(root.resolve()), extra_dirs)
+
     def test_load_aicodemirror_provider_from_env_file(self) -> None:
         from growth_dev.team.codex import load_aicodemirror_provider_from_env
 
@@ -473,9 +504,9 @@ class CodexExecutorTests(unittest.TestCase):
                 )
             )
             thread.start()
-            deadline = time.time() + 1.0
+            deadline = time.time() + 3.0
             saw_streamed_line = False
-            while time.time() < deadline:
+            while time.time() < deadline and "completed" not in completed_holder:
                 if stdout_path.exists() and "stdout-before-sleep" in stdout_path.read_text(encoding="utf-8", errors="replace"):
                     saw_streamed_line = True
                     break

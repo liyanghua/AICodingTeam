@@ -1,0 +1,195 @@
+{
+  "app": {
+    "title": "AI 团队工作台",
+    "subtitle": "输入一个业务需求，让 AI 团队完成理解、方案、实现、检查和交付。",
+    "briefLabel": "你想让 AI 团队完成什么？",
+    "briefPlaceholder": "例如：为会员运营做一个活动复盘页面，能看到关键指标、异常提醒和下周建议",
+    "startButton": "交给 AI 团队处理",
+    "advancedTitle": "高级设置",
+    "taskRecords": "任务记录",
+    "currentTask": "当前任务",
+    "businessProgress": "任务进展",
+    "qualityChecks": "质量关卡",
+    "deliverables": "产物与验收",
+    "engineeringDetails": "工程详情",
+    "engineeringRun": "运行标识",
+    "engineeringEvents": "过程事件",
+    "engineeringLog": "运行日志",
+    "engineeringDiff": "代码差异",
+    "emptyRuns": "还没有任务记录",
+    "emptySelection": "选择或新建一个任务",
+    "refresh": "刷新",
+    "unknown": "未知项"
+  },
+  "status": {
+    "not_started": {"label": "未开始", "tone": "muted", "description": "这个阶段还没有开始。"},
+    "processing": {"label": "处理中", "tone": "blue", "description": "AI 团队正在处理这个阶段。"},
+    "completed": {"label": "已完成", "tone": "green", "description": "这个阶段已经完成。"},
+    "needs_attention": {"label": "需要处理", "tone": "red", "description": "任务遇到阻塞，需要查看原因。"},
+    "waiting_confirmation": {"label": "等待确认", "tone": "amber", "description": "系统已经产出结果，等待人工确认是否采纳。"},
+    "planned": {"label": "后续接入", "tone": "muted", "description": "这个能力已预留，将在后续阶段接入。"}
+  },
+  "stages": {
+    "rowLabels": {
+      "done": "已完成什么",
+      "attention": "需要关注什么",
+      "next": "下一步"
+    },
+    "requirement": {
+      "title": "需求理解",
+      "description": "确认目标、范围和上下文。",
+      "summary": {
+        "not_started": "等待 AI 团队理解需求。",
+        "processing": "AI 团队正在整理目标和上下文。",
+        "completed": "需求已被整理成任务包和上下文。",
+        "needs_attention": "需求理解阶段遇到阻塞。",
+        "waiting_confirmation": "需求理解已完成，等待确认。",
+        "planned": "需求理解能力已预留。"
+      },
+      "done": "已完成：目标、上下文和任务入口",
+      "attention": "关注点：目标是否清楚，范围是否过大",
+      "next": "下一步：进入方案设计"
+    },
+    "design": {
+      "title": "方案设计",
+      "description": "沉淀 PRD、技术方案、UI 方案和验收标准。",
+      "summary": {
+        "not_started": "等待生成产品和方案产物。",
+        "processing": "正在生成 PRD、技术方案、UI 方案和验收标准。",
+        "completed": "产品方案、技术方案和验收标准已生成。",
+        "needs_attention": "方案设计阶段需要处理问题。",
+        "waiting_confirmation": "方案产物已生成，等待确认。",
+        "planned": "方案设计能力已预留。"
+      },
+      "done": "已完成：PRD、技术方案、UI 规范、验收标准",
+      "attention": "关注点：范围边界、验收标准、体验要求",
+      "next": "下一步：交给 AI 实现助手"
+    },
+    "implementation": {
+      "title": "AI 实现",
+      "description": "由 coding agent 在隔离工作区完成代码变更。",
+      "summary": {
+        "not_started": "等待进入代码实现。",
+        "processing": "AI 实现助手正在实现需求。",
+        "completed": "AI 实现助手已产出代码变更和实现记录。",
+        "needs_attention": "AI 实现助手遇到阻塞，需要查看风险或工程详情。",
+        "waiting_confirmation": "实现已完成，等待进入质量检查。",
+        "planned": "AI 实现能力已预留。"
+      },
+      "done": "已完成：代码变更、实现记录、差异证据",
+      "attention": "关注点：是否有阻塞、是否有风险事件",
+      "next": "下一步：进入评审和测试"
+    },
+    "quality": {
+      "title": "质量检查",
+      "description": "检查代码评审、测试、风险和关卡结果。",
+      "summary": {
+        "not_started": "等待质量检查。",
+        "processing": "正在进行评审、测试和风险检查。",
+        "completed": "评审和测试已通过。",
+        "needs_attention": "质量检查未通过，需要处理失败原因。",
+        "waiting_confirmation": "质量检查已完成，等待交付确认。",
+        "planned": "质量检查能力已预留。"
+      },
+      "done": "已完成：评审、测试报告、风险检查",
+      "attention": "关注点：失败原因、缺失产物、风险事件",
+      "next": "下一步：生成交付报告"
+    },
+    "delivery": {
+      "title": "交付验收",
+      "description": "查看最终报告，决定是否采纳本次变更。",
+      "summary": {
+        "not_started": "等待生成交付报告。",
+        "processing": "正在整理交付结果。",
+        "completed": "交付报告已生成。",
+        "needs_attention": "交付前仍有阻塞需要处理。",
+        "waiting_confirmation": "结果已准备好，等待人工确认是否采纳。",
+        "planned": "CI、部署和人审发布将在后续接入。"
+      },
+      "done": "已完成：最终报告、采纳建议、下一步动作",
+      "attention": "关注点：是否满足业务目标，是否允许采纳",
+      "next": "下一步：人工确认后执行采纳动作"
+    }
+  },
+  "agents": {
+    "orchestrator": "任务统筹",
+    "product": "产品方案",
+    "architect": "技术方案",
+    "ux": "体验方案",
+    "qa": "验收设计",
+    "coder": "AI 实现助手",
+    "reviewer": "代码评审",
+    "verifier": "测试验证",
+    "publisher": "交付报告",
+    "ci": "CI 检查",
+    "deploy": "部署",
+    "human_approval": "人工确认"
+  },
+  "gates": {
+    "before_coding": {
+      "title": "实现前检查",
+      "passed": "方案产物已齐备，可以进入实现。",
+      "failed": "方案产物不完整，暂不能进入实现。"
+    },
+    "before_publish": {
+      "title": "交付前检查",
+      "passed": "Review 和测试报告已齐备，可以生成交付报告。",
+      "failed": "Review 或测试产物缺失，暂不能交付。"
+    },
+    "apply_gate": {
+      "title": "采纳检查",
+      "passed": "本次变更可被人工采纳。",
+      "blocked": "当前还不能采纳，需要先处理阻塞。"
+    },
+    "ci_gate": {"title": "CI 检查", "planned": "后续接入 GitHub Actions。"},
+    "deploy_gate": {"title": "部署检查", "planned": "后续接入 staging 部署。"},
+    "human_release_gate": {"title": "人工发布确认", "planned": "后续接入生产发布审批。"}
+  },
+  "artifacts": {
+    "task.yaml": {"title": "任务包", "description": "系统拆解出的任务入口。"},
+    "context.md": {"title": "上下文说明", "description": "需求背景和约束。"},
+    "prd.md": {"title": "PRD", "description": "产品目标、范围和验收。"},
+    "tech_spec.md": {"title": "技术方案", "description": "实现边界和技术设计。"},
+    "architecture_diagram.md": {"title": "架构图", "description": "系统结构和关键流转占位。"},
+    "ui_spec.md": {"title": "UI 规范", "description": "页面结构和交互状态。"},
+    "eval.md": {"title": "验收标准", "description": "测试和评估口径。"},
+    "coding_prompt.md": {"title": "实现任务书", "description": "交给 AI coding 的执行说明。"},
+    "review_report.md": {"title": "评审报告", "description": "代码评审结果。"},
+    "test_report.md": {"title": "测试报告", "description": "验证命令和结果。"},
+    "final_report.md": {"title": "最终报告", "description": "交付摘要和下一步建议。"},
+    "codex/diff.patch": {"title": "代码差异", "description": "AI 实现产生的变更证据。"}
+  },
+  "events": {
+    "run_started": "任务已启动",
+    "agent_started": "开始处理",
+    "agent_completed": "阶段完成",
+    "gate_checked": "完成关卡检查",
+    "risk_event": "发现风险",
+    "run_completed": "任务完成",
+    "run_failed": "任务失败"
+  },
+  "actions": {
+    "viewArtifacts": "查看产物",
+    "viewRisks": "查看风险",
+    "viewEngineering": "查看工程详情",
+    "openArtifact": "打开产物",
+    "copyCommand": "复制命令",
+    "unknownItem": "未知项",
+    "noRisk": "暂无风险",
+    "noArtifacts": "暂无可查看产物",
+    "artifactPending": "未生成",
+    "noNextAction": "暂无下一步动作",
+    "readyForConfirmation": "结果已准备好，等待人工确认是否采纳。",
+    "missingArtifactsPrefix": "缺少",
+    "permission_error": "运行环境权限异常，请重启任务或检查本地权限。",
+    "defaultAttention": "请查看风险和工程详情。"
+  },
+  "advanced": {
+    "domain": "任务类型",
+    "executor": "执行方式",
+    "provider": "模型服务",
+    "model": "模型",
+    "deterministic": "本地演示",
+    "codex": "AI coding"
+  }
+}

@@ -118,6 +118,22 @@ def _build_parser() -> argparse.ArgumentParser:
     team_apply.add_argument("--repo-root", default=".")
     team_apply.set_defaults(func=_cmd_team_apply)
 
+    team_dashboard = team_sub.add_parser("serve-dashboard", help="Run the local Agent Team dashboard")
+    team_dashboard.add_argument("--host", default="127.0.0.1")
+    team_dashboard.add_argument("--port", type=int, default=8790)
+    team_dashboard.add_argument("--runs-dir", default="runs")
+    team_dashboard.add_argument("--domains-dir", default="domains")
+    team_dashboard.add_argument("--dashboard-dir", default="dashboard")
+    team_dashboard.add_argument("--repo-root", default=".")
+    team_dashboard.add_argument("--codex-binary", default="codex")
+    team_dashboard.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
+    team_dashboard.add_argument("--env-file", default=".env")
+    team_dashboard.add_argument("--model", default="gpt-5.3-codex")
+    team_dashboard.add_argument("--reasoning-effort", default="medium")
+    team_dashboard.add_argument("--executor", choices=["deterministic", "codex"], default="codex")
+    team_dashboard.add_argument("--open-browser", action="store_true")
+    team_dashboard.set_defaults(func=_cmd_team_serve_dashboard)
+
     code_cmd = subparsers.add_parser("code", help="Run the Codex-backed coding loop")
     _add_team_run_args(code_cmd)
     code_cmd.set_defaults(func=_cmd_code_alias)
@@ -345,6 +361,20 @@ def _cmd_code_background(args: argparse.Namespace) -> int:
     process_record.update({"pid": process.pid, "status": "running", "last_seen_at": now_iso()})
     write_json(run_dir / "process.json", process_record)
     _BACKGROUND_PROCESSES.append(process)
+    if args.executor == "deterministic":
+        try:
+            exit_code = process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            process_record.update(
+                {
+                    "status": "completed" if exit_code == 0 else "failed",
+                    "exit_code": exit_code,
+                    "last_seen_at": now_iso(),
+                }
+            )
+            write_json(run_dir / "process.json", process_record)
     print(f"Run started: {run_id}")
     print(f"PID: {process.pid}")
     print(f"Watch: python -m growth_dev.cli team watch --run-id {run_id}")
@@ -508,6 +538,27 @@ def _cmd_team_apply(args: argparse.Namespace) -> int:
         print(completed.stderr or completed.stdout or "git apply failed", file=sys.stderr)
         return 1
     print(f"Applied diff from run {args.run_id} to {repo_root}.")
+    return 0
+
+
+def _cmd_team_serve_dashboard(args: argparse.Namespace) -> int:
+    from .team.dashboard import DashboardConfig, run_dashboard_server
+
+    config = DashboardConfig(
+        host=args.host,
+        port=args.port,
+        runs_dir=Path(args.runs_dir),
+        domains_dir=Path(args.domains_dir),
+        dashboard_dir=Path(args.dashboard_dir),
+        repo_root=Path(args.repo_root),
+        codex_binary=args.codex_binary,
+        codex_provider=args.codex_provider,
+        env_file=args.env_file,
+        model=args.model,
+        reasoning_effort=args.reasoning_effort,
+        executor=args.executor,
+    )
+    run_dashboard_server(config, open_browser=args.open_browser)
     return 0
 
 

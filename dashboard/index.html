@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title data-i18n="app.title">AI 团队工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero" aria-label="需求提交">
+        <div class="hero-copy">
+          <p class="eyebrow">AI-native</p>
+          <h1 data-i18n="app.title">AI 团队工作台</h1>
+          <p data-i18n="app.subtitle">输入一个业务需求，让 AI 团队完成理解、方案、实现、检查和交付。</p>
+        </div>
+        <form id="run-form" class="run-form">
+          <label class="brief-label" for="brief" data-i18n="app.briefLabel">你想让 AI 团队完成什么？</label>
+          <textarea id="brief" name="brief" rows="3" data-i18n-placeholder="app.briefPlaceholder"></textarea>
+          <div class="form-actions">
+            <button type="submit" data-i18n="app.startButton">交给 AI 团队处理</button>
+            <details id="advanced-settings" class="advanced-settings">
+              <summary data-i18n="app.advancedTitle">高级设置</summary>
+              <div class="advanced-grid">
+                <label>
+                  <span data-i18n="advanced.domain">任务类型</span>
+                  <input id="domain" name="domain" value="web_monitoring" />
+                </label>
+                <label>
+                  <span data-i18n="advanced.executor">执行方式</span>
+                  <select id="executor" name="executor">
+                    <option value="codex" data-i18n="advanced.codex">AI coding</option>
+                    <option value="deterministic" data-i18n="advanced.deterministic">本地演示</option>
+                  </select>
+                </label>
+                <label>
+                  <span data-i18n="advanced.provider">模型服务</span>
+                  <select id="provider" name="provider">
+                    <option value="default">default</option>
+                    <option value="aicodemirror">aicodemirror</option>
+                  </select>
+                </label>
+                <label>
+                  <span data-i18n="advanced.model">模型</span>
+                  <input id="model" name="model" value="gpt-5.5" />
+                </label>
+              </div>
+            </details>
+          </div>
+        </form>
+      </section>
+
+      <section class="workspace">
+        <aside class="task-list">
+          <div class="panel-header">
+            <h2 data-i18n="app.taskRecords">任务记录</h2>
+            <button id="refresh-runs" type="button" class="ghost" data-i18n="app.refresh">刷新</button>
+          </div>
+          <div id="runs"></div>
+        </aside>
+
+        <section class="main-panel">
+          <div class="summary-band">
+            <div>
+              <p class="eyebrow" data-i18n="app.currentTask">当前任务</p>
+              <h2 id="current-task" data-i18n="app.emptySelection">选择或新建一个任务</h2>
+              <p id="task-headline" class="summary-text"></p>
+            </div>
+            <div id="status-pill" class="status-pill status-muted" data-i18n="status.not_started.label">未开始</div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2 data-i18n="app.businessProgress">任务进展</h2>
+              <span id="brief-label"></span>
+            </div>
+            <div id="business-stages" class="business-stage-list"></div>
+          </section>
+
+          <section class="panel two-column">
+            <div>
+              <div class="panel-header">
+                <h2 data-i18n="app.qualityChecks">质量关卡</h2>
+              </div>
+              <div id="quality-gates" class="gate-list"></div>
+            </div>
+            <div>
+              <div class="panel-header">
+                <h2 data-i18n="app.deliverables">产物与验收</h2>
+              </div>
+              <div id="deliverables" class="deliverable-list"></div>
+            </div>
+          </section>
+
+          <details class="engineering-panel">
+            <summary data-i18n="app.engineeringDetails">工程详情</summary>
+            <div class="engineering-grid">
+              <section>
+                <h3 data-i18n="app.engineeringRun">运行标识</h3>
+                <pre id="engineering-run" class="detail-box"></pre>
+              </section>
+              <section>
+                <h3 data-i18n="app.engineeringEvents">过程事件</h3>
+                <pre id="engineering-events" class="detail-box"></pre>
+              </section>
+              <section>
+                <h3 data-i18n="app.engineeringLog">运行日志</h3>
+                <pre id="engineering-logs" class="detail-box"></pre>
+              </section>
+              <section>
+                <h3 data-i18n="app.engineeringDiff">代码差异</h3>
+                <pre id="engineering-diff" class="detail-box"></pre>
+              </section>
+            </div>
+          </details>
+        </section>
+
+        <aside class="artifact-panel">
+          <div class="panel-header">
+            <h2 data-i18n="app.deliverables">产物与验收</h2>
+          </div>
+          <div id="artifact-actions" class="artifact-list"></div>
+          <pre id="artifact-preview" class="artifact-preview"></pre>
+          <div id="next-actions" class="action-list"></div>
+        </aside>
+      </section>
+    </main>
+    <script src="/business_view.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

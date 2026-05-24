@@ -57,6 +57,18 @@ The `team` command turns a single brief into a gated artifact pipeline:
 
 Runs are written to `runs/<run_id>/`. Domain packs live under `domains/`; `xhs_browser_benchmark` is the first domain and `web_monitoring` proves the runtime can be reused without changing orchestration code.
 
+## Project Skills
+
+The first project-level skills live under `skills/` and are indexed by `skills/registry.yaml`. They are the shared method layer for turning a brief into an AI-coding-ready task package, while `tasks/current/` and `runs/<run_id>/` remain the source of truth for each concrete run.
+
+Current call order:
+
+```text
+requirement_grilling -> requirement_to_prd -> repo_context_compiler -> prd_to_task_slices -> tech_spec_to_tdd -> diagnose_failure
+```
+
+This phase is documentation/registry only; the runtime does not auto-execute these skills yet.
+
 ## Codex executor
 
 `team run` defaults to the deterministic file-based agents. Add `--executor codex` to let the `coder` stage run `codex exec`, the `reviewer` stage run `codex review --uncommitted`, and the `verifier` stage run deterministic verification commands in the isolated worktree.
@@ -94,6 +106,23 @@ The Week 2 loop is intentionally observable before it is automatically merged:
 Project-level third-party provider config is read from `.env` only for the child Codex process. The key is injected as `AICODEMIRROR_KEY` and is not written to run artifacts.
 
 Every team run also writes `events.jsonl` as a stage timeline and `process.json` for background process metadata.
+
+### Local dashboard
+
+The browser UI lives in the top-level `dashboard/` directory, separate from the Python runtime. The backend only serves static assets and the local run API.
+
+```bash
+python -m growth_dev.cli team serve-dashboard \
+  --host 127.0.0.1 \
+  --port 8790 \
+  --codex-provider aicodemirror \
+  --env-file .env \
+  --codex-binary /opt/homebrew/bin/codex \
+  --model gpt-5.5 \
+  --open-browser
+```
+
+Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next CLI actions. The dashboard can start and inspect runs, but applying a completed worktree diff remains a CLI action through `growth-dev team apply`.
 
 ## Safety
 

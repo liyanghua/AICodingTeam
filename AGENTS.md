@@ -27,6 +27,13 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Scoring and reporting: `growth_dev/scoring.py`, `growth_dev/reporting.py`
 - Framework adapters: `growth_dev/adapters/`
 
+## Project Skills
+
+- Project-level skills live under `skills/` and are indexed by `skills/registry.yaml`.
+- For requirement clarification, PRD generation, repo context compilation, vertical task slicing, TDD planning, or failure diagnosis, read `skills/registry.yaml` first and then the corresponding `SKILL.md`.
+- Skills define the project method layer; they do not replace per-run artifacts in `tasks/current/` or execution evidence in `runs/<run_id>/`.
+- The first batch call order is `requirement_grilling -> requirement_to_prd -> repo_context_compiler -> prd_to_task_slices -> tech_spec_to_tdd -> diagnose_failure`.
+
 ## Coding Rules
 
 - Prefer the standard library unless a dependency is already present.
@@ -35,6 +42,7 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Keep v1 team agents deterministic and file-driven.
 - Keep Codex prompts narrow: include the goal, allowed paths, current state summary, failed tests, acceptance criteria, stop conditions, and verification commands.
 - Codex final responses must be structured JSON with `summary`, `files_changed`, `tests_run`, `risk_events`, `blockers`, and `next_action`.
+- For Dashboard or UI changes, read root `DESIGN.md` first and keep styles aligned with its design tokens, component rules, and business-friendly language.
 - Do not add unrelated refactors.
 
 ## Testing Rules

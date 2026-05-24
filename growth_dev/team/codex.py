@@ -31,9 +31,9 @@ CODEX_RESPONSE_SCHEMA: dict[str, Any] = {
     },
 }
 
-DEFAULT_ALLOWED_PATHS = ["growth_dev/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md"]
+DEFAULT_ALLOWED_PATHS = ["growth_dev/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md", "DESIGN.md"]
 DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
-UPSTREAM_CONTEXT_ARTIFACTS = ["task.yaml", "context.md", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "AGENTS.md"]
+UPSTREAM_CONTEXT_ARTIFACTS = ["task.yaml", "context.md", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "AGENTS.md", "DESIGN.md"]
 
 IMPLEMENTATION_RISK_PATTERNS = [
     "2captcha",
@@ -486,13 +486,30 @@ class CodexExecutor:
 
     def prepare_worktree(self) -> Path:
         if _is_git_worktree(self.worktree_dir):
+            self._add_worktree_git_metadata_dirs(self.worktree_dir)
             return self.worktree_dir
         ensure_dir(self.worktree_dir.parent)
         if self.worktree_dir.exists() and any(self.worktree_dir.iterdir()):
             raise RuntimeError(f"Worktree path exists but is not a git worktree: {self.worktree_dir}")
         _run_checked(["git", "rev-parse", "--show-toplevel"], cwd=self.repo_root)
         _run_checked(["git", "worktree", "add", "--detach", str(self.worktree_dir), "HEAD"], cwd=self.repo_root)
+        self._add_worktree_git_metadata_dirs(self.worktree_dir)
         return self.worktree_dir
+
+    def _add_worktree_git_metadata_dirs(self, worktree_dir: Path) -> None:
+        for command in (
+            ["git", "rev-parse", "--path-format=absolute", "--git-dir"],
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ):
+            completed = subprocess.run(command, cwd=worktree_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            if completed.returncode != 0:
+                continue
+            path_text = completed.stdout.strip()
+            if not path_text:
+                continue
+            metadata_dir = str(Path(path_text).resolve())
+            if metadata_dir != str(self.repo_root) and metadata_dir not in self.config.extra_add_dirs:
+                self.config.extra_add_dirs.append(metadata_dir)
 
     def _binary_available(self) -> bool:
         return Path(self.config.binary).exists() or shutil.which(self.config.binary) is not None
@@ -705,7 +722,7 @@ def _artifact_excerpt_lines(context: Any, max_chars: int = 1800) -> list[str]:
     repo_root = Path(getattr(context, "repo_root", "."))
     lines: list[str] = []
     for name in UPSTREAM_CONTEXT_ARTIFACTS:
-        path = repo_root / name if name == "AGENTS.md" else run_dir / name
+        path = repo_root / name if name in {"AGENTS.md", "DESIGN.md"} else run_dir / name
         if not path.exists() or not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")

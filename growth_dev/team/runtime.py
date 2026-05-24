@@ -92,8 +92,11 @@ class TeamRuntime:
             raise ValueError("domain spec is required")
         if executor not in {"deterministic", "codex"}:
             raise ValueError(f"Unsupported executor: {executor}")
-        self.runs_dir = runs_dir
-        self.repo_root = Path(repo_root or Path.cwd())
+        self.repo_root = Path(repo_root or Path.cwd()).resolve()
+        runs_path = Path(runs_dir)
+        if not runs_path.is_absolute():
+            runs_path = self.repo_root / runs_path
+        self.runs_dir = runs_path.resolve()
         self.executor = executor
         provider_config = None
         if codex_provider == "aicodemirror":
