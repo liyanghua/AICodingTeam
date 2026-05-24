@@ -1,0 +1,102 @@
+domain_id: mobilerun_xhs_collector
+title: Mobilerun XHS Collector
+summary: Build a lightweight Mobilerun extension that collects Xiaohongshu search-result cards through approved mobile UI automation. Start with MockClientAdapter tests before real device integration.
+task_type: feature
+priority: P0
+repo:
+  root: third_party/mobilerun-main
+  extension_root: third_party/mobilerun-main/extensions/xhs_collector
+  core_runtime_policy: read_only
+input_schema:
+  keyword:
+    type: string
+    required: true
+  max_notes:
+    type: integer
+    required: false
+  max_swipes:
+    type: integer
+    required: false
+  output_dir:
+    type: string
+    required: false
+  adapter:
+    type: string
+    required: false
+defaults:
+  keyword: 桌布 防水 防油
+  max_notes: 10
+  max_swipes: 5
+  output_dir: runs/mobilerun_xhs_collector
+  adapter: mock
+output_schema:
+  status: string
+  stop_reason: string
+  keyword: string
+  notes: list
+  screens: list
+  risk_events: list
+  artifact_paths: list
+frameworks:
+  - mobilerun
+  - mock-client-adapter
+  - python-unittest
+  - pydantic-or-dataclasses
+risk_rules:
+  - manual_login_only
+  - no_captcha_bypass
+  - no_fingerprint_spoofing
+  - no_proxy_rotation
+  - no_private_api_reverse_engineering
+  - no_high_frequency_collection
+  - stop_on_login_captcha_risk_or_network_error
+allowed_paths:
+  - third_party/mobilerun-main/extensions/xhs_collector/
+  - third_party/mobilerun-main/tests/
+  - third_party/mobilerun-main/pyproject.toml
+  - domains/mobilerun_xhs_collector/
+modification_policy:
+  default: deny
+  allow_only_allowed_paths: true
+  mobilerun_core_runtime: read_only
+implementation_contract:
+  extension_module: extensions.xhs_collector.xhs_collector
+  cli_command: mobilerun-xhs collect-search
+  first_adapter: MockClientAdapter
+  later_adapter: MobilerunClientAdapter
+  required_flow:
+    - open_and_search
+    - save_screen_artifacts
+    - extract_visible_cards
+    - dedupe_cards
+    - swipe_next_screen
+    - stop_when_max_notes_or_max_swipes
+    - stop_on_login_captcha_risk_or_network_error
+    - write_report_json
+artifact_contract:
+  report_path: "{output_dir}/{run_id}/report.json"
+  per_screen_files:
+    - "{output_dir}/{run_id}/screens/page_{page_index}.png"
+    - "{output_dir}/{run_id}/screens/page_{page_index}_ui.json"
+    - "{output_dir}/{run_id}/screens/page_{page_index}_extraction.json"
+evaluation_rules:
+  - xhs_collector_extension_created
+  - mock_client_adapter_tests_first
+  - collect_search_cli_registered
+  - report_json_schema_valid
+  - per_screen_screenshot_ui_tree_and_extraction_saved
+  - stopped_states_are_explicit
+  - mobilerun_core_runtime_not_modified
+  - no_disallowed_risk_behavior
+  - output_artifacts_are_under_output_dir
+verification_commands:
+  - cd third_party/mobilerun-main && python -m unittest discover -s extensions/xhs_collector/tests -v
+  - cd third_party/mobilerun-main && python -m extensions.xhs_collector.xhs_collector.cli search --keyword "桌布 防水 防油" --max-notes 10 --max-swipes 5 --adapter mock --output-dir runs/mobilerun_xhs_collector
+success_criteria:
+  - unittest_passes
+  - mock_cli_exits_zero
+  - report_json_created
+  - report_contains_at_least_one_note
+  - report_contains_screens
+  - explicit_status_and_stop_reason_present
+  - no_files_modified_outside_allowed_paths

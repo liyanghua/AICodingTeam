@@ -1,0 +1,28 @@
+{
+  "device_serial": null,
+  "xhs_package": "com.xingin.xhs",
+  "mode": "deterministic",
+  "top_n": 10,
+  "image_top_n": 10,
+  "keyword_top_n": 4,
+  "keyword_result_top_n": 5,
+  "keyword_template": "{keyword} {description}",
+  "category_filter_enabled": false,
+  "target_category": "桌垫",
+  "target_category_keywords": [],
+  "vision_only": true,
+  "throttle_seconds": 3.0,
+  "max_items_per_run": null,
+  "download_mode": "in_app_save",
+  "output_root": "runs/mobile_image_workbench",
+  "deterministic": {
+    "coordinate_profile": "../../xhs_collector/config/xhs_coordinates.json",
+    "template_dir": "../../xhs_collector/templates/xhs",
+    "match_threshold": 0.86,
+    "wait_timeout_seconds": 10.0,
+    "app_start_wait_seconds": 6.0,
+    "subject_recognition_wait_seconds": 5.0,
+    "max_result_scrolls": 10,
+    "save_action": "long_press_then_save"
+  }
+}

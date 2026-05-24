@@ -1,0 +1,27 @@
+{
+  "device_serial": null,
+  "xhs_package": "com.xingin.xhs",
+  "mode": "mobilerun",
+  "top_n": 5,
+  "image_top_n": 5,
+  "keyword_top_n": 3,
+  "keyword_result_top_n": 5,
+  "keyword_template": "{keyword} {description}",
+  "target_category": "",
+  "target_category_keywords": [],
+  "vision_only": true,
+  "throttle_seconds": 2.0,
+  "max_items_per_run": null,
+  "download_mode": "in_app_save",
+  "output_root": "runs/xhs_collector",
+  "deterministic": {
+    "coordinate_profile": "config/xhs_coordinates.json",
+    "template_dir": "templates/xhs",
+    "match_threshold": 0.86,
+    "wait_timeout_seconds": 10.0,
+    "app_start_wait_seconds": 6.0,
+    "subject_recognition_wait_seconds": 5.0,
+    "max_result_scrolls": 5,
+    "save_action": "long_press_then_save"
+  }
+}

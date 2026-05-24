@@ -1,0 +1,1 @@
+"""Mobile image collection workbench."""
