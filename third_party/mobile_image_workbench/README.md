@@ -10,6 +10,16 @@
 
 ## 启动
 
+Mac mini 长期部署请使用：
+
+```bash
+bash ../mobile_deploy/mac-mini/install_workbench_launchd.sh
+```
+
+脚本会安装 Python venv、构建前端、生成 macOS LaunchAgent，并监听 `0.0.0.0:8765` 供内网访问。首次运行会生成 `.env` 示例，请填写 `MWB_CLOUD_SERVER_URL`、`MWB_CLOUD_SYNC_TOKEN`、`MWB_COLLECTOR_ID` 和 `DASHSCOPE_API_KEY` 后重跑。
+
+本地开发启动：
+
 ```bash
 cd third_party/mobile_image_workbench
 npm install
@@ -70,6 +80,17 @@ PYTHONPATH=".:../xhs_collector" ../xhs_collector/.venv/bin/python -m mobile_imag
 ```
 
 `tag-scenes` 默认使用千问 `qwen-vl-max`，默认兼容模式地址为 `https://dashscope.aliyuncs.com/compatible-mode/v1`。如需覆盖，可传 `--model` 或设置 `DASHSCOPE_BASE_URL`。
+
+同步当前 job 到云端素材中心：
+
+```bash
+PYTHONPATH=".:../xhs_collector" ../xhs_collector/.venv/bin/python -m mobile_image_workbench sync-cloud \
+  --runs-root runs \
+  --server-url "$MWB_CLOUD_SERVER_URL" \
+  --token "$MWB_CLOUD_SYNC_TOKEN" \
+  --collector-id "$MWB_COLLECTOR_ID" \
+  --job-id "<job_id>"
+```
 
 ## 默认值
 

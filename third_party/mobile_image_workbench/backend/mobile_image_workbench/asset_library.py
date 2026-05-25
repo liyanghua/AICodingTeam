@@ -389,6 +389,7 @@ class AssetLibrary:
         *,
         collector_id: str,
         category: str = "",
+        job_id: str = "",
         limit: int = 100,
     ) -> dict[str, Any]:
         with self._connect() as conn:
@@ -397,6 +398,9 @@ class AssetLibrary:
             if category:
                 clauses.append("a.category LIKE ?")
                 params.append(f"%{category}%")
+            if job_id:
+                clauses.append("s.job_id = ?")
+                params.append(job_id)
             params.append(max(1, min(int(limit), 1000)))
             rows = conn.execute(
                 f"""

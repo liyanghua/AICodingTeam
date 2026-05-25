@@ -27,6 +27,7 @@ def sync_cloud_bundle(
     token: str,
     collector_id: str,
     category: str = "",
+    job_id: str = "",
     batch_size: int = 100,
     timeout_seconds: float = 120.0,
 ) -> dict[str, Any]:
@@ -34,6 +35,7 @@ def sync_cloud_bundle(
     bundle = library.export_cloud_bundle(
         collector_id=collector_id,
         category=category,
+        job_id=job_id,
         limit=batch_size,
     )
     endpoint = f"{server_url.rstrip('/')}/api/ingest/bundles"

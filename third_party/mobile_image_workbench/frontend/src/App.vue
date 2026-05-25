@@ -230,6 +230,18 @@
             <a :href="`/api/jobs/${jobId}/results.csv`">CSV</a>
             <a :href="`/api/jobs/${jobId}/results_images.zip`">ZIP</a>
           </div>
+          <div class="cloud-sync-actions">
+            <button
+              class="secondary-button"
+              :disabled="!canSyncToCloud || isSyncingCloud"
+              type="button"
+              @click="syncJobToCloud"
+            >
+              <UploadCloud :size="17" />
+              {{ isSyncingCloud ? '正在同步' : '打标签并同步云端' }}
+            </button>
+            <span v-if="cloudSyncMessage">{{ cloudSyncMessage }}</span>
+          </div>
         </div>
       </aside>
     </section>
@@ -390,6 +402,8 @@ const assetResults = ref<AssetItem[]>([]);
 const assetTotal = ref(0);
 const isLoadingAssets = ref(false);
 const assetMessage = ref('');
+const isSyncingCloud = ref(false);
+const cloudSyncMessage = ref('');
 const assetFilters = reactive({
   category: '',
   scene: '',
@@ -455,6 +469,10 @@ const canStart = computed(() =>
 );
 
 const jobTitle = computed(() => (jobId.value ? `任务 ${jobId.value}` : '暂无运行任务'));
+
+const canSyncToCloud = computed(() =>
+  Boolean(jobId.value) && ['completed', 'partial'].includes(jobStatus.value),
+);
 
 const configFolderSummary = computed(() => {
   if (mode.value !== 'config_file') {
@@ -672,6 +690,7 @@ async function checkDoctor() {
 
 async function startJob() {
   isSubmitting.value = true;
+  cloudSyncMessage.value = '';
   events.value = [];
   eventCounter.value = 0;
   seenEventKeys.value = new Set();
@@ -869,6 +888,35 @@ async function pollJob(id: string) {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
+async function syncJobToCloud() {
+  if (!jobId.value) {
+    return;
+  }
+  isSyncingCloud.value = true;
+  cloudSyncMessage.value = '';
+  try {
+    const response = await fetch(`/api/jobs/${jobId.value}/sync-cloud`, {
+      method: 'POST',
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || '云端同步失败');
+    }
+    const tagged = Number(payload.tagScenes?.tagged || 0);
+    const failed = Number(payload.tagScenes?.failed || 0);
+    const synced = Number(payload.cloudSync?.assets || 0);
+    cloudSyncMessage.value = failed
+      ? `已打标 ${tagged} 张，${failed} 张失败；已同步 ${synced} 张素材`
+      : `已打标 ${tagged} 张，已同步 ${synced} 张素材`;
+    await refreshEvents(jobId.value);
+    await loadAssets();
+  } catch (error) {
+    cloudSyncMessage.value = error instanceof Error ? error.message : '云端同步失败';
+  } finally {
+    isSyncingCloud.value = false;
   }
 }
 

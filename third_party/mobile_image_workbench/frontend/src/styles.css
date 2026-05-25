@@ -516,6 +516,25 @@ button {
   text-decoration: none;
 }
 
+.cloud-sync-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cloud-sync-actions .secondary-button:disabled {
+  background: #f1f5f9;
+  color: #7b8794;
+  cursor: not-allowed;
+}
+
+.cloud-sync-actions span {
+  margin: 0;
+  color: #52606d;
+}
+
 .asset-center {
   margin-top: 16px;
   background: #ffffff;

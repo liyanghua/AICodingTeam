@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     cloud_parser.add_argument("--token", required=True)
     cloud_parser.add_argument("--collector-id", required=True)
     cloud_parser.add_argument("--category", default="")
+    cloud_parser.add_argument("--job-id", default="")
     cloud_parser.add_argument("--batch-size", type=int, default=100)
     return parser
 
@@ -158,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 token=args.token,
                 collector_id=args.collector_id,
                 category=args.category,
+                job_id=args.job_id,
                 batch_size=args.batch_size,
             )
             print(json.dumps(summary, ensure_ascii=False, indent=2))

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 from urllib.parse import unquote
 
 
@@ -343,6 +344,8 @@ class MobileImageWorkbenchTests(unittest.TestCase):
                 "secret",
                 "--collector-id",
                 "mac-01",
+                "--job-id",
+                "job-1",
                 "--batch-size",
                 "100",
             ]
@@ -355,6 +358,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertTrue(tag_args.dry_run)
         self.assertEqual(sync_args.command, "sync-cloud")
         self.assertEqual(sync_args.collector_id, "mac-01")
+        self.assertEqual(sync_args.job_id, "job-1")
         self.assertEqual(sync_args.batch_size, 100)
 
     def test_scene_tagger_defaults_to_qwen_vl_max_and_dashscope_env(self) -> None:
@@ -535,7 +539,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
                 root / "asset_center.sqlite3",
                 FilesystemObjectStorageClient(root / "objects", bucket="dev-assets"),
             )
-            library.ingest_run(run_dir, category="桌垫", scene="")
+            library.ingest_run(run_dir, job_id="job-1", category="桌垫", scene="")
 
             dry = tag_missing_scene_assets(
                 library,
@@ -658,8 +662,44 @@ class MobileImageWorkbenchTests(unittest.TestCase):
                 root / "asset_center.sqlite3",
                 FilesystemObjectStorageClient(root / "objects", bucket="dev-assets"),
             )
-            library.ingest_run(run_dir, category="桌垫", scene="")
-            asset_id = library.search_assets(category="桌垫")[0]["assetId"]
+            library.ingest_run(run_dir, job_id="job-1", category="桌垫", scene="")
+            other_run_dir = root / "other-run"
+            other_input_dir = other_run_dir / "inputs" / "sku2"
+            other_item_dir = other_run_dir / "items" / "sku2"
+            other_input_dir.mkdir(parents=True)
+            other_item_dir.mkdir(parents=True)
+            (other_input_dir / "reference.jpg").write_bytes(b"reference-2")
+            (other_item_dir / "rank_001.jpg").write_bytes(b"rank-2")
+            (other_run_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-2",
+                        "status": "completed",
+                        "results": [
+                            {
+                                "item_id": "sku2",
+                                "keyword": "蓝格桌垫",
+                                "images": [
+                                    {
+                                        "rank": 1,
+                                        "local_path": str(other_item_dir / "rank_001.jpg"),
+                                        "stage": "image_search",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            library.ingest_run(other_run_dir, job_id="job-2", category="桌垫", scene="")
+            job_assets = library.export_cloud_bundle(
+                collector_id="mac-01",
+                category="桌垫",
+                job_id="job-1",
+                limit=10,
+            )["assets"]
+            asset_id = job_assets[0]["assetId"]
             library.apply_scene_tags(
                 asset_id,
                 ["餐桌布置", "买家秀"],
@@ -671,15 +711,139 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             bundle = library.export_cloud_bundle(
                 collector_id="mac-01",
                 category="桌垫",
+                job_id="job-1",
                 limit=10,
             )
 
             self.assertEqual(bundle["collectorId"], "mac-01")
+            self.assertEqual(len(bundle["sourceImages"]), 1)
+            self.assertEqual(len(bundle["assets"]), 1)
+            self.assertEqual(bundle["sourceImages"][0]["itemId"], "sku")
             self.assertEqual(bundle["assets"][0]["scene"], "餐桌布置")
             self.assertEqual(bundle["assets"][0]["sceneTags"], ["餐桌布置", "买家秀"])
             self.assertEqual(bundle["assets"][0]["sceneTagStatus"], "tagged")
             self.assertTrue(bundle["objects"][0]["contentBase64"])
             self.assertIn("sourceImages", bundle)
+
+    def test_job_manager_syncs_completed_job_to_cloud_after_scene_tagging(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.asset_library import (
+            AssetLibrary,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.scene_tagger import (
+            SceneTagResult,
+            StaticSceneTagger,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.storage import (
+            FilesystemObjectStorageClient,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_root = root / "runs"
+            run_dir = root / "collector-run"
+            input_dir = run_dir / "inputs" / "sku"
+            item_dir = run_dir / "items" / "sku"
+            input_dir.mkdir(parents=True)
+            item_dir.mkdir(parents=True)
+            (input_dir / "reference.jpg").write_bytes(b"reference")
+            (item_dir / "rank_001.jpg").write_bytes(b"rank")
+            (run_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "status": "completed",
+                        "results": [
+                            {
+                                "item_id": "sku",
+                                "keyword": "红格桌垫",
+                                "images": [
+                                    {
+                                        "rank": 1,
+                                        "local_path": str(item_dir / "rank_001.jpg"),
+                                        "stage": "image_search",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = JobManager(
+                runs_root,
+                asset_library=AssetLibrary(
+                    runs_root / "asset_center.sqlite3",
+                    FilesystemObjectStorageClient(runs_root / "objects", bucket="dev-assets"),
+                ),
+            )
+            job_dir = runs_root / "job-1"
+            record = JobRecord(
+                job_id="job-1",
+                status="completed",
+                job_dir=job_dir,
+                settings=JobSettings.for_mode("single_image"),
+                collector_run_dir=run_dir,
+            )
+            manager._write_record(record)
+            sync_calls = []
+
+            def fake_cloud_sync(**kwargs):
+                sync_calls.append(kwargs)
+                return {"sourceImages": 1, "assets": 1, "duplicates": 0}
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MWB_CLOUD_SERVER_URL": "https://asset.example.com",
+                    "MWB_CLOUD_SYNC_TOKEN": "token",
+                    "MWB_COLLECTOR_ID": "mac-01",
+                },
+                clear=False,
+            ):
+                summary = manager.sync_job_to_cloud(
+                    "job-1",
+                    scene_tagger=StaticSceneTagger(
+                        SceneTagResult(["餐桌布置", "红白格"], "high", {}, "餐桌布置")
+                    ),
+                    cloud_sync=fake_cloud_sync,
+                )
+
+            self.assertEqual(summary["status"], "completed")
+            self.assertEqual(summary["tagScenes"]["tagged"], 1)
+            self.assertEqual(summary["cloudSync"]["assets"], 1)
+            self.assertEqual(sync_calls[0]["job_id"], "job-1")
+            self.assertEqual(sync_calls[0]["server_url"], "https://asset.example.com")
+            self.assertEqual(sync_calls[0]["token"], "token")
+
+    def test_job_manager_rejects_cloud_sync_before_collection_finishes(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runs_root = Path(temp_dir) / "runs"
+            manager = JobManager(runs_root)
+            record = JobRecord(
+                job_id="job-queued",
+                status="queued",
+                job_dir=runs_root / "job-queued",
+                settings=JobSettings.for_mode("single_image"),
+            )
+            manager._write_record(record)
+
+            with self.assertRaisesRegex(ValueError, "completed or partial"):
+                manager.sync_job_to_cloud("job-queued")
 
     def test_frontend_exposes_asset_center_filters_and_results_grid(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -693,6 +857,52 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("category", app_vue)
         self.assertIn("scene", app_vue)
         self.assertIn("downloadUrl", app_vue)
+
+    def test_frontend_exposes_cloud_sync_action_after_collection(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_vue = (
+            root / "third_party/mobile_image_workbench/frontend/src/App.vue"
+        ).read_text(encoding="utf-8")
+        css = (
+            root / "third_party/mobile_image_workbench/frontend/src/styles.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("打标签并同步云端", app_vue)
+        self.assertIn("/sync-cloud", app_vue)
+        self.assertIn("canSyncToCloud", app_vue)
+        self.assertIn("cloud-sync-actions", css)
+
+    def test_mobile_deploy_scripts_cover_mac_mini_and_cloud_server(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        mac_script = (
+            root / "third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
+        ).read_text(encoding="utf-8")
+        server_script = (
+            root / "third_party/mobile_deploy/server/install_asset_center_systemd.sh"
+        ).read_text(encoding="utf-8")
+        readme = (root / "third_party/mobile_deploy/README.md").read_text(
+            encoding="utf-8"
+        )
+        mac_env = (
+            root / "third_party/mobile_deploy/mac-mini/workbench.env.example"
+        ).read_text(encoding="utf-8")
+        server_env = (
+            root / "third_party/mobile_deploy/server/asset-center.env.example"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("LaunchAgents", mac_script)
+        self.assertIn("mobile_image_workbench", mac_script)
+        self.assertIn("<string>serve</string>", mac_script)
+        self.assertIn("MWB_CLOUD_SERVER_URL", mac_env)
+        self.assertIn("DASHSCOPE_API_KEY", mac_env)
+        self.assertIn("systemctl", server_script)
+        self.assertIn("mobile_asset_center", server_script)
+        self.assertIn("serve --env-file", server_script)
+        self.assertIn("nginx", server_script)
+        self.assertIn("ASSET_CENTER_PROFILE=cloud", server_env)
+        self.assertIn("ALIYUN_OSS_BUCKET", server_env)
+        self.assertIn("Mac mini", readme)
+        self.assertIn("云服务器", readme)
 
     def test_job_settings_defaults_match_input_modes(self) -> None:
         from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (

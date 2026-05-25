@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -238,6 +239,93 @@ class JobManager:
     def object_blob(self, bucket: str, key: str) -> AssetBlob:
         return self.asset_library.read_object_blob(bucket, key)
 
+    def sync_job_to_cloud(
+        self,
+        job_id: str,
+        *,
+        scene_tagger: Any | None = None,
+        cloud_sync: Any | None = None,
+    ) -> dict[str, Any]:
+        record = self.get_job(job_id)
+        if record.status not in {"completed", "partial"}:
+            raise ValueError("job must be completed or partial before cloud sync")
+        if record.collector_run_dir is None or not record.collector_run_dir.exists():
+            raise FileNotFoundError("collector run directory is not ready")
+        server_url = os.environ.get("MWB_CLOUD_SERVER_URL", "").strip()
+        token = os.environ.get("MWB_CLOUD_SYNC_TOKEN", "").strip()
+        collector_id = os.environ.get("MWB_COLLECTOR_ID", "").strip()
+        if not server_url:
+            raise ValueError("MWB_CLOUD_SERVER_URL is required")
+        if not token:
+            raise ValueError("MWB_CLOUD_SYNC_TOKEN is required")
+        if not collector_id:
+            raise ValueError("MWB_COLLECTOR_ID is required")
+
+        from .cloud_sync import sync_cloud_bundle
+        from .scene_tagger import (
+            build_scene_tagger,
+            default_vlm_model,
+            tag_missing_scene_assets,
+        )
+
+        category = record.settings.target_category
+        self._append_job_event(
+            record.job_dir, {"name": "cloud_sync_started", "phase": "finish"}
+        )
+        ingest_summary = self.ingest_assets(
+            record.collector_run_dir,
+            job_id=record.job_id,
+            category=category,
+            scene="",
+            input_mode=record.settings.mode,
+        )
+        tagger = scene_tagger or build_scene_tagger(
+            os.environ.get("MWB_SCENE_TAG_PROVIDER", "openai_compatible"),
+            model=os.environ.get("MWB_SCENE_TAG_MODEL") or default_vlm_model(),
+        )
+        tag_summary = tag_missing_scene_assets(
+            self.asset_library,
+            tagger,
+            category=category,
+            job_id=record.job_id,
+            limit=_env_int("MWB_SCENE_TAG_LIMIT", 200),
+        )
+        self._append_job_event(
+            record.job_dir,
+            {
+                "name": "scene_tagging_completed",
+                "phase": "finish",
+                "tagged": tag_summary.get("tagged", 0),
+                "failed": tag_summary.get("failed", 0),
+            },
+        )
+        sync_runner = cloud_sync or sync_cloud_bundle
+        cloud_summary = sync_runner(
+            runs_root=self.root_dir,
+            server_url=server_url,
+            token=token,
+            collector_id=collector_id,
+            category=category,
+            job_id=record.job_id,
+            batch_size=_env_int("MWB_SYNC_BATCH_SIZE", 100),
+        )
+        self._append_job_event(
+            record.job_dir,
+            {
+                "name": "cloud_sync_completed",
+                "phase": "finish",
+                "assets": cloud_summary.get("assets", 0),
+                "sourceImages": cloud_summary.get("sourceImages", 0),
+            },
+        )
+        return {
+            "status": "completed",
+            "jobId": record.job_id,
+            "ingest": ingest_summary,
+            "tagScenes": tag_summary,
+            "cloudSync": cloud_summary,
+        }
+
     def _write_record(self, record: JobRecord) -> None:
         record.job_dir.mkdir(parents=True, exist_ok=True)
         (record.job_dir / "job.json").write_text(
@@ -309,6 +397,13 @@ def _job_status_from_manifest(status: str) -> str:
     if status == "partial":
         return "partial"
     return "failed"
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return int(value)
 
 
 def _record_from_payload(payload: dict[str, Any]) -> JobRecord:

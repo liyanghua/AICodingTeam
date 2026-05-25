@@ -55,6 +55,14 @@ python -m mobile_asset_center serve \
 
 服务启动时会自动确保 PostgreSQL 表结构存在。
 
+云服务器长期部署请使用：
+
+```bash
+sudo bash ../mobile_deploy/server/install_asset_center_systemd.sh
+```
+
+脚本会安装 Python venv、生成 systemd service，并在安装了 Nginx 时写入反代配置。首次运行会生成 `/opt/mobile_asset_center/asset-center.env` 示例，请填写 PG、OSS 和 `ASSET_CENTER_SYNC_TOKEN` 后重跑。
+
 ## 本机同步
 
 ```bash

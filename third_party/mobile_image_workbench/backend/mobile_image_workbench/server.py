@@ -53,6 +53,11 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(summary, HTTPStatus.CREATED)
                 return
+            if parsed.path.startswith("/api/jobs/"):
+                parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
+                if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "sync-cloud":
+                    self._send_json(self.manager.sync_job_to_cloud(parts[2]))
+                    return
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except Exception as exc:
             self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
