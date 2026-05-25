@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobile-asset-center"
+version = "0.1.0"
+description = "Cloud material center for mobile image collection assets"
+requires-python = ">=3.11,<3.14"
+readme = "README.md"
+
+[project.optional-dependencies]
+cloud = ["oss2>=2.18", "psycopg[binary]>=3.2"]
+
+[project.scripts]
+mobile-asset-center = "mobile_asset_center.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "backend"}
+packages = ["mobile_asset_center"]

@@ -16,7 +16,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -515,6 +516,125 @@ button {
   text-decoration: none;
 }
 
+.asset-center {
+  margin-top: 16px;
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.asset-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e9f0;
+}
+
+.asset-header h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.asset-filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.asset-filters label {
+  display: grid;
+  gap: 6px;
+  color: #465667;
+}
+
+.asset-filters input,
+.asset-filters select {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #c8d1dc;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fff;
+  color: #1f2933;
+}
+
+.asset-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  color: #52606d;
+}
+
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.asset-card {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fbfcfd;
+}
+
+.asset-card img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: block;
+  object-fit: cover;
+  background: #eef2f6;
+}
+
+.asset-card-body {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.asset-card-body strong,
+.asset-card-body span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-card-body span {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.asset-card-body a {
+  width: fit-content;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #eef2f6;
+  color: #243b53;
+  text-decoration: none;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.asset-empty {
+  min-height: 96px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #c8d1dc;
+  border-radius: 8px;
+  color: #6b7280;
+  background: #fbfcfd;
+}
+
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -536,7 +656,8 @@ button {
   }
 
   .segmented,
-  .settings-grid {
+  .settings-grid,
+  .asset-filters {
     grid-template-columns: 1fr;
   }
 

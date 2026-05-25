@@ -21,6 +21,15 @@ RISK_TEXTS = {
     "permission_prompt": ["允许访问", "照片和视频", "权限"],
 }
 ALBUM_GRID_MARKERS = ("全部照片", "收起", "RecyclerView", "GridView")
+IMAGE_SEARCH_ALBUM_PAGE_MARKERS = (
+    "相册",
+    "拍照",
+    "全部照片",
+    "最近项目",
+    "允许访问",
+    "RecyclerView",
+    "GridView",
+)
 HOME_PAGE_MARKERS = ("首页", "发现", "关注", "推荐")
 SEARCH_PAGE_MARKERS = (
     "取消",
@@ -190,8 +199,25 @@ def run_deterministic_item(
             template_hits=template_hits,
         )
 
-    for point_name in ("image_search_button", "album_entry"):
-        tap_profile(point_name, f"tap_{point_name}")
+    if not _tap_image_search_button_until_album_page(
+        device=device,
+        profile=profile,
+        xhs_package=xhs_package,
+        timeout_seconds=save_poll_seconds,
+        sleep_func=sleep_func,
+        item_id=item.item_id,
+        tap_profile=tap_profile,
+        step=step,
+    ):
+        return _failed_item(
+            item=item,
+            message="image_search_album_not_reached_after_retries",
+            event="image_search_album_not_reached_after_retries",
+            step_count=step_count,
+            template_hits=template_hits,
+        )
+
+    tap_profile("album_entry", "tap_album_entry")
 
     album_image_targets = _wait_for_album_thumbnail_targets(
         device=device,
@@ -407,6 +433,15 @@ def run_deterministic_item(
     rank_failures.extend(image_failures)
 
     keyword_queries = _keyword_queries(item, keyword_top_n)
+    step(
+        "keyword_search_plan",
+        {
+            "keyword_top_n": keyword_top_n,
+            "keyword_result_top_n": keyword_target_count,
+            "keyword_query_count": len(keyword_queries),
+            "queries": keyword_queries,
+        },
+    )
     image_stage_blocked = any(
         failure.get("event") == "result_list_not_restored_after_back"
         for failure in image_failures
@@ -519,11 +554,15 @@ def run_deterministic_item(
 
     expected_count = image_target_count + keyword_target_count * len(keyword_queries)
     status = "completed" if len(images) >= expected_count else "partial"
-    message = (
-        f"downloaded {len(images)} of {expected_count} image search and keyword results"
-        if expected_count
-        else "image search results reached"
-    )
+    if expected_count:
+        result_label = (
+            "image search and keyword results"
+            if keyword_queries
+            else "image search results"
+        )
+        message = f"downloaded {len(images)} of {expected_count} {result_label}"
+    else:
+        message = "image search results reached"
     result = ItemResult(
         item_id=item.item_id,
         keyword=item.keyword,
@@ -594,9 +633,16 @@ def run_deterministic_collect(
                 status="failed",
                 keyword_candidates=item.keyword_candidates,
                 message=str(exc),
-                risk_events=[{"event": "deterministic_failed", "reason": str(exc)}],
+                risk_events=[_deterministic_failure_event(exc)],
             )
         write_result(result)
+
+
+def _deterministic_failure_event(exc: Exception) -> dict:
+    reason = str(exc)
+    if "INJECT_EVENTS" in reason or "Injecting input events" in reason:
+        return {"event": "device_input_permission_required", "reason": reason}
+    return {"event": "deterministic_failed", "reason": reason}
 
 
 def _best_keyword_hit(candidates: list[str], ui_text: str) -> str:
@@ -751,6 +797,135 @@ def _recover_home_after_search_box_miss(
         "back_source": back_source,
         "wait_seconds": wait_seconds,
         "home_reached": home_reached,
+    }
+
+
+def _tap_image_search_button_until_album_page(
+    *,
+    device,
+    profile: CoordinateProfile,
+    xhs_package: str,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+    tap_profile: Callable[[str, str, dict | None], None],
+    step: Callable[[str, dict | None], None],
+    max_attempts: int = 3,
+) -> bool:
+    for attempt in range(1, max_attempts + 1):
+        tap_profile("image_search_button", "tap_image_search_button", {"attempt": attempt})
+        reached = _wait_for_image_search_album_page(
+            device=device,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+        )
+        step(
+            "wait_album_page_after_image_search_button",
+            {
+                "attempt": attempt,
+                "reached": reached,
+                "expected_markers": list(IMAGE_SEARCH_ALBUM_PAGE_MARKERS),
+            },
+        )
+        if reached:
+            return True
+        step(
+            "image_search_button_click_not_on_album_page",
+            {
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "expected_markers": list(IMAGE_SEARCH_ALBUM_PAGE_MARKERS),
+            },
+        )
+        if attempt >= max_attempts:
+            break
+        recover_event = _recover_search_page_after_image_search_button_miss(
+            device=device,
+            profile=profile,
+            xhs_package=xhs_package,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            tap_profile=tap_profile,
+            step=step,
+        )
+        step(
+            "back_after_image_search_button_miss",
+            {
+                "attempt": attempt,
+                **recover_event,
+            },
+        )
+    step(
+        "image_search_album_not_reached_after_retries",
+        {
+            "attempts": max_attempts,
+            "expected_markers": list(IMAGE_SEARCH_ALBUM_PAGE_MARKERS),
+        },
+    )
+    return False
+
+
+def _wait_for_image_search_album_page(
+    *,
+    device,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+) -> bool:
+    return _wait_for_markers(
+        device=device,
+        markers=IMAGE_SEARCH_ALBUM_PAGE_MARKERS,
+        timeout_seconds=timeout_seconds,
+        sleep_func=sleep_func,
+        item_id=item_id,
+    )
+
+
+def _recover_search_page_after_image_search_button_miss(
+    *,
+    device,
+    profile: CoordinateProfile,
+    xhs_package: str,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+    tap_profile: Callable[[str, str, dict | None], None],
+    step: Callable[[str, dict | None], None],
+) -> dict:
+    press_back = getattr(device, "press_back", None)
+    if press_back is not None:
+        press_back()
+        back_source = "press_back"
+    else:
+        device.start_app(xhs_package)
+        back_source = "start_app"
+    wait_seconds = min(1.0, timeout_seconds) if timeout_seconds else 0
+    if wait_seconds:
+        sleep_func(wait_seconds)
+    search_reached = _wait_for_search_page(
+        device=device,
+        timeout_seconds=timeout_seconds,
+        sleep_func=sleep_func,
+        item_id=item_id,
+    )
+    if not search_reached and back_source == "start_app":
+        search_reached = _tap_search_box_until_search_page(
+            device=device,
+            profile=profile,
+            xhs_package=xhs_package,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            tap_profile=tap_profile,
+            step=step,
+            max_attempts=1,
+        )
+    return {
+        "back_source": back_source,
+        "wait_seconds": wait_seconds,
+        "search_reached": search_reached,
     }
 
 

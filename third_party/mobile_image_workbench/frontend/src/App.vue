@@ -74,6 +74,7 @@
             </button>
           </div>
         </div>
+        <span v-if="pasteMessage" class="inline-status">{{ pasteMessage }}</span>
 
         <div v-if="configFile" class="file-row">
           <FileSpreadsheet :size="18" />
@@ -232,11 +233,76 @@
         </div>
       </aside>
     </section>
+
+    <section class="asset-center">
+      <div class="asset-header">
+        <div>
+          <span class="eyebrow">素材中心</span>
+          <h2>按品类、场景和关键词查找已采集图片</h2>
+        </div>
+        <button class="ghost-button" type="button" @click="loadAssets">
+          查询素材
+        </button>
+      </div>
+
+      <div class="asset-filters">
+        <label>
+          品类
+          <input v-model="assetFilters.category" placeholder="例如：桌垫" type="text" />
+        </label>
+        <label>
+          场景
+          <input v-model="assetFilters.scene" placeholder="例如：餐桌布置" type="text" />
+        </label>
+        <label>
+          关键词
+          <input v-model="assetFilters.query" placeholder="红格、买家秀、白底" type="text" />
+        </label>
+        <label>
+          来源
+          <select v-model="assetFilters.stage">
+            <option value="">全部来源</option>
+            <option value="image_search">图搜结果</option>
+            <option value="keyword_search">关键词结果</option>
+          </select>
+        </label>
+        <label>
+          状态
+          <select v-model="assetFilters.status">
+            <option value="available">可用素材</option>
+            <option value="duplicate">重复图片</option>
+            <option value="">全部状态</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="asset-summary">
+        <span>{{ isLoadingAssets ? '正在查询素材' : `共 ${assetTotal} 张匹配素材` }}</span>
+        <span v-if="assetMessage">{{ assetMessage }}</span>
+      </div>
+
+      <div v-if="assetResults.length" class="asset-grid">
+        <article v-for="asset in assetResults" :key="asset.assetId" class="asset-card">
+          <a :href="asset.imageUrl" target="_blank">
+            <img :src="asset.imageUrl" :alt="asset.query || asset.category || '采集素材'" />
+          </a>
+          <div class="asset-card-body">
+            <strong>{{ asset.category || '未分类' }} · {{ asset.scene || '未标注场景' }}</strong>
+            <span>{{ stageLabel(asset.stage) }} · Rank {{ asset.rank || '-' }}</span>
+            <span v-if="asset.query">关键词：{{ asset.query }}</span>
+            <a :href="asset.downloadUrl" download>下载单图</a>
+          </div>
+        </article>
+      </div>
+      <div v-else class="asset-empty">
+        暂无匹配素材。完成一次采集后，素材会自动进入这里。
+      </div>
+    </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import {
   Activity,
   Download,
@@ -281,6 +347,19 @@ type RemoteBusinessEvent = {
   raw?: Record<string, unknown>;
 };
 
+type AssetItem = {
+  assetId: string;
+  imageUrl: string;
+  downloadUrl: string;
+  category: string;
+  scene: string;
+  query: string;
+  stage: string;
+  rank?: number;
+  status: string;
+  objectKey: string;
+};
+
 const modeOptions = [
   { value: 'single_image' as const, label: '单图片', icon: FileImage },
   { value: 'batch_images' as const, label: '批量图片', icon: Images },
@@ -297,6 +376,7 @@ const folderInput = ref<HTMLInputElement | null>(null);
 const isDragging = ref(false);
 const isSubmitting = ref(false);
 const doctorMessage = ref('');
+const pasteMessage = ref('');
 const jobId = ref('');
 const jobStatus = ref('idle');
 const events = ref<BusinessEvent[]>([]);
@@ -306,6 +386,17 @@ const timelineRef = ref<HTMLElement | null>(null);
 const autoFollowTimeline = ref(true);
 const hasUnreadTimelineEvents = ref(false);
 const TIMELINE_BOTTOM_THRESHOLD = 32;
+const assetResults = ref<AssetItem[]>([]);
+const assetTotal = ref(0);
+const isLoadingAssets = ref(false);
+const assetMessage = ref('');
+const assetFilters = reactive({
+  category: '',
+  scene: '',
+  query: '',
+  stage: '',
+  status: 'available',
+});
 
 const settings = reactive({
   imageTopN: 10,
@@ -414,12 +505,17 @@ const statusLabel = computed(() => {
   return labels[jobStatus.value] || jobStatus.value;
 });
 
+onMounted(() => {
+  loadAssets();
+});
+
 function setMode(nextMode: JobMode) {
   mode.value = nextMode;
   imageFiles.value = [];
   configFile.value = null;
   configSidecarFiles.value = [];
   configProjectFiles.value = [];
+  pasteMessage.value = '';
   if (nextMode === 'config_file') {
     settings.imageTopN = 10;
     settings.keywordTopN = 4;
@@ -433,27 +529,60 @@ function setMode(nextMode: JobMode) {
 
 function handleDrop(event: DragEvent) {
   isDragging.value = false;
+  pasteMessage.value = '';
   const files = Array.from(event.dataTransfer?.files || []);
   addFiles(files);
 }
 
 function handleFilePick(event: Event) {
   const input = event.target as HTMLInputElement;
+  pasteMessage.value = '';
   addFiles(Array.from(input.files || []));
   input.value = '';
 }
 
 function handleFolderPick(event: Event) {
   const input = event.target as HTMLInputElement;
+  pasteMessage.value = '';
   addProjectFolder(Array.from(input.files || []));
   input.value = '';
 }
 
 function handlePaste(event: ClipboardEvent) {
-  const files = Array.from(event.clipboardData?.files || []);
-  if (files.length) {
-    addFiles(files);
+  const files = clipboardFilesFromPaste(event);
+  const imageCount = files.filter((file) => file.type.startsWith('image/')).length;
+  if (!imageCount) {
+    pasteMessage.value = '没有识别到图片，请从 Finder 多选图片后复制，或使用选择文件';
+    return;
   }
+  event.preventDefault();
+  addFiles(files);
+  pasteMessage.value = `已粘贴 ${mode.value === 'single_image' ? 1 : imageCount} 张图片`;
+}
+
+function clipboardFilesFromPaste(event: ClipboardEvent) {
+  const directFiles = Array.from(event.clipboardData?.files || []);
+  const itemFiles = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+  return dedupeFiles(directFiles.concat(itemFiles));
+}
+
+function dedupeFiles(files: File[]) {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    const key = fileSignature(file);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function fileSignature(file: File) {
+  return [file.name, file.size, file.lastModified, file.type].join('|');
 }
 
 function addFiles(files: File[]) {
@@ -736,9 +865,44 @@ async function pollJob(id: string) {
     jobStatus.value = payload.status;
     if (!['queued', 'running'].includes(payload.status)) {
       await refreshEvents(id);
+      await loadAssets();
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
+}
+
+async function loadAssets() {
+  isLoadingAssets.value = true;
+  assetMessage.value = '';
+  try {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(assetFilters)) {
+      if (value) {
+        params.set(key, value);
+      }
+    }
+    const response = await fetch(`/api/library/assets?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error('素材查询失败');
+    }
+    const payload = await response.json();
+    assetResults.value = payload.assets || [];
+    assetTotal.value = payload.total || assetResults.value.length;
+  } catch (error) {
+    assetMessage.value = error instanceof Error ? error.message : '素材查询失败';
+  } finally {
+    isLoadingAssets.value = false;
+  }
+}
+
+function stageLabel(stage: string) {
+  if (stage === 'keyword_search') {
+    return '关键词结果';
+  }
+  if (stage === 'image_search') {
+    return '图搜结果';
+  }
+  return stage || '未知来源';
 }
 </script>

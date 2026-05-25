@@ -220,7 +220,9 @@ async def _run_loaded_items_async(
             manifest=manifest,
             write_result=write_result,
         )
-        manifest.status = "completed" if not manifest.risk_events else "partial"
+        manifest.status = _manifest_status_from_results(
+            manifest.results, manifest.risk_events
+        )
         write_manifest(manifest)
         return manifest
 
@@ -275,6 +277,18 @@ async def _run_loaded_items_async(
     manifest.status = "completed" if not manifest.risk_events else "partial"
     write_manifest(manifest)
     return manifest
+
+
+def _manifest_status_from_results(
+    results: list[ItemResult], risk_events: list[dict] | None = None
+) -> str:
+    if not results:
+        return "failed" if risk_events else "completed"
+    if all(result.status == "failed" and result.collected_count == 0 for result in results):
+        return "failed"
+    if all(result.status == "completed" for result in results):
+        return "completed"
+    return "partial"
 
 
 def run_collect(

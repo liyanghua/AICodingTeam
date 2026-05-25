@@ -58,6 +58,19 @@ PYTHONPATH=".:../xhs_collector" ../xhs_collector/.venv/bin/python -m mobile_imag
   --image-top-n 10
 ```
 
+本机场景标签：
+
+```bash
+export DASHSCOPE_API_KEY="your-dashscope-api-key"
+
+PYTHONPATH=".:../xhs_collector" ../xhs_collector/.venv/bin/python -m mobile_image_workbench tag-scenes \
+  --runs-root runs \
+  --category "桌垫" \
+  --limit 200
+```
+
+`tag-scenes` 默认使用千问 `qwen-vl-max`，默认兼容模式地址为 `https://dashscope.aliyuncs.com/compatible-mode/v1`。如需覆盖，可传 `--model` 或设置 `DASHSCOPE_BASE_URL`。
+
 ## 默认值
 
 - 单图片/批量图片：每张原图默认采集 10 张图搜结果，不跑关键词二次搜索。

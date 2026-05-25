@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .asset_library import AssetBlob, AssetLibrary
 from .collector_bridge import (
     run_config_file_collect,
     run_direct_items_collect,
@@ -20,6 +21,7 @@ from .inputs import (
     write_config_file_from_payload,
 )
 from .settings import JobSettings
+from .storage import FilesystemObjectStorageClient
 
 
 @dataclass(frozen=True)
@@ -49,10 +51,18 @@ class JobManager:
         self,
         root_dir: Path,
         base_collector_config: Path | None = None,
+        asset_library: AssetLibrary | None = None,
     ) -> None:
         self.root_dir = root_dir
         self.base_collector_config = base_collector_config
         self.root_dir.mkdir(parents=True, exist_ok=True)
+        self.asset_library = asset_library or AssetLibrary(
+            self.root_dir / "asset_center.sqlite3",
+            FilesystemObjectStorageClient(
+                self.root_dir / "object_storage",
+                bucket="mobile-image-assets",
+            ),
+        )
 
     def create_job(self, payload: dict[str, Any], *, start: bool = True) -> JobRecord:
         settings = JobSettings.from_payload(payload)
@@ -144,6 +154,16 @@ class JobManager:
             self._append_job_event(
                 record.job_dir, {"name": "result_exports_ready", "phase": "finish"}
             )
+            self.ingest_assets(
+                manifest.output_dir,
+                job_id=record.job_id,
+                category=record.settings.target_category,
+                scene="",
+                input_mode=record.settings.mode,
+            )
+            self._append_job_event(
+                record.job_dir, {"name": "asset_center_ready", "phase": "finish"}
+            )
             status = _job_status_from_manifest(manifest.status)
             updated = _replace_record(
                 record,
@@ -189,6 +209,34 @@ class JobManager:
             "message": "工作台服务已启动；真机检查请在采集前确认 adb devices 可见手机。",
             "safety": "仅支持手动登录，不处理账号密码、验证码绕过或私有接口。",
         }
+
+    def ingest_assets(
+        self,
+        run_dir: Path,
+        *,
+        job_id: str = "",
+        category: str = "",
+        scene: str = "",
+        input_mode: str = "",
+        uploaded_by: str = "",
+    ) -> dict[str, int]:
+        return self.asset_library.ingest_run(
+            run_dir,
+            job_id=job_id,
+            category=category,
+            scene=scene,
+            input_mode=input_mode,
+            uploaded_by=uploaded_by,
+        )
+
+    def search_assets(self, filters: dict[str, Any]) -> dict[str, Any]:
+        return self.asset_library.search_payload(filters)
+
+    def asset_blob(self, asset_id: str) -> AssetBlob:
+        return self.asset_library.read_asset_blob(asset_id)
+
+    def object_blob(self, bucket: str, key: str) -> AssetBlob:
+        return self.asset_library.read_object_blob(bucket, key)
 
     def _write_record(self, record: JobRecord) -> None:
         record.job_dir.mkdir(parents=True, exist_ok=True)
