@@ -2,12 +2,116 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
 class MobileAssetCenterTests(unittest.TestCase):
+    def test_asset_center_defaults_to_local_profile_without_cloud_env(self) -> None:
+        from third_party.mobile_asset_center.backend.mobile_asset_center.server import (
+            asset_center_runtime_config,
+        )
+
+        env = {}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = asset_center_runtime_config(Path(temp_dir), env=env)
+
+        self.assertEqual(config["profile"], "local")
+        self.assertEqual(config["repository"], "sqlite")
+        self.assertEqual(config["storage"], "filesystem")
+
+    def test_asset_center_cloud_profile_requires_pg_and_oss_variables(self) -> None:
+        from third_party.mobile_asset_center.backend.mobile_asset_center.server import (
+            asset_center_runtime_config,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(ValueError, "ASSET_CENTER_DB_DSN"):
+                asset_center_runtime_config(
+                    Path(temp_dir),
+                    env={
+                        "ASSET_CENTER_PROFILE": "cloud",
+                        "ASSET_CENTER_STORAGE_PROVIDER": "aliyun_oss",
+                    },
+                )
+
+    def test_asset_center_env_file_loads_without_overriding_existing_env(self) -> None:
+        from third_party.mobile_asset_center.backend.mobile_asset_center.cli import (
+            main,
+        )
+        from third_party.mobile_asset_center.backend.mobile_asset_center.server import (
+            asset_center_runtime_config,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_file = root / ".env.asset.local"
+            env_file.write_text(
+                "ASSET_CENTER_PROFILE=local\n"
+                "ASSET_CENTER_SYNC_TOKEN=file-token\n",
+                encoding="utf-8",
+            )
+
+            class FakeServer:
+                def serve_forever(self) -> None:
+                    return None
+
+            captured: dict = {}
+
+            def fake_serve(**kwargs):
+                captured.update(kwargs)
+                return FakeServer()
+
+            with mock.patch.dict(os.environ, {"ASSET_CENTER_SYNC_TOKEN": "real-env-token"}, clear=False):
+                with mock.patch(
+                    "third_party.mobile_asset_center.backend.mobile_asset_center.cli.serve",
+                    fake_serve,
+                ):
+                    status = main(
+                        [
+                            "serve",
+                            "--env-file",
+                            str(env_file),
+                            "--data-root",
+                            str(root / "data"),
+                            "--static-root",
+                            str(root),
+                        ]
+                    )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(captured["sync_token"], "real-env-token")
+            self.assertEqual(
+                asset_center_runtime_config(captured["data_root"])["profile"], "local"
+            )
+
+    def test_asset_center_cloud_profile_uses_standard_env_for_pg_and_oss(self) -> None:
+        from third_party.mobile_asset_center.backend.mobile_asset_center.server import (
+            asset_center_runtime_config,
+        )
+
+        env = {
+            "ASSET_CENTER_PROFILE": "cloud",
+            "ASSET_CENTER_DB_DSN": "postgresql://asset_user:secret@example.com:5432/assets",
+            "ASSET_CENTER_STORAGE_PROVIDER": "aliyun_oss",
+            "ALIYUN_OSS_BUCKET": "asset-bucket",
+            "ALIYUN_OSS_ENDPOINT": "oss-cn-hangzhou.aliyuncs.com",
+            "ALIYUN_OSS_ACCESS_KEY_ID": "ak",
+            "ALIYUN_OSS_ACCESS_KEY_SECRET": "sk",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = asset_center_runtime_config(Path(temp_dir), env=env)
+
+        self.assertEqual(config["profile"], "cloud")
+        self.assertEqual(config["repository"], "postgres")
+        self.assertEqual(config["storage"], "aliyun_oss")
+
     def test_cloud_ingest_writes_objects_metadata_and_scene_indexes(self) -> None:
         from third_party.mobile_asset_center.backend.mobile_asset_center.ingest import (
             ingest_bundle,
@@ -174,6 +278,66 @@ class MobileAssetCenterTests(unittest.TestCase):
             self.assertEqual(summary["duplicates"], 1)
             self.assertEqual(len(desk_assets["assets"]), 1)
             self.assertEqual(len(placemat_assets["assets"]), 1)
+
+            categories = {item["category"]: item["count"] for item in repository.categories()}
+            self.assertEqual(categories["桌垫"], 1)
+            self.assertEqual(categories["餐垫"], 1)
+
+            desk_scenes = {item["scene"]: item["count"] for item in repository.scenes(category="桌垫")}
+            self.assertEqual(desk_scenes, {"餐桌布置": 1})
+
+    def test_postgres_scene_query_is_group_by_safe(self) -> None:
+        from third_party.mobile_asset_center.backend.mobile_asset_center.repository import (
+            PostgresAssetCenterRepository,
+        )
+
+        case = self
+
+        class FakeResult:
+            def __init__(self, rows=None):
+                self.rows = rows or []
+                self.rowcount = 0
+
+            def fetchall(self):
+                return self.rows
+
+            def fetchone(self):
+                return self.rows[0] if self.rows else None
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=None):
+                if "SELECT t.tag AS scene" in sql:
+                    case.assertIn("MIN(CASE WHEN t.tag = a.scene THEN 0 ELSE 1 END)", sql)
+                return FakeResult([])
+
+        fake_psycopg = types.ModuleType("psycopg")
+        fake_psycopg.connect = lambda *args, **kwargs: FakeConnection()
+        fake_rows = types.ModuleType("psycopg.rows")
+        fake_rows.dict_row = object()
+
+        with mock.patch.dict(
+            sys.modules,
+            {"psycopg": fake_psycopg, "psycopg.rows": fake_rows},
+        ):
+            repository = PostgresAssetCenterRepository("postgresql://example")
+
+        self.assertEqual(repository.scenes(category="桌垫"), [])
+
+    def test_query_param_decodes_raw_utf8_chinese_values(self) -> None:
+        from third_party.mobile_asset_center.backend.mobile_asset_center.server import (
+            _query_param,
+        )
+
+        raw_utf8_value = "桌垫".encode("utf-8").decode("latin-1")
+
+        self.assertEqual(_query_param({"category": ["桌垫"]}, "category"), "桌垫")
+        self.assertEqual(_query_param({"category": [raw_utf8_value]}, "category"), "桌垫")
 
     def test_cloud_agent_query_turns_business_text_into_asset_filters(self) -> None:
         from third_party.mobile_asset_center.backend.mobile_asset_center.agent import (

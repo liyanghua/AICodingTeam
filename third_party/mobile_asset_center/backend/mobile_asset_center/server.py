@@ -33,7 +33,7 @@ class AssetCenterRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     {
                         "scenes": self.repository.scenes(
-                            category=(params.get("category") or [""])[0]
+                            category=_query_param(params, "category")
                         )
                     }
                 )
@@ -42,12 +42,12 @@ class AssetCenterRequestHandler(BaseHTTPRequestHandler):
                 params = parse_qs(parsed.query)
                 self._send_json(
                     self.repository.search_assets(
-                        category=(params.get("category") or [""])[0],
-                        scene=(params.get("scene") or [""])[0],
-                        q=(params.get("q") or params.get("query") or [""])[0],
-                        asset_type=(params.get("assetType") or [""])[0],
-                        cursor=(params.get("cursor") or [""])[0],
-                        limit=int((params.get("limit") or ["40"])[0]),
+                        category=_query_param(params, "category"),
+                        scene=_query_param(params, "scene"),
+                        q=_query_param(params, "q", "query"),
+                        asset_type=_query_param(params, "assetType"),
+                        cursor=_query_param(params, "cursor"),
+                        limit=int(_query_param(params, "limit", default="40")),
                     )
                 )
                 return
@@ -155,16 +155,54 @@ def serve(
     return ThreadingHTTPServer((host, port), handler)
 
 
+def asset_center_runtime_config(
+    data_root: Path, *, env: dict[str, str] | None = None
+) -> dict[str, str]:
+    values = os.environ if env is None else env
+    profile = values.get("ASSET_CENTER_PROFILE", "local").strip() or "local"
+    if profile not in {"local", "cloud"}:
+        raise ValueError("ASSET_CENTER_PROFILE must be local or cloud")
+    if profile == "local":
+        return {
+            "profile": "local",
+            "repository": "sqlite",
+            "storage": "filesystem",
+            "database_path": str(data_root / "asset_center.sqlite3"),
+            "objects_root": str(data_root / "objects"),
+        }
+    _require_env(
+        values,
+        [
+            "ASSET_CENTER_DB_DSN",
+            "ALIYUN_OSS_BUCKET",
+            "ALIYUN_OSS_ENDPOINT",
+            "ALIYUN_OSS_ACCESS_KEY_ID",
+            "ALIYUN_OSS_ACCESS_KEY_SECRET",
+        ],
+    )
+    storage_provider = values.get("ASSET_CENTER_STORAGE_PROVIDER", "aliyun_oss").strip()
+    if storage_provider != "aliyun_oss":
+        raise ValueError("cloud profile requires ASSET_CENTER_STORAGE_PROVIDER=aliyun_oss")
+    return {
+        "profile": "cloud",
+        "repository": "postgres",
+        "storage": "aliyun_oss",
+        "dsn": values["ASSET_CENTER_DB_DSN"],
+        "bucket": values["ALIYUN_OSS_BUCKET"],
+        "endpoint": values["ALIYUN_OSS_ENDPOINT"],
+    }
+
+
 def _build_repository(data_root: Path):
-    dsn = os.environ.get("ASSET_CENTER_DB_DSN", "").strip()
-    if dsn:
-        return PostgresAssetCenterRepository(dsn)
+    config = asset_center_runtime_config(data_root)
+    if config["repository"] == "postgres":
+        return PostgresAssetCenterRepository(config["dsn"])
     return SqliteAssetCenterRepository(data_root / "asset_center.sqlite3")
 
 
 def _build_storage(data_root: Path):
-    provider = os.environ.get("ASSET_CENTER_STORAGE_PROVIDER", "filesystem").strip()
-    if provider == "aliyun_oss":
+    config = asset_center_runtime_config(data_root)
+    if config["storage"] == "aliyun_oss":
         return AliyunOssStorage(
             bucket=os.environ["ALIYUN_OSS_BUCKET"],
             endpoint=os.environ["ALIYUN_OSS_ENDPOINT"],
@@ -173,6 +211,29 @@ def _build_storage(data_root: Path):
             url_expires_seconds=int(os.environ.get("ASSET_CENTER_URL_EXPIRES_SECONDS", "3600")),
         )
     return FilesystemCloudStorage(data_root / "objects", bucket="cloud-assets")
+
+
+def _require_env(values: dict[str, str] | os._Environ[str], names: list[str]) -> None:
+    missing = [name for name in names if not values.get(name, "").strip()]
+    if missing:
+        raise ValueError(f"missing required cloud config: {', '.join(missing)}")
+
+
+def _query_param(params: dict[str, list[str]], *names: str, default: str = "") -> str:
+    for name in names:
+        values = params.get(name)
+        if values:
+            return _decode_query_value(values[0])
+    return default
+
+
+def _decode_query_value(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
 
 
 def _content_type(path: Path) -> str:

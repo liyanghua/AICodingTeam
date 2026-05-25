@@ -173,7 +173,7 @@ class SqliteAssetCenterRepository:
                 """
                 SELECT category, COUNT(*) AS count
                 FROM assets
-                WHERE category != ''
+                WHERE category != '' AND status = 'available'
                 GROUP BY category
                 ORDER BY count DESC, category ASC
                 """
@@ -181,7 +181,7 @@ class SqliteAssetCenterRepository:
         return [{"category": row["category"], "count": row["count"]} for row in rows]
 
     def scenes(self, *, category: str = "") -> list[dict[str, Any]]:
-        clauses = ["t.tag_type = 'scene'"]
+        clauses = ["t.tag_type = 'scene'", "a.status = 'available'"]
         params: list[Any] = []
         if category:
             clauses.append("a.category = ?")
@@ -189,15 +189,15 @@ class SqliteAssetCenterRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT t.tag AS scene, COUNT(*) AS count
+                SELECT
+                  t.tag AS scene,
+                  COUNT(*) AS count,
+                  MIN(CASE WHEN t.tag = a.scene THEN 0 ELSE 1 END) AS kind_order
                 FROM asset_tags t
                 JOIN assets a ON a.id = t.asset_id
                 WHERE {" AND ".join(clauses)}
                 GROUP BY t.tag
-                ORDER BY
-                  CASE WHEN t.tag = a.scene THEN 0 ELSE 1 END,
-                  count DESC,
-                  t.tag ASC
+                ORDER BY kind_order ASC, count DESC, t.tag ASC
                 """,
                 params,
             ).fetchall()
@@ -300,7 +300,7 @@ class SqliteAssetCenterRepository:
         return [str(row["tag"]) for row in rows]
 
     def _scene_kind(self, scene: str, *, category: str = "") -> str:
-        clauses = ["scene = ?"]
+        clauses = ["scene = ?", "status = 'available'"]
         params: list[Any] = [scene]
         if category:
             clauses.append("category = ?")
@@ -548,7 +548,7 @@ class PostgresAssetCenterRepository:
                 """
                 SELECT category, COUNT(*) AS count
                 FROM assets
-                WHERE category != ''
+                WHERE category != '' AND status = 'available'
                 GROUP BY category
                 ORDER BY count DESC, category ASC
                 """
@@ -556,7 +556,7 @@ class PostgresAssetCenterRepository:
         return [dict(row) for row in rows]
 
     def scenes(self, *, category: str = "") -> list[dict[str, Any]]:
-        clauses = ["t.tag_type = 'scene'"]
+        clauses = ["t.tag_type = 'scene'", "a.status = 'available'"]
         params: list[Any] = []
         if category:
             clauses.append("a.category = %s")
@@ -564,15 +564,15 @@ class PostgresAssetCenterRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT t.tag AS scene, COUNT(*) AS count
+                SELECT
+                  t.tag AS scene,
+                  COUNT(*) AS count,
+                  MIN(CASE WHEN t.tag = a.scene THEN 0 ELSE 1 END) AS kind_order
                 FROM asset_tags t
                 JOIN assets a ON a.id = t.asset_id
                 WHERE {" AND ".join(clauses)}
                 GROUP BY t.tag
-                ORDER BY
-                  CASE WHEN t.tag = a.scene THEN 0 ELSE 1 END,
-                  count DESC,
-                  t.tag ASC
+                ORDER BY kind_order ASC, count DESC, t.tag ASC
                 """,
                 params,
             ).fetchall()
@@ -674,7 +674,7 @@ class PostgresAssetCenterRepository:
         return [str(row["tag"]) for row in rows]
 
     def _scene_kind(self, scene: str, *, category: str = "") -> str:
-        clauses = ["scene = %s"]
+        clauses = ["scene = %s", "status = 'available'"]
         params: list[Any] = [scene]
         if category:
             clauses.append("category = %s")

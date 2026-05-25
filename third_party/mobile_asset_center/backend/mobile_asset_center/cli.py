@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
+from .env import load_env_file
 from .server import serve
 
 
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int, default=8876)
     serve_parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     serve_parser.add_argument("--static-root", type=Path, default=DEFAULT_FRONTEND)
+    serve_parser.add_argument("--env-file", type=Path, default=None)
     serve_parser.add_argument("--sync-token", default=os.environ.get("ASSET_CENTER_SYNC_TOKEN", ""))
     return parser
 
@@ -27,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "serve":
+        load_env_file(args.env_file)
+        if not args.sync_token:
+            args.sync_token = os.environ.get("ASSET_CENTER_SYNC_TOKEN", "")
         server = serve(
             host=args.host,
             port=args.port,
