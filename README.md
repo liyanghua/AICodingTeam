@@ -31,6 +31,7 @@ python -m growth_dev code \
 python -m growth_dev team status --run-id <run-id> --summary
 python -m growth_dev team watch --run-id <run-id>
 python -m growth_dev team diff --run-id <run-id>
+python -m growth_dev team memory export --run-id <run-id> --vault-dir /path/to/ObsidianVault
 python -m growth_dev review --run-id <run-id>
 python -m growth_dev test --run-id <run-id>
 python -m growth_dev report --run-id <run-id>
@@ -59,15 +60,15 @@ Runs are written to `runs/<run_id>/`. Domain packs live under `domains/`; `xhs_b
 
 ## Project Skills
 
-The first project-level skills live under `skills/` and are indexed by `skills/registry.yaml`. They are the shared method layer for turning a brief into an AI-coding-ready task package, while `tasks/current/` and `runs/<run_id>/` remain the source of truth for each concrete run.
+The first project-level production skills live under `skills/` and are indexed by `skills/registry.yaml`. They are the shared method layer for turning a brief into an AI-coding-ready task package, while `tasks/current/` and `runs/<run_id>/` remain the source of truth for each concrete run.
 
 Current call order:
 
 ```text
-requirement_grilling -> requirement_to_prd -> repo_context_compiler -> prd_to_task_slices -> tech_spec_to_tdd -> diagnose_failure
+using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality
 ```
 
-This phase is documentation/registry only; the runtime does not auto-execute these skills yet.
+This phase is documentation/registry only; the runtime does not auto-execute these skills yet. Skills are not better because there are more of them: the active registry keeps only 8 P0 skills, defaults to one primary skill per phase, and allows at most one companion skill when a gate needs it.
 
 ## Codex executor
 
@@ -106,6 +107,23 @@ The Week 2 loop is intentionally observable before it is automatically merged:
 Project-level third-party provider config is read from `.env` only for the child Codex process. The key is injected as `AICODEMIRROR_KEY` and is not written to run artifacts.
 
 Every team run also writes `events.jsonl` as a stage timeline and `process.json` for background process metadata.
+
+### Obsidian project memory
+
+The first memory layer is a manual Markdown export for Obsidian. It reads existing `runs/<run_id>/` artifacts and writes business-friendly project evolution notes into the selected vault without changing runtime behavior or injecting memory into future Codex prompts.
+
+```bash
+python -m growth_dev.cli team memory export \
+  --run-id <run-id> \
+  --vault-dir /path/to/ObsidianVault
+
+python -m growth_dev.cli team memory export \
+  --all \
+  --limit 50 \
+  --vault-dir /path/to/ObsidianVault
+```
+
+Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
 
 ### Local dashboard
 

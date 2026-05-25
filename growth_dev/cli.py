@@ -118,6 +118,17 @@ def _build_parser() -> argparse.ArgumentParser:
     team_apply.add_argument("--repo-root", default=".")
     team_apply.set_defaults(func=_cmd_team_apply)
 
+    team_memory = team_sub.add_parser("memory", help="Export team run memory to Obsidian Markdown")
+    team_memory_sub = team_memory.add_subparsers(dest="memory_command", required=True)
+    team_memory_export = team_memory_sub.add_parser("export", help="Export run summaries to an Obsidian vault")
+    memory_target = team_memory_export.add_mutually_exclusive_group(required=True)
+    memory_target.add_argument("--run-id", default=None)
+    memory_target.add_argument("--all", dest="export_all", action="store_true")
+    team_memory_export.add_argument("--runs-dir", default="runs")
+    team_memory_export.add_argument("--vault-dir", required=True)
+    team_memory_export.add_argument("--limit", type=int, default=50)
+    team_memory_export.set_defaults(func=_cmd_team_memory_export)
+
     team_dashboard = team_sub.add_parser("serve-dashboard", help="Run the local Agent Team dashboard")
     team_dashboard.add_argument("--host", default="127.0.0.1")
     team_dashboard.add_argument("--port", type=int, default=8790)
@@ -538,6 +549,29 @@ def _cmd_team_apply(args: argparse.Namespace) -> int:
         print(completed.stderr or completed.stdout or "git apply failed", file=sys.stderr)
         return 1
     print(f"Applied diff from run {args.run_id} to {repo_root}.")
+    return 0
+
+
+def _cmd_team_memory_export(args: argparse.Namespace) -> int:
+    from .team.memory import export_recent_runs_to_obsidian, export_run_to_obsidian
+
+    try:
+        if getattr(args, "export_all", False):
+            result = export_recent_runs_to_obsidian(
+                runs_dir=Path(args.runs_dir),
+                vault_dir=Path(args.vault_dir),
+                limit=args.limit,
+            )
+        else:
+            result = export_run_to_obsidian(
+                str(args.run_id),
+                runs_dir=Path(args.runs_dir),
+                vault_dir=Path(args.vault_dir),
+            )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

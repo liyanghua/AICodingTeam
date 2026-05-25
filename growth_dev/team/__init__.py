@@ -12,6 +12,7 @@ from .codex import (
     load_aicodemirror_provider_from_env,
 )
 from .domain import load_domain_spec, load_team_spec
+from .memory import export_recent_runs_to_obsidian, export_run_to_obsidian
 from .models import AgentRun, AgentSpec, DomainSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 from .runtime import GateFailure, TeamRuntime, check_gate, default_team_spec, enforce_gate
 
@@ -37,6 +38,8 @@ __all__ = [
     "check_gate",
     "default_team_spec",
     "enforce_gate",
+    "export_recent_runs_to_obsidian",
+    "export_run_to_obsidian",
     "load_domain_spec",
     "load_team_spec",
 ]
