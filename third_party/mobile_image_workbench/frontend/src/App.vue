@@ -5,13 +5,31 @@
         <h1>移动端图片采集工作台</h1>
         <p>用已登录的小红书 App 做低频、可观察的买家秀图片采集。</p>
       </div>
-      <button class="ghost-button" type="button" @click="checkDoctor">
-        <Activity :size="18" />
-        检查环境
-      </button>
+      <div class="topbar-actions">
+        <div class="view-switch" aria-label="工作台视图">
+          <button
+            :class="{ active: activeView === 'workbench' }"
+            type="button"
+            @click="setActiveView('workbench')"
+          >
+            采集工作台
+          </button>
+          <button
+            :class="{ active: activeView === 'admin' }"
+            type="button"
+            @click="setActiveView('admin')"
+          >
+            后台管理
+          </button>
+        </div>
+        <button class="ghost-button" type="button" @click="checkDoctor">
+          <Activity :size="18" />
+          检查环境
+        </button>
+      </div>
     </header>
 
-    <section class="workspace">
+    <section v-if="activeView === 'workbench'" class="workspace">
       <div class="composer">
         <div class="segmented" role="tablist" aria-label="输入模式">
           <button
@@ -246,7 +264,7 @@
       </aside>
     </section>
 
-    <section class="asset-center">
+    <section v-if="activeView === 'workbench'" class="asset-center">
       <div class="asset-header">
         <div>
           <span class="eyebrow">素材中心</span>
@@ -310,6 +328,112 @@
         暂无匹配素材。完成一次采集后，素材会自动进入这里。
       </div>
     </section>
+
+    <section v-else class="admin-page">
+      <div class="admin-header">
+        <div>
+          <span class="eyebrow">后台管理</span>
+          <h2>数据同步和一键部署</h2>
+          <p>执行类操作需要 MWB_ADMIN_TOKEN；SSH 密钥和云端密钥只从服务端环境变量读取。</p>
+        </div>
+        <button class="ghost-button" type="button" @click="loadAdminStatus">
+          <Activity :size="18" />
+          刷新状态
+        </button>
+      </div>
+
+      <div class="admin-grid">
+        <section class="admin-card">
+          <span class="eyebrow">操作令牌</span>
+          <h3>后台执行权限</h3>
+          <label>
+            MWB_ADMIN_TOKEN
+            <input v-model="adminToken" placeholder="输入本次会话令牌" type="password" />
+          </label>
+          <button class="secondary-button" type="button" @click="saveAdminToken">
+            保存到本次会话
+          </button>
+          <span v-if="adminMessage" class="inline-status">{{ adminMessage }}</span>
+        </section>
+
+        <section class="admin-card">
+          <span class="eyebrow">配置健康</span>
+          <h3>同步和部署配置</h3>
+          <div v-if="adminStatus" class="admin-checks">
+            <span :class="['validation-pill', adminStatus.adminTokenConfigured ? 'ok' : 'warning']">
+              Admin {{ adminStatus.adminTokenConfigured ? '已配置' : '缺失' }}
+            </span>
+            <span :class="['validation-pill', adminStatus.cloudSync.configured ? 'ok' : 'warning']">
+              云同步 {{ adminStatus.cloudSync.configured ? '已配置' : missingLabel(adminStatus.cloudSync.missing) }}
+            </span>
+            <span :class="['validation-pill', adminStatus.vlm.configured ? 'ok' : 'warning']">
+              VLM {{ adminStatus.vlm.configured ? '已配置' : missingLabel(adminStatus.vlm.missing) }}
+            </span>
+            <span :class="['validation-pill', adminStatus.deploy.mac.scriptExists ? 'ok' : 'warning']">
+              Mac 部署脚本 {{ adminStatus.deploy.mac.scriptExists ? '存在' : '缺失' }}
+            </span>
+            <span :class="['validation-pill', adminStatus.deploy.cloud.configured ? 'ok' : 'warning']">
+              云端 SSH {{ adminStatus.deploy.cloud.configured ? '已配置' : missingLabel(adminStatus.deploy.cloud.missing) }}
+            </span>
+          </div>
+          <p v-if="adminStatus?.latestSyncableJob">
+            最新可同步任务：{{ adminStatus.latestSyncableJob.jobId }}（{{ adminStatus.latestSyncableJob.status }}）
+          </p>
+          <p v-else>暂无 completed/partial 任务可同步。</p>
+        </section>
+
+        <section class="admin-card">
+          <span class="eyebrow">数据同步</span>
+          <h3>同步最新采集任务</h3>
+          <p>自动选择最新完成或部分完成的任务，先执行本机场景打标，再同步到云端素材中心。</p>
+          <button
+            class="primary-button"
+            :disabled="isAdminActionRunning"
+            type="button"
+            @click="startAdminAction('/api/admin/sync/latest')"
+          >
+            <UploadCloud :size="17" />
+            一键同步最新任务
+          </button>
+        </section>
+
+        <section class="admin-card">
+          <span class="eyebrow">一键部署</span>
+          <h3>Mac mini 和云端服务</h3>
+          <div class="admin-actions">
+            <button
+              class="secondary-button"
+              :disabled="isAdminActionRunning"
+              type="button"
+              @click="startAdminAction('/api/admin/deploy/mac')"
+            >
+              部署 Mac 工作台
+            </button>
+            <button
+              class="secondary-button"
+              :disabled="isAdminActionRunning"
+              type="button"
+              @click="startAdminAction('/api/admin/deploy/cloud')"
+            >
+              部署云端素材中心
+            </button>
+          </div>
+          <p>云端部署通过环境变量中的 SSH 配置执行固定脚本，不接受页面传入命令。</p>
+        </section>
+      </div>
+
+      <section class="admin-task-panel">
+        <div class="observer-header">
+          <div>
+            <span class="eyebrow">后台任务</span>
+            <h2>{{ adminTask?.taskId || '暂无后台任务' }}</h2>
+          </div>
+          <span v-if="adminTask" class="status-pill" :class="adminTask.status">{{ adminTask.status }}</span>
+        </div>
+        <p v-if="adminTask?.message">{{ adminTask.message }}</p>
+        <pre class="admin-log">{{ adminTask?.logs?.join('\n') || '执行同步或部署后，这里会显示任务日志。' }}</pre>
+      </section>
+    </section>
   </main>
 </template>
 
@@ -372,12 +496,39 @@ type AssetItem = {
   objectKey: string;
 };
 
+type AppView = 'workbench' | 'admin';
+
+type AdminStatus = {
+  adminTokenConfigured: boolean;
+  cloudSync: { configured: boolean; missing: string[] };
+  vlm: { configured: boolean; missing: string[] };
+  deploy: {
+    mac: { scriptExists: boolean; script: string };
+    cloud: { configured: boolean; missing: string[] };
+  };
+  latestSyncableJob?: {
+    jobId: string;
+    status: string;
+  } | null;
+};
+
+type AdminTask = {
+  taskId: string;
+  kind: string;
+  status: string;
+  message: string;
+  logs: string[];
+  summary: Record<string, unknown>;
+  exitCode?: number;
+};
+
 const modeOptions = [
   { value: 'single_image' as const, label: '单图片', icon: FileImage },
   { value: 'batch_images' as const, label: '批量图片', icon: Images },
   { value: 'config_file' as const, label: '配置文件', icon: FileSpreadsheet },
 ];
 
+const activeView = ref<AppView>('workbench');
 const mode = ref<JobMode>('single_image');
 const imageFiles = ref<LocalFile[]>([]);
 const configFile = ref<File | null>(null);
@@ -404,6 +555,11 @@ const isLoadingAssets = ref(false);
 const assetMessage = ref('');
 const isSyncingCloud = ref(false);
 const cloudSyncMessage = ref('');
+const adminToken = ref(sessionStorage.getItem('MWB_ADMIN_TOKEN') || '');
+const adminMessage = ref('');
+const adminStatus = ref<AdminStatus | null>(null);
+const adminTask = ref<AdminTask | null>(null);
+const isAdminActionRunning = ref(false);
 const assetFilters = reactive({
   category: '',
   scene: '',
@@ -526,6 +682,13 @@ const statusLabel = computed(() => {
 onMounted(() => {
   loadAssets();
 });
+
+function setActiveView(nextView: AppView) {
+  activeView.value = nextView;
+  if (nextView === 'admin') {
+    loadAdminStatus();
+  }
+}
 
 function setMode(nextMode: JobMode) {
   mode.value = nextMode;
@@ -952,5 +1115,81 @@ function stageLabel(stage: string) {
     return '图搜结果';
   }
   return stage || '未知来源';
+}
+
+function saveAdminToken() {
+  sessionStorage.setItem('MWB_ADMIN_TOKEN', adminToken.value);
+  adminMessage.value = adminToken.value ? '令牌已保存到本次浏览器会话' : '已清空本次会话令牌';
+}
+
+async function loadAdminStatus() {
+  adminMessage.value = '';
+  try {
+    const response = await fetch('/api/admin/status');
+    if (!response.ok) {
+      throw new Error('后台状态加载失败');
+    }
+    adminStatus.value = await response.json();
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '后台状态加载失败';
+  }
+}
+
+function missingLabel(names: string[]) {
+  return names.length ? `缺 ${names.length} 项` : '缺失';
+}
+
+async function startAdminAction(endpoint: string) {
+  if (!adminToken.value) {
+    adminMessage.value = '请先输入 MWB_ADMIN_TOKEN';
+    return;
+  }
+  saveAdminToken();
+  isAdminActionRunning.value = true;
+  adminMessage.value = '';
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken.value}`,
+      },
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || '后台任务启动失败');
+    }
+    adminTask.value = payload;
+    pollAdminTask(payload.taskId);
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '后台任务启动失败';
+    isAdminActionRunning.value = false;
+  }
+}
+
+async function pollAdminTask(taskId: string) {
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    try {
+      const response = await fetch(`/api/admin/tasks/${taskId}`, {
+        headers: {
+          Authorization: `Bearer ${adminToken.value}`,
+        },
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || '后台任务查询失败');
+      }
+      adminTask.value = payload;
+      if (!['queued', 'running'].includes(payload.status)) {
+        isAdminActionRunning.value = false;
+        await loadAdminStatus();
+        return;
+      }
+    } catch (error) {
+      adminMessage.value = error instanceof Error ? error.message : '后台任务查询失败';
+      isAdminActionRunning.value = false;
+      return;
+    }
+  }
 }
 </script>

@@ -845,6 +845,181 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "completed or partial"):
                 manager.sync_job_to_cloud("job-queued")
 
+    def test_admin_status_reports_config_and_latest_syncable_job(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            manager._write_record(
+                JobRecord(
+                    job_id="20260524T000000000000Z",
+                    status="completed",
+                    job_dir=root / "runs" / "20260524T000000000000Z",
+                    settings=JobSettings.for_mode("single_image"),
+                    collector_run_dir=root / "collector-a",
+                )
+            )
+            manager._write_record(
+                JobRecord(
+                    job_id="20260525T000000000000Z",
+                    status="partial",
+                    job_dir=root / "runs" / "20260525T000000000000Z",
+                    settings=JobSettings.for_mode("batch_images"),
+                    collector_run_dir=root / "collector-b",
+                )
+            )
+            admin = AdminTaskManager(root)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MWB_ADMIN_TOKEN": "secret",
+                    "MWB_CLOUD_SERVER_URL": "https://asset.example.com",
+                    "MWB_CLOUD_SYNC_TOKEN": "sync-token",
+                    "MWB_COLLECTOR_ID": "mac-01",
+                    "DASHSCOPE_API_KEY": "dashscope",
+                    "MWB_DEPLOY_SSH_HOST": "asset.internal",
+                    "MWB_DEPLOY_SSH_USER": "deploy",
+                    "MWB_DEPLOY_SSH_KEY_PATH": "/Users/yichen/.ssh/deploy",
+                },
+                clear=False,
+            ):
+                status = admin.status(manager)
+
+            self.assertTrue(status["adminTokenConfigured"])
+            self.assertTrue(status["cloudSync"]["configured"])
+            self.assertTrue(status["vlm"]["configured"])
+            self.assertTrue(status["deploy"]["cloud"]["configured"])
+            self.assertIn("install_workbench_launchd.sh", status["deploy"]["mac"]["script"])
+            self.assertEqual(status["latestSyncableJob"]["jobId"], "20260525T000000000000Z")
+
+    def test_admin_rejects_missing_or_invalid_token_for_mutating_actions(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            require_admin_token,
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(PermissionError, "MWB_ADMIN_TOKEN"):
+                require_admin_token("")
+        with mock.patch.dict(os.environ, {"MWB_ADMIN_TOKEN": "secret"}, clear=True):
+            with self.assertRaisesRegex(PermissionError, "invalid admin token"):
+                require_admin_token("Bearer wrong")
+            self.assertIsNone(require_admin_token("Bearer secret"))
+
+    def test_admin_sync_latest_selects_latest_completed_job_and_records_task(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            sync_calls: list[str] = []
+            manager.sync_job_to_cloud = lambda job_id: sync_calls.append(job_id) or {
+                "status": "completed",
+                "cloudSync": {"assets": 3},
+            }
+            manager._write_record(
+                JobRecord(
+                    job_id="20260524T000000000000Z",
+                    status="completed",
+                    job_dir=root / "runs" / "20260524T000000000000Z",
+                    settings=JobSettings.for_mode("single_image"),
+                )
+            )
+            manager._write_record(
+                JobRecord(
+                    job_id="20260525T000000000000Z",
+                    status="partial",
+                    job_dir=root / "runs" / "20260525T000000000000Z",
+                    settings=JobSettings.for_mode("batch_images"),
+                )
+            )
+            admin = AdminTaskManager(root, run_async=False)
+
+            task = admin.start_sync_latest(manager)
+
+            self.assertEqual(sync_calls, ["20260525T000000000000Z"])
+            self.assertEqual(task["status"], "completed")
+            self.assertEqual(task["summary"]["cloudSync"]["assets"], 3)
+            self.assertIn("最新任务 20260525T000000000000Z", "\n".join(task["logs"]))
+
+    def test_admin_deploy_commands_are_whitelisted_and_recorded(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mac_script = root / "third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
+            cloud_script = root / "third_party/mobile_deploy/server/install_asset_center_systemd.sh"
+            mac_script.parent.mkdir(parents=True)
+            cloud_script.parent.mkdir(parents=True)
+            mac_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            cloud_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            popen_calls = []
+            run_calls = []
+
+            class FakePopen:
+                def __init__(self, command, **kwargs):
+                    popen_calls.append((command, kwargs))
+
+            class FakeCompleted:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+
+            def fake_run(command, **kwargs):
+                run_calls.append((command, kwargs))
+                return FakeCompleted()
+
+            admin = AdminTaskManager(
+                root,
+                run_async=False,
+                popen_runner=FakePopen,
+                command_runner=fake_run,
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MWB_DEPLOY_SSH_HOST": "asset.internal",
+                    "MWB_DEPLOY_SSH_USER": "deploy",
+                    "MWB_DEPLOY_SSH_KEY_PATH": "/Users/yichen/.ssh/deploy",
+                    "MWB_DEPLOY_SSH_PORT": "2222",
+                    "MWB_DEPLOY_REMOTE_ROOT": "/tmp/mobile-deploy-workspace",
+                    "MWB_DEPLOY_REMOTE_INSTALL_DIR": "/opt/mobile_asset_center",
+                    "MWB_DEPLOY_HOST_NAME": "asset.internal",
+                },
+                clear=False,
+            ):
+                mac_task = admin.start_mac_deploy()
+                cloud_task = admin.start_cloud_deploy()
+
+            self.assertEqual(mac_task["status"], "completed")
+            self.assertEqual(popen_calls[0][0], ["bash", str(mac_script.resolve())])
+            self.assertEqual(cloud_task["status"], "completed")
+            self.assertEqual(run_calls[0][0][0], "rsync")
+            self.assertEqual(run_calls[1][0][0], "ssh")
+            self.assertIn("install_asset_center_systemd.sh", run_calls[1][0][-1])
+            self.assertNotIn(";", run_calls[0][0])
+
     def test_frontend_exposes_asset_center_filters_and_results_grid(self) -> None:
         root = Path(__file__).resolve().parents[1]
         app_vue = (
@@ -872,6 +1047,29 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("canSyncToCloud", app_vue)
         self.assertIn("cloud-sync-actions", css)
 
+    def test_frontend_exposes_admin_view_for_sync_and_deploy(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_vue = (
+            root / "third_party/mobile_image_workbench/frontend/src/App.vue"
+        ).read_text(encoding="utf-8")
+        css = (
+            root / "third_party/mobile_image_workbench/frontend/src/styles.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("后台管理", app_vue)
+        self.assertIn("MWB_ADMIN_TOKEN", app_vue)
+        self.assertIn("sessionStorage", app_vue)
+        self.assertIn("/api/admin/status", app_vue)
+        self.assertIn("/api/admin/sync/latest", app_vue)
+        self.assertIn("/api/admin/deploy/mac", app_vue)
+        self.assertIn("/api/admin/deploy/cloud", app_vue)
+        self.assertIn("Authorization: `Bearer ${adminToken.value}`", app_vue)
+        self.assertIn("一键同步最新任务", app_vue)
+        self.assertIn("部署 Mac 工作台", app_vue)
+        self.assertIn("部署云端素材中心", app_vue)
+        self.assertIn("admin-page", css)
+        self.assertIn("admin-log", css)
+
     def test_mobile_deploy_scripts_cover_mac_mini_and_cloud_server(self) -> None:
         root = Path(__file__).resolve().parents[1]
         mac_script = (
@@ -895,6 +1093,8 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("<string>serve</string>", mac_script)
         self.assertIn("MWB_CLOUD_SERVER_URL", mac_env)
         self.assertIn("DASHSCOPE_API_KEY", mac_env)
+        self.assertIn("MWB_ADMIN_TOKEN", mac_env)
+        self.assertIn("MWB_DEPLOY_SSH_HOST", mac_env)
         self.assertIn("systemctl", server_script)
         self.assertIn("mobile_asset_center", server_script)
         self.assertIn("serve --env-file", server_script)

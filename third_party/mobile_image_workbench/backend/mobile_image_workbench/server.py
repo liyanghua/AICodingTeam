@@ -8,12 +8,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .admin import AdminTaskManager, require_admin_token
 from .events import event_key_for
 from .jobs import JobManager
 
 
 class WorkbenchRequestHandler(BaseHTTPRequestHandler):
     manager: JobManager
+    admin_manager: AdminTaskManager
     static_root: Path
 
     def do_GET(self) -> None:  # noqa: N802
@@ -23,6 +25,17 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/doctor":
                 self._send_json(self.manager.doctor())
                 return
+            if path == "/api/admin/status":
+                self._send_json(self.admin_manager.status(self.manager))
+                return
+            if path.startswith("/api/admin/tasks/"):
+                require_admin_token(self.headers.get("Authorization", ""))
+                parts = [unquote(part) for part in path.strip("/").split("/")]
+                if len(parts) == 4:
+                    self._send_json(self.admin_manager.get_task(parts[3]))
+                    return
+                self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                return
             if path.startswith("/api/library/"):
                 self._handle_library_get(parsed)
                 return
@@ -30,6 +43,8 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                 self._handle_job_get(path)
                 return
             self._serve_static(path)
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except Exception as exc:
             self._send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -58,7 +73,20 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                 if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "sync-cloud":
                     self._send_json(self.manager.sync_job_to_cloud(parts[2]))
                     return
+            if parsed.path.startswith("/api/admin/"):
+                require_admin_token(self.headers.get("Authorization", ""))
+                if parsed.path == "/api/admin/sync/latest":
+                    self._send_json(self.admin_manager.start_sync_latest(self.manager))
+                    return
+                if parsed.path == "/api/admin/deploy/mac":
+                    self._send_json(self.admin_manager.start_mac_deploy())
+                    return
+                if parsed.path == "/api/admin/deploy/cloud":
+                    self._send_json(self.admin_manager.start_cloud_deploy())
+                    return
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except Exception as exc:
             self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
@@ -240,11 +268,13 @@ def serve(
     base_collector_config: Path | None = None,
 ) -> ThreadingHTTPServer:
     manager = JobManager(runs_root, base_collector_config=base_collector_config)
+    admin_manager = AdminTaskManager()
 
     class Handler(WorkbenchRequestHandler):
         pass
 
     Handler.manager = manager
+    Handler.admin_manager = admin_manager
     Handler.static_root = static_root
     server = ThreadingHTTPServer((host, port), Handler)
     return server

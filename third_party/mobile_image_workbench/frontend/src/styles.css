@@ -55,6 +55,39 @@ button {
   color: #5f6c7b;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.view-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  background: #edf1f5;
+  border-radius: 8px;
+}
+
+.view-switch button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #465667;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.view-switch button.active {
+  background: #ffffff;
+  color: #0f3d4c;
+  box-shadow: 0 1px 2px rgba(31, 41, 51, 0.12);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
@@ -654,6 +687,91 @@ button {
   background: #fbfcfd;
 }
 
+.admin-page {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-header,
+.admin-card,
+.admin-task-panel {
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.admin-header h2,
+.admin-card h3 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.admin-header h2 {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.admin-header p,
+.admin-card p,
+.admin-task-panel p {
+  color: #5f6c7b;
+  margin: 8px 0 0;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.admin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-card label {
+  display: grid;
+  gap: 6px;
+  color: #465667;
+}
+
+.admin-card input {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #c8d1dc;
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.admin-checks,
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-log {
+  min-height: 180px;
+  overflow: auto;
+  margin: 12px 0 0;
+  border-radius: 8px;
+  background: #111820;
+  color: #eef6f4;
+  padding: 12px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -661,6 +779,10 @@ button {
 
   .observer {
     min-height: 420px;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -670,6 +792,12 @@ button {
   }
 
   .topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topbar-actions,
+  .admin-header {
     align-items: stretch;
     flex-direction: column;
   }
