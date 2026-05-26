@@ -15,6 +15,8 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from ..utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
+from .models import TeamRunRecord
+from .quality import evaluate_run_quality, summarize_run_health, summarize_run_logs
 
 
 _DASHBOARD_PROCESSES: list[subprocess.Popen] = []
@@ -118,6 +120,9 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
 
     gates = _build_gate_view(record)
     apply_status, apply_reason = _apply_gate(record)
+    record_object = _team_record_from_dashboard_payload(record, run_id, run_dir, process, background_failure)
+    health_summary = summarize_run_health(record_object, run_dir).to_dict()
+    quality_report = evaluate_run_quality(record_object, run_dir).to_dict()
     gates.append({"id": "apply_gate", "label": "Apply Gate", "status": apply_status, "reason": apply_reason})
     gates.extend(
         [
@@ -141,6 +146,8 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "stages": _build_stage_view(agent_by_id, record),
         "gates": gates,
         "apply_gate": {"status": apply_status, "reason": apply_reason},
+        "health_summary": health_summary,
+        "quality_report": quality_report,
         "artifacts": _build_artifact_view(run_dir, repo_root, record),
         "events": events[-50:],
         "logs": _latest_log_lines(run_dir),
@@ -543,21 +550,35 @@ def _failure_category(record: dict[str, Any]) -> str:
 
 
 def _latest_log_lines(run_dir: Path, max_lines: int = 12) -> list[str]:
-    paths = [
-        run_dir / "background_stdout.log",
-        run_dir / "background_stderr.log",
-        run_dir / "codex" / "stdout.jsonl",
-        run_dir / "codex" / "stderr.log",
-        run_dir / "codex" / "reviewer_stdout.log",
-        run_dir / "codex" / "reviewer_stderr.log",
-    ]
-    lines: list[str] = []
-    for path in paths:
-        if not path.exists():
-            continue
-        for line in _tail_lines(path, max_lines=3):
-            lines.append(f"{path.name}: {line}")
-    return [_redact_text(line) for line in lines[-max_lines:]]
+    return summarize_run_logs(run_dir, max_lines=max_lines)
+
+
+def _team_record_from_dashboard_payload(
+    record: dict[str, Any],
+    run_id: str,
+    run_dir: Path,
+    process: dict[str, Any],
+    background_failure: dict[str, str] | None,
+) -> TeamRunRecord:
+    if record:
+        payload = dict(record)
+    else:
+        payload = {
+            "run_id": run_id,
+            "domain_id": "",
+            "brief": "",
+            "status": str(process.get("status", "starting")),
+            "run_dir": str(run_dir),
+            "agent_runs": [],
+            "risk_events": [],
+        }
+    if background_failure:
+        payload["status"] = background_failure["status"]
+        risk_events = [str(item) for item in payload.get("risk_events", [])]
+        if background_failure["risk_event"] not in risk_events:
+            risk_events.append(background_failure["risk_event"])
+        payload["risk_events"] = risk_events
+    return TeamRunRecord.from_dict(payload)
 
 
 def _diff_summary(run_dir: Path) -> dict[str, Any]:

@@ -414,6 +414,34 @@ button {
   border-bottom: 1px solid #e5e9f0;
 }
 
+.observer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stop-button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid #fca5a5;
+  background: #fff7f7;
+  color: #991b1b;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.stop-button:disabled {
+  border-color: #d8dee8;
+  background: #f1f5f9;
+  color: #7b8794;
+  cursor: not-allowed;
+}
+
 .eyebrow {
   display: block;
   color: #6b7280;
@@ -439,7 +467,8 @@ button {
 }
 
 .status-pill.running,
-.status-pill.queued {
+.status-pill.queued,
+.status-pill.stopping {
   background: #e0f2fe;
   color: #075985;
 }
@@ -458,6 +487,11 @@ button {
 .status-pill.failed {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.status-pill.canceled {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .timeline {
@@ -514,6 +548,73 @@ button {
   color: #0f766e;
   padding: 0 12px;
   margin: 0 auto 12px;
+}
+
+.history-panel {
+  margin: 12px 0 0;
+  padding: 10px;
+  border: 1px solid #e1e7ee;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.history-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.history-panel-header strong {
+  display: block;
+  color: #1f2933;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.history-list button {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2933;
+  padding: 9px 10px;
+}
+
+.history-list button.active {
+  border-color: #0f766e;
+  background: #edf7f5;
+}
+
+.history-list span,
+.history-list small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.history-list strong,
+.history-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-empty {
+  margin: 8px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .download-box {

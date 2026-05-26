@@ -9,6 +9,8 @@
     "taskRecords": "任务记录",
     "currentTask": "当前任务",
     "businessProgress": "任务进展",
+    "observabilityHealth": "可观测健康",
+    "fileQuality": "文件质量",
     "qualityChecks": "质量关卡",
     "deliverables": "产物与验收",
     "engineeringDetails": "工程详情",
@@ -168,16 +170,30 @@
     "run_completed": "任务完成",
     "run_failed": "任务失败"
   },
+  "health": {
+    "statusLabel": "状态",
+    "warningLabel": "警告",
+    "blockerLabel": "阻塞",
+    "rawWarningsLabel": "原始系统提示",
+    "noIssue": "暂无阻塞，继续观察即可。",
+    "unknownLabel": "状态未知",
+    "unknownSummary": "暂时无法判断任务健康状态。"
+  },
+  "quality": {
+    "unknownSummary": "暂时没有文件质量评估。",
+    "noChecks": "暂无质量检查结果。"
+  },
   "actions": {
-    "viewArtifacts": "查看产物",
+    "viewDeliverables": "查看产物",
     "viewRisks": "查看风险",
     "viewEngineering": "查看工程详情",
     "openArtifact": "打开产物",
     "copyCommand": "复制命令",
     "unknownItem": "未知项",
     "noRisk": "暂无风险",
-    "noArtifacts": "暂无可查看产物",
+    "noDeliverables": "暂无可查看产物",
     "artifactPending": "未生成",
+    "artifactReady": "已生成",
     "noNextAction": "暂无下一步动作",
     "readyForConfirmation": "结果已准备好，等待人工确认是否采纳。",
     "missingArtifactsPrefix": "缺少",

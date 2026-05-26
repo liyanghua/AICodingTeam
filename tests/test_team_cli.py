@@ -187,7 +187,26 @@ class TeamCliTests(unittest.TestCase):
                 },
             }
             (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
-            (codex_dir / "stdout.jsonl").write_text("line 1\nline 2\n", encoding="utf-8")
+            (codex_dir / "stdout.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps(
+                                {
+                                    "summary": "Implemented web monitoring update.",
+                                    "files_changed": ["a.txt"],
+                                    "tests_run": ["python3 -m unittest tests.test_demo -v"],
+                                    "risk_events": [],
+                                }
+                            ),
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             (codex_dir / "stderr.log").write_text("warn from provider\n", encoding="utf-8")
             (codex_dir / "diff.patch").write_text("diff --git a/a.txt b/a.txt\n+hello\n", encoding="utf-8")
             (codex_dir / "git_status.txt").write_text(" M a.txt\n", encoding="utf-8")
@@ -198,9 +217,12 @@ class TeamCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         text = output.getvalue()
         self.assertIn("team-run-1", text)
+        self.assertIn("Run health:", text)
         self.assertIn("Current agent: coder", text)
+        self.assertIn("Codex summary: Implemented web monitoring update.", text)
         self.assertIn("warn from provider", text)
         self.assertIn("diff.patch: 2 lines", text)
+        self.assertNotIn('{"type"', text)
 
     def test_team_diff_prints_worktree_diff(self) -> None:
         from growth_dev.cli import main
@@ -369,7 +391,11 @@ class TeamCliTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (codex_dir / "stdout.jsonl").write_text("working\nfinished\n", encoding="utf-8")
+            (codex_dir / "stdout.jsonl").write_text(
+                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps({"summary": "finished"})}})
+                + "\n",
+                encoding="utf-8",
+            )
             (codex_dir / "diff.patch").write_text("+hello\n", encoding="utf-8")
 
             with _captured_stdout() as output:
@@ -378,9 +404,10 @@ class TeamCliTests(unittest.TestCase):
         text = output.getvalue()
         self.assertEqual(exit_code, 0)
         self.assertIn("Run: team-run-1", text)
+        self.assertIn("Run health:", text)
         self.assertIn("before_coding: passed", text)
         self.assertIn("agent_started", text)
-        self.assertIn("working", text)
+        self.assertIn("Codex summary: finished", text)
         self.assertIn("Process:", text)
         self.assertIn("Apply gate:", text)
         self.assertIn("Next actions:", text)

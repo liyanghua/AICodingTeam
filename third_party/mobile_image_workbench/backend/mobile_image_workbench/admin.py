@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import shutil
 import shlex
 import subprocess
 import threading
@@ -86,6 +87,7 @@ class AdminTaskManager:
                     "scriptExists": self.mac_deploy_script.exists(),
                     "script": str(self.mac_deploy_script),
                 },
+                "macMiniRemote": _mac_mini_remote_status(self.repo_root),
                 "cloud": _env_check(
                     [
                         "MWB_DEPLOY_SSH_HOST",
@@ -137,6 +139,26 @@ class AdminTaskManager:
             return {"command": command, "detached": True}
 
         return self._start_task("deploy_mac", operation)
+
+    def start_mac_mini_remote_deploy(self) -> dict[str, Any]:
+        script = self.mac_deploy_script
+
+        def operation(task: AdminTask) -> dict[str, Any]:
+            if not script.exists():
+                raise FileNotFoundError(f"Mac 部署脚本不存在: {script}")
+            config = _mac_mini_remote_config(self.repo_root)
+            rsync_command, ssh_command, command_env = _mac_mini_remote_commands(
+                self.repo_root, config
+            )
+            _run_checked(task, self.command_runner, rsync_command, self.repo_root, env=command_env)
+            _run_checked(task, self.command_runner, ssh_command, self.repo_root, env=command_env)
+            return {
+                "target": config["target"],
+                "remoteRoot": config["remote_root"],
+                "auth": config["auth"],
+            }
+
+        return self._start_task("deploy_mac_mini_remote", operation)
 
     def start_cloud_deploy(self) -> dict[str, Any]:
         script = self.cloud_deploy_script
@@ -271,11 +293,168 @@ def _cloud_deploy_config() -> dict[str, str]:
     }
 
 
+def _mac_mini_remote_status(repo_root: Path) -> dict[str, Any]:
+    env_file = _mac_mini_remote_env_file(repo_root)
+    values = _mac_mini_remote_values(repo_root)
+    target = _first_value(values, "MWB_MAC_MINI_SSH_TARGET", "MAC_MINI_USER")
+    remote_root = _first_value(values, "MWB_MAC_MINI_REMOTE_ROOT", "RES_DIR")
+    key_path = _first_value(values, "MWB_MAC_MINI_SSH_KEY_PATH")
+    password = _first_value(values, "MWB_MAC_MINI_SSH_PASS", "MAC_MINI_PASS", "MAC_NINI_PASS")
+    missing: list[str] = []
+    if not target:
+        missing.append("MWB_MAC_MINI_SSH_TARGET")
+    if not remote_root:
+        missing.append("MWB_MAC_MINI_REMOTE_ROOT")
+    if not key_path and not password:
+        missing.append("MWB_MAC_MINI_SSH_KEY_PATH or MWB_MAC_MINI_SSH_PASS")
+    auth = "key" if key_path else "password" if password else "missing"
+    return {
+        "configured": not missing,
+        "missing": missing,
+        "envFile": str(env_file),
+        "envFileExists": env_file.exists(),
+        "target": target,
+        "remoteRoot": remote_root,
+        "port": _first_value(values, "MWB_MAC_MINI_SSH_PORT") or "22",
+        "auth": auth,
+    }
+
+
+def _mac_mini_remote_config(repo_root: Path) -> dict[str, str]:
+    values = _mac_mini_remote_values(repo_root)
+    target = _first_value(values, "MWB_MAC_MINI_SSH_TARGET", "MAC_MINI_USER")
+    remote_root = _first_value(values, "MWB_MAC_MINI_REMOTE_ROOT", "RES_DIR")
+    key_path = _first_value(values, "MWB_MAC_MINI_SSH_KEY_PATH")
+    password = _first_value(values, "MWB_MAC_MINI_SSH_PASS", "MAC_MINI_PASS", "MAC_NINI_PASS")
+    missing: list[str] = []
+    if not target:
+        missing.append("MWB_MAC_MINI_SSH_TARGET")
+    if not remote_root:
+        missing.append("MWB_MAC_MINI_REMOTE_ROOT")
+    if not key_path and not password:
+        missing.append("MWB_MAC_MINI_SSH_KEY_PATH or MWB_MAC_MINI_SSH_PASS")
+    if missing:
+        raise ValueError("missing Mac mini remote deploy config: " + ", ".join(missing))
+    if key_path and not Path(key_path).expanduser().exists():
+        raise ValueError(f"SSH key file not found: {key_path}")
+    if not key_path and password and shutil.which("sshpass") is None:
+        raise ValueError("password auth requires sshpass; install sshpass or configure MWB_MAC_MINI_SSH_KEY_PATH")
+    return {
+        "target": target,
+        "remote_root": remote_root,
+        "key_path": key_path,
+        "password": password,
+        "port": _first_value(values, "MWB_MAC_MINI_SSH_PORT") or "22",
+        "auth": "key" if key_path else "password",
+    }
+
+
+def _mac_mini_remote_commands(
+    repo_root: Path,
+    config: dict[str, str],
+) -> tuple[list[str], list[str], dict[str, str] | None]:
+    ssh_options = [
+        "ssh",
+        "-p",
+        config["port"],
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
+    if config["auth"] == "key":
+        ssh_options[1:1] = [
+            "-i",
+            config["key_path"],
+            "-o",
+            "IdentitiesOnly=yes",
+        ]
+        prefix: list[str] = []
+        command_env = None
+    else:
+        prefix = ["sshpass", "-e"]
+        command_env = {**os.environ, "SSHPASS": config["password"]}
+    rsync_command = prefix + [
+        "rsync",
+        "-az",
+        "--delete",
+        "-e",
+        " ".join(shlex.quote(part) for part in ssh_options),
+        "--exclude",
+        ".git/",
+        "--exclude",
+        ".env*",
+        "--exclude",
+        "node_modules/",
+        "--exclude",
+        "__pycache__/",
+        "--exclude",
+        "third_party/mobile_asset_center/data/",
+        "--exclude",
+        "third_party/mobile_image_workbench/runs/",
+        "--exclude",
+        "third_party/mobile_image_workbench/.venv/",
+        "--exclude",
+        "third_party/xhs_collector/.venv/",
+        str(repo_root) + "/",
+        f"{config['target']}:{config['remote_root'].rstrip('/')}/",
+    ]
+    remote_command = (
+        f"cd {shlex.quote(config['remote_root'])} && "
+        "bash third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
+    )
+    ssh_command = prefix + ssh_options + [config["target"], remote_command]
+    return rsync_command, ssh_command, command_env
+
+
+def _mac_mini_remote_values(repo_root: Path) -> dict[str, str]:
+    file_values = _read_env_values(_mac_mini_remote_env_file(repo_root))
+    values = dict(file_values)
+    for key, value in os.environ.items():
+        if value.strip():
+            values[key] = value.strip()
+    return values
+
+
+def _mac_mini_remote_env_file(repo_root: Path) -> Path:
+    explicit = os.environ.get("MWB_MAC_MINI_ENV_FILE", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    return repo_root / "third_party/mobile_deploy/mac-mini/.env.remote"
+
+
+def _read_env_values(path: Path) -> dict[str, str]:
+    if not path.exists() or not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        if not name:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[name] = value
+    return values
+
+
+def _first_value(values: dict[str, str], *names: str) -> str:
+    for name in names:
+        value = values.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _run_checked(
     task: AdminTask,
     runner: Callable[..., Any],
     command: list[str],
     cwd: Path,
+    *,
+    env: dict[str, str] | None = None,
 ) -> None:
     _log(task, "$ " + " ".join(shlex.quote(part) for part in command))
     completed = runner(
@@ -284,6 +463,7 @@ def _run_checked(
         capture_output=True,
         text=True,
         timeout=600,
+        env=env,
     )
     stdout = str(getattr(completed, "stdout", "") or "").strip()
     stderr = str(getattr(completed, "stderr", "") or "").strip()

@@ -132,6 +132,15 @@ class DeterministicDevice:
     def start_app(self, package: str) -> None:
         self._device.app_start(package)
 
+    def current_package(self) -> str:
+        app_current = getattr(self._device, "app_current", None)
+        if app_current is None:
+            return ""
+        current = app_current()
+        if isinstance(current, dict):
+            return str(current.get("package") or "")
+        return str(current or "")
+
     def window_size(self) -> tuple[int, int]:
         return tuple(self._device.window_size())
 

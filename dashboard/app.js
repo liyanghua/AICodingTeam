@@ -1,5 +1,6 @@
 const state = {
   selectedRunId: "",
+  selectedArtifactPath: "",
   timer: null,
   i18n: null,
   currentRun: null,
@@ -81,6 +82,7 @@ function renderRunList(runs) {
 
 async function selectRun(runId) {
   state.selectedRunId = runId;
+  state.selectedArtifactPath = "";
   await refreshRun();
 }
 
@@ -101,11 +103,52 @@ function renderBusinessRun(vm) {
   pill.textContent = vm.statusLabel;
 
   renderStages(vm.stages || []);
+  renderHealth(vm.health || {});
+  renderArtifactQuality(vm.artifactQuality || {});
   renderGates(vm.qualityGates || []);
-  renderDeliverables(vm.deliverables || []);
   renderArtifactActions(vm.deliverables || []);
+  ensureSelectedArtifact(vm);
   renderNextActions(vm.nextActions || []);
   renderEngineering(vm);
+}
+
+function renderHealth(health) {
+  $("health-summary").textContent = health.summary || t("health.unknownSummary");
+  const list = $("health-details");
+  list.textContent = "";
+  const rows = [];
+  rows.push(`${t("health.statusLabel")}: ${health.label || t("app.unknown")}`);
+  for (const group of (health.warningGroups || []).slice(0, 3)) rows.push(`${t("health.warningLabel")}: ${group.title || group.id} (${group.count || 0})`);
+  for (const blocker of health.blockers || []) rows.push(`${t("health.blockerLabel")}: ${blocker}`);
+  if (rows.length === 1) rows.push(t("health.noIssue"));
+  for (const rowText of rows) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = rowText;
+    list.appendChild(row);
+  }
+}
+
+function renderArtifactQuality(quality) {
+  const summary = $("artifact-quality-summary");
+  const score = quality.score == null ? "" : ` ${Math.round(Number(quality.score) * 100)}%`;
+  summary.textContent = `${quality.summary || t("quality.unknownSummary")}${score}`;
+  const list = $("artifact-quality-checks");
+  list.textContent = "";
+  const checks = (quality.checks || []).slice(0, 6);
+  if (!checks.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("quality.noChecks");
+    list.appendChild(empty);
+    return;
+  }
+  for (const check of checks) {
+    const row = document.createElement("div");
+    row.className = `quality-row quality-${check.status || "unknown"}`;
+    row.textContent = `${check.title || check.id}: ${check.detail || ""}`;
+    list.appendChild(row);
+  }
 }
 
 function renderStages(stages) {
@@ -155,16 +198,25 @@ function renderStages(stages) {
 }
 
 function handleStageAction(action, stage) {
-  if (action === "viewArtifacts") {
+  if (action === "viewDeliverables") {
     const first = (stage.artifacts || []).find((artifact) => artifact.exists);
-    if (first) loadArtifact(first);
+    if (first) selectArtifact(first);
+    focusSection("deliverables-panel");
     return;
   }
   if (action === "viewRisks") {
     $("artifact-preview").textContent = view.toBusinessViewModel(state.currentRun || {}, state.i18n).risks.join("\n");
+    focusSection("deliverables-panel");
     return;
   }
-  document.querySelector(".engineering-panel").open = true;
+  focusSection("engineering-rail");
+}
+
+function focusSection(id) {
+  const target = $(id);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (typeof target.focus === "function") target.focus({ preventScroll: true });
 }
 
 function renderGates(gates) {
@@ -186,43 +238,46 @@ function renderGates(gates) {
   }
 }
 
-function renderDeliverables(deliverables) {
-  const container = $("deliverables");
-  container.textContent = "";
-  const visible = deliverables.filter((artifact) => artifact.exists).slice(0, 5);
-  if (!visible.length) {
-    const empty = document.createElement("p");
-    empty.className = "meta";
-    empty.textContent = t("actions.noArtifacts");
-    container.appendChild(empty);
-    return;
-  }
-  for (const artifact of visible) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "deliverable-card";
-    item.addEventListener("click", () => loadArtifact(artifact));
-    const title = document.createElement("strong");
-    title.textContent = artifact.title;
-    const desc = document.createElement("span");
-    desc.textContent = artifact.description;
-    item.append(title, desc);
-    container.appendChild(item);
-  }
-}
-
 function renderArtifactActions(deliverables) {
   const container = $("artifact-actions");
   container.textContent = "";
   for (const artifact of deliverables) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "artifact-button";
+    button.className = artifact.path === state.selectedArtifactPath ? "artifact-button selected" : "artifact-button";
     button.disabled = !artifact.exists;
     button.textContent = artifact.exists ? artifact.title : `${artifact.title} (${t("actions.artifactPending")})`;
-    button.addEventListener("click", () => loadArtifact(artifact));
+    button.addEventListener("click", () => selectArtifact(artifact));
     container.appendChild(button);
   }
+}
+
+function ensureSelectedArtifact(vm) {
+  const deliverables = vm.deliverables || [];
+  const selected = deliverables.find((artifact) => artifact.path === state.selectedArtifactPath && artifact.exists);
+  if (selected) {
+    renderSelectedArtifact(selected);
+    return;
+  }
+  if (vm.recommendedArtifact) {
+    selectArtifact(vm.recommendedArtifact);
+    return;
+  }
+  renderSelectedArtifact(null);
+}
+
+function selectArtifact(artifact) {
+  if (!artifact || !artifact.exists) return;
+  state.selectedArtifactPath = artifact.path;
+  renderArtifactActions((view.toBusinessViewModel(state.currentRun || {}, state.i18n).deliverables || []));
+  renderSelectedArtifact(artifact);
+  loadArtifact(artifact);
+}
+
+function renderSelectedArtifact(artifact) {
+  $("selected-artifact-title").textContent = artifact ? artifact.title : t("actions.noDeliverables");
+  $("selected-artifact-description").textContent = artifact ? artifact.description : "";
+  $("selected-artifact-status").textContent = artifact ? t("actions.artifactReady") : t("actions.artifactPending");
 }
 
 async function loadArtifact(artifact) {
@@ -253,7 +308,9 @@ function renderNextActions(actions) {
 function renderEngineering(vm) {
   $("engineering-run").textContent = [vm.engineering.runId, vm.engineering.status, vm.engineering.executor].filter(Boolean).join("\n");
   $("engineering-events").textContent = JSON.stringify(vm.engineering.events || [], null, 2);
-  $("engineering-logs").textContent = (vm.engineering.logs || []).join("\n");
+  const rawWarnings = (vm.engineering.healthSummary || {}).raw_warnings || [];
+  const warningSection = rawWarnings.length ? ["", t("health.rawWarningsLabel"), ...rawWarnings] : [];
+  $("engineering-logs").textContent = [...(vm.engineering.logs || []), ...warningSection].join("\n");
   $("engineering-diff").textContent = JSON.stringify(vm.engineering.diffSummary || {}, null, 2);
 }
 

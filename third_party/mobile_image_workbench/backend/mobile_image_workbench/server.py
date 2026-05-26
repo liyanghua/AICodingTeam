@@ -28,6 +28,13 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/admin/status":
                 self._send_json(self.admin_manager.status(self.manager))
                 return
+            if path == "/api/jobs":
+                query = parse_qs(parsed.query, keep_blank_values=False)
+                limit = _query_int(query, "limit", 50)
+                self._send_json(
+                    {"jobs": [record.to_dict() for record in self.manager.list_jobs(limit=limit)]}
+                )
+                return
             if path.startswith("/api/admin/tasks/"):
                 require_admin_token(self.headers.get("Authorization", ""))
                 parts = [unquote(part) for part in path.strip("/").split("/")]
@@ -70,6 +77,9 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path.startswith("/api/jobs/"):
                 parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
+                if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
+                    self._send_json(self.manager.stop_job(parts[2]).to_dict())
+                    return
                 if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "sync-cloud":
                     self._send_json(self.manager.sync_job_to_cloud(parts[2]))
                     return
@@ -80,6 +90,9 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                     return
                 if parsed.path == "/api/admin/deploy/mac":
                     self._send_json(self.admin_manager.start_mac_deploy())
+                    return
+                if parsed.path == "/api/admin/deploy/mac-mini":
+                    self._send_json(self.admin_manager.start_mac_mini_remote_deploy())
                     return
                 if parsed.path == "/api/admin/deploy/cloud":
                     self._send_json(self.admin_manager.start_cloud_deploy())
@@ -257,6 +270,16 @@ def _server_event_key(event: dict) -> str:
     if isinstance(raw, dict):
         return event_key_for(raw)
     return event_key_for(event)
+
+
+def _query_int(query: dict[str, list[str]], name: str, default: int) -> int:
+    values = query.get(name) or []
+    if not values:
+        return default
+    try:
+        return int(values[0])
+    except ValueError:
+        return default
 
 
 def serve(

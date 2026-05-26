@@ -23,6 +23,9 @@ DEFAULT_STEP_MESSAGES = {
     "collector_completed": "采集已完成，正在生成下载结果",
     "result_exports_ready": "结果文件已生成，可以下载查看",
     "asset_center_ready": "采集图片已进入素材中心",
+    "stop_requested": "已请求停止，正在等待当前手机动作结束",
+    "job_canceled": "采集任务已停止",
+    "collection_canceled": "采集已停止，已保留当前结果",
     "cloud_sync_started": "正在准备打标签并同步到云端素材中心",
     "scene_tagging_completed": "场景标签已生成，正在上传素材",
     "cloud_sync_completed": "云端素材中心同步完成",
@@ -99,6 +102,7 @@ def translate_event(raw: dict[str, Any]) -> dict[str, Any]:
         "image_search_album_not_reached_after_retries",
         "skip_result_card_category_mismatch",
         "job_failed",
+        "collection_canceled",
     }:
         level = "warning"
     message = _message_for(event_name, raw)

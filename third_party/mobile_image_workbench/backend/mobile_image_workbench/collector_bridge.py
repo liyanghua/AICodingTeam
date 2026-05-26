@@ -76,6 +76,7 @@ def run_config_file_collect(
     input_path: Path,
     config_path: Path,
     settings: JobSettings,
+    cancel_token: Any | None = None,
 ) -> RunManifest:
     if settings.dry_run:
         return run_dry_collect(
@@ -92,6 +93,7 @@ def run_config_file_collect(
         image_top_n=settings.image_top_n,
         keyword_top_n=settings.keyword_top_n,
         keyword_result_top_n=settings.keyword_result_top_n,
+        cancel_token=cancel_token,
     )
 
 
@@ -100,6 +102,7 @@ def run_direct_items_collect(
     input_path: Path,
     config_path: Path,
     settings: JobSettings,
+    cancel_token: Any | None = None,
 ) -> RunManifest:
     if settings.dry_run:
         return run_dry_collect_items(
@@ -118,6 +121,7 @@ def run_direct_items_collect(
         image_top_n=settings.image_top_n,
         keyword_top_n=settings.keyword_top_n,
         keyword_result_top_n=settings.keyword_result_top_n,
+        cancel_token=cancel_token,
     )
 
 

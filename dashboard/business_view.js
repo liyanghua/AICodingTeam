@@ -23,8 +23,11 @@
       statusLabel: statusLabel(i18n, status),
       headline: headline(run, i18n, status),
       stages,
+      health: buildHealth(run, i18n),
+      artifactQuality: buildArtifactQuality(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
+      recommendedArtifact: recommendedArtifact(run, i18n),
       nextActions: run.next_actions || [],
       risks: buildRisks(run, i18n),
       engineering: {
@@ -35,7 +38,31 @@
         logs: run.logs || [],
         events: run.events || [],
         diffSummary: run.diff_summary || {},
+        healthSummary: run.health_summary || {},
+        qualityReport: run.quality_report || {},
       },
+    };
+  }
+
+  function buildHealth(run, i18n) {
+    const health = run.health_summary || {};
+    return {
+      status: health.status || "unknown",
+      label: health.label || lookup(i18n, "health.unknownLabel", unknown(i18n)),
+      summary: health.summary || lookup(i18n, "health.unknownSummary", ""),
+      warnings: health.warnings || [],
+      warningGroups: health.warning_groups || health.warningGroups || [],
+      blockers: health.blockers || [],
+    };
+  }
+
+  function buildArtifactQuality(run, i18n) {
+    const quality = run.quality_report || {};
+    return {
+      status: quality.status || "unknown",
+      score: quality.score == null ? null : quality.score,
+      summary: quality.summary || lookup(i18n, "quality.unknownSummary", ""),
+      checks: quality.checks || [],
     };
   }
 
@@ -131,6 +158,16 @@
     });
   }
 
+  function recommendedArtifact(run, i18n) {
+    const artifacts = buildArtifacts(run, i18n).filter((artifact) => artifact.exists);
+    const priority = ["final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
+    for (const path of priority) {
+      const found = artifacts.find((artifact) => artifact.path === path);
+      if (found) return found;
+    }
+    return artifacts[0] || null;
+  }
+
   function artifactCopy(i18n, artifact) {
     const artifacts = lookup(i18n, "artifacts", {});
     for (const key of [artifact.path, artifact.label]) {
@@ -152,7 +189,7 @@
   function stageActions(status, artifacts, run) {
     const actions = [];
     if (artifacts.some((artifact) => artifact.exists)) {
-      actions.push("viewArtifacts");
+      actions.push("viewDeliverables");
     }
     if (status === "needs_attention" || (run.risk_events || []).length) {
       actions.push("viewRisks");

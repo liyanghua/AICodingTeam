@@ -80,48 +80,72 @@
           <section class="panel two-column">
             <div>
               <div class="panel-header">
+                <h2 data-i18n="app.observabilityHealth">可观测健康</h2>
+              </div>
+              <p id="health-summary" class="summary-text"></p>
+              <div id="health-details" class="quality-list"></div>
+            </div>
+            <div>
+              <div class="panel-header">
+                <h2 data-i18n="app.fileQuality">文件质量</h2>
+              </div>
+              <p id="artifact-quality-summary" class="summary-text"></p>
+              <div id="artifact-quality-checks" class="quality-list"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div>
+              <div class="panel-header">
                 <h2 data-i18n="app.qualityChecks">质量关卡</h2>
               </div>
               <div id="quality-gates" class="gate-list"></div>
             </div>
-            <div>
-              <div class="panel-header">
-                <h2 data-i18n="app.deliverables">产物与验收</h2>
-              </div>
-              <div id="deliverables" class="deliverable-list"></div>
-            </div>
           </section>
 
-          <details class="engineering-panel">
-            <summary data-i18n="app.engineeringDetails">工程详情</summary>
-            <div class="engineering-grid">
-              <section>
-                <h3 data-i18n="app.engineeringRun">运行标识</h3>
-                <pre id="engineering-run" class="detail-box"></pre>
-              </section>
-              <section>
-                <h3 data-i18n="app.engineeringEvents">过程事件</h3>
-                <pre id="engineering-events" class="detail-box"></pre>
-              </section>
-              <section>
-                <h3 data-i18n="app.engineeringLog">运行日志</h3>
-                <pre id="engineering-logs" class="detail-box"></pre>
-              </section>
-              <section>
-                <h3 data-i18n="app.engineeringDiff">代码差异</h3>
-                <pre id="engineering-diff" class="detail-box"></pre>
-              </section>
+          <section id="deliverables-panel" class="panel deliverables-panel">
+            <div class="panel-header">
+              <h2 data-i18n="app.deliverables">产物与验收</h2>
             </div>
-          </details>
+            <div class="deliverables-grid">
+              <div class="deliverables-list-pane">
+                <div id="artifact-actions" class="artifact-list"></div>
+                <div id="next-actions" class="action-list"></div>
+              </div>
+              <div class="deliverables-preview-pane">
+                <div class="selected-artifact">
+                  <div>
+                    <h3 id="selected-artifact-title" data-i18n="actions.noDeliverables">暂无可查看产物</h3>
+                    <p id="selected-artifact-description" class="meta"></p>
+                  </div>
+                  <span id="selected-artifact-status" class="mini-status status-muted" data-i18n="actions.artifactPending">未生成</span>
+                </div>
+                <pre id="artifact-preview" class="artifact-preview"></pre>
+              </div>
+            </div>
+          </section>
         </section>
 
-        <aside class="artifact-panel">
+        <aside class="engineering-rail" tabindex="-1">
           <div class="panel-header">
-            <h2 data-i18n="app.deliverables">产物与验收</h2>
+            <h2 data-i18n="app.engineeringDetails">工程详情</h2>
           </div>
-          <div id="artifact-actions" class="artifact-list"></div>
-          <pre id="artifact-preview" class="artifact-preview"></pre>
-          <div id="next-actions" class="action-list"></div>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringRun">运行标识</h3>
+            <pre id="engineering-run" class="detail-box"></pre>
+          </section>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringEvents">过程事件</h3>
+            <pre id="engineering-events" class="detail-box"></pre>
+          </section>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringLog">运行日志</h3>
+            <pre id="engineering-logs" class="detail-box"></pre>
+          </section>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringDiff">代码差异</h3>
+            <pre id="engineering-diff" class="detail-box"></pre>
+          </section>
         </aside>
       </section>
     </main>

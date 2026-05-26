@@ -209,8 +209,48 @@
             <span class="eyebrow">采集过程</span>
             <h2>{{ jobTitle }}</h2>
           </div>
-          <span class="status-pill" :class="jobStatus">{{ statusLabel }}</span>
+          <div class="observer-controls">
+            <button
+              v-if="canStopJob"
+              class="stop-button"
+              :disabled="isStoppingJob || jobStatus === 'stopping'"
+              type="button"
+              @click="stopCurrentJob"
+            >
+              {{ isStoppingJob || jobStatus === 'stopping' ? '正在停止' : '停止采集' }}
+            </button>
+            <span class="status-pill" :class="jobStatus">{{ statusLabel }}</span>
+          </div>
         </div>
+
+        <section class="history-panel">
+          <div class="history-panel-header">
+            <div>
+              <span class="eyebrow">历史任务</span>
+              <strong>{{ jobHistory.length ? `最近 ${jobHistory.length} 个任务` : '暂无历史任务' }}</strong>
+            </div>
+            <button class="text-button" type="button" @click="loadJobHistory">
+              {{ isLoadingJobHistory ? '刷新中' : '刷新' }}
+            </button>
+          </div>
+          <div v-if="jobHistory.length" class="history-list">
+            <button
+              v-for="job in jobHistory"
+              :key="job.jobId"
+              :class="{ active: job.jobId === jobId }"
+              type="button"
+              @click="selectJobHistoryItem(job)"
+            >
+              <span>{{ historyModeLabel(job.settings?.mode) }} · {{ historyStatusLabel(job.status) }}</span>
+              <strong>{{ job.jobId }}</strong>
+              <small>{{ job.message || historyHint(job) }}</small>
+            </button>
+          </div>
+          <p v-else class="history-empty">
+            完成或失败的采集任务会保存在 runs 目录，刷新页面后可从这里继续查看。
+          </p>
+          <span v-if="jobHistoryMessage" class="inline-status">{{ jobHistoryMessage }}</span>
+        </section>
 
         <ol ref="timelineRef" class="timeline" aria-live="polite" @scroll="handleTimelineScroll">
           <li v-for="event in events" :key="event.id" :class="event.level">
@@ -372,6 +412,9 @@
             <span :class="['validation-pill', adminStatus.deploy.mac.scriptExists ? 'ok' : 'warning']">
               Mac 部署脚本 {{ adminStatus.deploy.mac.scriptExists ? '存在' : '缺失' }}
             </span>
+            <span :class="['validation-pill', adminStatus.deploy.macMiniRemote.configured ? 'ok' : 'warning']">
+              远程 Mac mini {{ adminStatus.deploy.macMiniRemote.configured ? `已配置 · ${adminStatus.deploy.macMiniRemote.auth}` : missingLabel(adminStatus.deploy.macMiniRemote.missing) }}
+            </span>
             <span :class="['validation-pill', adminStatus.deploy.cloud.configured ? 'ok' : 'warning']">
               云端 SSH {{ adminStatus.deploy.cloud.configured ? '已配置' : missingLabel(adminStatus.deploy.cloud.missing) }}
             </span>
@@ -413,12 +456,20 @@
               class="secondary-button"
               :disabled="isAdminActionRunning"
               type="button"
+              @click="startAdminAction('/api/admin/deploy/mac-mini')"
+            >
+              远程部署 Mac mini
+            </button>
+            <button
+              class="secondary-button"
+              :disabled="isAdminActionRunning"
+              type="button"
               @click="startAdminAction('/api/admin/deploy/cloud')"
             >
               部署云端素材中心
             </button>
           </div>
-          <p>云端部署通过环境变量中的 SSH 配置执行固定脚本，不接受页面传入命令。</p>
+          <p>远程 Mac mini 部署读取 .env.remote；云端部署读取工作台环境变量。页面不接收任意命令。</p>
         </section>
       </div>
 
@@ -438,7 +489,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 import {
   Activity,
   Download,
@@ -483,6 +534,16 @@ type RemoteBusinessEvent = {
   raw?: Record<string, unknown>;
 };
 
+type JobHistoryItem = {
+  jobId: string;
+  status: string;
+  message?: string;
+  collectorRunDir?: string | null;
+  settings?: {
+    mode?: string;
+  };
+};
+
 type AssetItem = {
   assetId: string;
   imageUrl: string;
@@ -504,6 +565,16 @@ type AdminStatus = {
   vlm: { configured: boolean; missing: string[] };
   deploy: {
     mac: { scriptExists: boolean; script: string };
+    macMiniRemote: {
+      configured: boolean;
+      missing: string[];
+      envFile: string;
+      envFileExists: boolean;
+      target: string;
+      remoteRoot: string;
+      port: string;
+      auth: string;
+    };
     cloud: { configured: boolean; missing: string[] };
   };
   latestSyncableJob?: {
@@ -542,9 +613,13 @@ const doctorMessage = ref('');
 const pasteMessage = ref('');
 const jobId = ref('');
 const jobStatus = ref('idle');
+const jobHistory = ref<JobHistoryItem[]>([]);
+const isLoadingJobHistory = ref(false);
+const jobHistoryMessage = ref('');
 const events = ref<BusinessEvent[]>([]);
 const eventCounter = ref(0);
 const seenEventKeys = ref<Set<string>>(new Set());
+const eventStream = ref<EventSource | null>(null);
 const timelineRef = ref<HTMLElement | null>(null);
 const autoFollowTimeline = ref(true);
 const hasUnreadTimelineEvents = ref(false);
@@ -555,6 +630,7 @@ const isLoadingAssets = ref(false);
 const assetMessage = ref('');
 const isSyncingCloud = ref(false);
 const cloudSyncMessage = ref('');
+const isStoppingJob = ref(false);
 const adminToken = ref(sessionStorage.getItem('MWB_ADMIN_TOKEN') || '');
 const adminMessage = ref('');
 const adminStatus = ref<AdminStatus | null>(null);
@@ -630,6 +706,10 @@ const canSyncToCloud = computed(() =>
   Boolean(jobId.value) && ['completed', 'partial'].includes(jobStatus.value),
 );
 
+const canStopJob = computed(() =>
+  Boolean(jobId.value) && ['queued', 'running', 'stopping'].includes(jobStatus.value),
+);
+
 const configFolderSummary = computed(() => {
   if (mode.value !== 'config_file') {
     return null;
@@ -671,6 +751,8 @@ const statusLabel = computed(() => {
     idle: '未开始',
     queued: '排队中',
     running: '运行中',
+    stopping: '正在停止',
+    canceled: '已停止',
     needs_attention: '需人工处理',
     partial: '部分完成',
     completed: '完成',
@@ -681,6 +763,11 @@ const statusLabel = computed(() => {
 
 onMounted(() => {
   loadAssets();
+  loadJobHistory();
+});
+
+onUnmounted(() => {
+  closeEventStream();
 });
 
 function setActiveView(nextView: AppView) {
@@ -766,6 +853,10 @@ function fileSignature(file: File) {
   return [file.name, file.size, file.lastModified, file.type].join('|');
 }
 
+function makeLocalId() {
+  return globalThis.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function addFiles(files: File[]) {
   if (mode.value === 'config_file') {
     configProjectFiles.value = [];
@@ -776,7 +867,7 @@ function addFiles(files: File[]) {
     const sidecars = files
       .filter((file) => file.type.startsWith('image/'))
       .map((file) => ({
-        id: crypto.randomUUID(),
+        id: makeLocalId(),
         name: file.name,
         file,
         previewUrl: URL.createObjectURL(file),
@@ -786,7 +877,7 @@ function addFiles(files: File[]) {
   }
   const images = files.filter((file) => file.type.startsWith('image/'));
   const next = images.map((file) => ({
-    id: crypto.randomUUID(),
+    id: makeLocalId(),
     name: file.name,
     file,
     previewUrl: URL.createObjectURL(file),
@@ -798,7 +889,7 @@ function addProjectFolder(files: File[]) {
   const workbook = findProjectWorkbook(files);
   configFile.value = workbook || null;
   configProjectFiles.value = files.map((file) => ({
-    id: crypto.randomUUID(),
+    id: makeLocalId(),
     name: file.name,
     file,
     previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : '',
@@ -854,11 +945,8 @@ async function checkDoctor() {
 async function startJob() {
   isSubmitting.value = true;
   cloudSyncMessage.value = '';
-  events.value = [];
-  eventCounter.value = 0;
-  seenEventKeys.value = new Set();
-  autoFollowTimeline.value = true;
-  hasUnreadTimelineEvents.value = false;
+  closeEventStream();
+  resetTimeline();
   try {
     const payload = await buildPayload();
     const response = await fetch('/api/jobs', {
@@ -872,6 +960,7 @@ async function startJob() {
     const job = await response.json();
     jobId.value = job.jobId;
     jobStatus.value = job.status;
+    loadJobHistory(false);
     subscribeEvents(job.jobId);
     refreshEvents(job.jobId);
     pollJob(job.jobId);
@@ -943,13 +1032,28 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function resetTimeline() {
+  events.value = [];
+  eventCounter.value = 0;
+  seenEventKeys.value = new Set();
+  autoFollowTimeline.value = true;
+  hasUnreadTimelineEvents.value = false;
+}
+
 function subscribeEvents(id: string) {
+  closeEventStream();
   const stream = new EventSource(`/api/jobs/${id}/events`);
   stream.onmessage = (message) => {
     const event = JSON.parse(message.data);
     appendBusinessEvent(event);
   };
   stream.onerror = () => stream.close();
+  eventStream.value = stream;
+}
+
+function closeEventStream() {
+  eventStream.value?.close();
+  eventStream.value = null;
 }
 
 function appendBusinessEvent(event: RemoteBusinessEvent) {
@@ -1041,16 +1145,121 @@ function scrollTimelineToLatest() {
 
 async function pollJob(id: string) {
   while (true) {
+    if (jobId.value !== id) {
+      return;
+    }
     await refreshEvents(id);
     const response = await fetch(`/api/jobs/${id}`);
     const payload = await response.json();
+    if (jobId.value !== id) {
+      return;
+    }
     jobStatus.value = payload.status;
-    if (!['queued', 'running'].includes(payload.status)) {
+    if (!['queued', 'running', 'stopping'].includes(payload.status)) {
       await refreshEvents(id);
       await loadAssets();
+      await loadJobHistory(false);
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
+async function loadJobHistory(autoSelectLatest = true) {
+  isLoadingJobHistory.value = true;
+  jobHistoryMessage.value = '';
+  try {
+    const response = await fetch('/api/jobs?limit=20');
+    if (!response.ok) {
+      throw new Error('历史任务加载失败');
+    }
+    const payload = await response.json();
+    jobHistory.value = payload.jobs || [];
+    if (autoSelectLatest && !jobId.value && jobHistory.value.length) {
+      await selectJobHistoryItem(jobHistory.value[0]);
+    }
+  } catch (error) {
+    jobHistoryMessage.value = error instanceof Error ? error.message : '历史任务加载失败';
+  } finally {
+    isLoadingJobHistory.value = false;
+  }
+}
+
+async function selectJobHistoryItem(job: JobHistoryItem) {
+  closeEventStream();
+  cloudSyncMessage.value = '';
+  jobId.value = job.jobId;
+  jobStatus.value = job.status;
+  resetTimeline();
+  await refreshEvents(job.jobId);
+  if (['queued', 'running', 'stopping'].includes(job.status)) {
+    subscribeEvents(job.jobId);
+    pollJob(job.jobId);
+  }
+}
+
+function historyModeLabel(rawMode?: string) {
+  const labels: Record<string, string> = {
+    single_image: '单图',
+    batch_images: '批量',
+    config_file: '配置',
+  };
+  return labels[rawMode || ''] || '任务';
+}
+
+function historyStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    queued: '排队',
+    running: '运行',
+    stopping: '停止中',
+    canceled: '已停止',
+    partial: '部分完成',
+    completed: '完成',
+    failed: '失败',
+  };
+  return labels[status] || status || '未知';
+}
+
+function historyHint(job: JobHistoryItem) {
+  if (['completed', 'partial', 'canceled'].includes(job.status)) {
+    return '可查看过程和结果下载';
+  }
+  if (job.status === 'failed') {
+    return '可查看失败前的采集过程';
+  }
+  return '可继续观察实时进度';
+}
+
+async function stopCurrentJob() {
+  if (!jobId.value || isStoppingJob.value) {
+    return;
+  }
+  isStoppingJob.value = true;
+  try {
+    const response = await fetch(`/api/jobs/${jobId.value}/stop`, {
+      method: 'POST',
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || '停止采集失败');
+    }
+    jobStatus.value = payload.status || 'stopping';
+    appendBusinessEvent({
+      source: 'job',
+      name: 'stop_requested',
+      message: '已请求停止，正在等待当前手机动作结束',
+    });
+    await refreshEvents(jobId.value);
+    await loadJobHistory(false);
+  } catch (error) {
+    events.value.push({
+      id: `local-stop-${Date.now()}`,
+      level: 'warning',
+      message: error instanceof Error ? error.message : '停止采集失败',
+    });
+    scrollTimelineToLatestIfNeeded();
+  } finally {
+    isStoppingJob.value = false;
   }
 }
 

@@ -2608,6 +2608,327 @@ class XhsCollectorTests(unittest.TestCase):
             self.assertIn("back_after_image_search_button_miss", events)
             self.assertLess(events.index("wait_album_page_after_image_search_button"), events.index("tap_album_entry"))
 
+    def test_deterministic_flow_cancels_before_image_search_button(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            run_deterministic_item,
+        )
+        from third_party.xhs_collector.xhs_collector.models import InputItem
+
+        class FakeCancelToken:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def is_cancel_requested(self) -> bool:
+                self.calls += 1
+                return self.calls >= 4
+
+        class FakeDevice:
+            def __init__(self) -> None:
+                self.actions: list[tuple[str, object]] = []
+                self.ui_text = "首页 发现"
+
+            def start_app(self, package: str) -> None:
+                self.actions.append(("start_app", package))
+                self.ui_text = "首页 发现"
+
+            def push_reference_image(
+                self, local_path: Path, item_id: str, remote_dir: str
+            ) -> str:
+                self.actions.append(("push", item_id))
+                return f"{remote_dir}/{item_id}{local_path.suffix}"
+
+            def dump_hierarchy(self) -> str:
+                return self.ui_text
+
+            def click_ratio(self, x: float, y: float) -> None:
+                self.actions.append(("click", (x, y)))
+                if (x, y) == (0.1, 0.1):
+                    self.ui_text = "取消 搜索历史 搜索小红书"
+                elif (x, y) == (0.2, 0.2):
+                    raise AssertionError("image search should not be clicked after cancel")
+
+            def screenshot(self) -> bytes:
+                return b"png"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ref = root / "ref.jpg"
+            ref.write_bytes(b"ref")
+            item = InputItem(
+                item_id="sku",
+                keyword="桌垫",
+                keyword_candidates=[],
+                reference_image=ref,
+                top_n=1,
+            )
+
+            result = run_deterministic_item(
+                item=item,
+                device=FakeDevice(),
+                media_store=None,
+                profile=self._basic_download_profile(),
+                output_item_dir=root / "items" / item.item_id,
+                output_dir=root,
+                xhs_package="com.xingin.xhs",
+                remote_image_dir="/sdcard/Pictures/xhs_collector",
+                throttle_seconds=0,
+                save_poll_seconds=0,
+                sleep_func=lambda seconds: None,
+                cancel_token=FakeCancelToken(),
+            )
+
+            self.assertEqual(result.status, "canceled")
+            self.assertEqual(result.message, "canceled")
+            events = (root / "step_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("collection_canceled", events)
+
+    def test_deterministic_flow_reuses_xhs_home_without_restarting_app(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            run_deterministic_item,
+        )
+        from third_party.xhs_collector.xhs_collector.models import InputItem
+
+        class FakeDevice:
+            def __init__(self) -> None:
+                self.actions: list[tuple[str, object]] = []
+                self.ui_text = "首页 发现 推荐"
+
+            def current_package(self) -> str:
+                return "com.xingin.xhs"
+
+            def start_app(self, package: str) -> None:
+                self.actions.append(("start_app", package))
+
+            def push_reference_image(
+                self, local_path: Path, item_id: str, remote_dir: str
+            ) -> str:
+                self.actions.append(("push", item_id))
+                return f"{remote_dir}/{item_id}{local_path.suffix}"
+
+            def dump_hierarchy(self) -> str:
+                return self.ui_text
+
+            def click_ratio(self, x: float, y: float) -> None:
+                self.actions.append(("click", (x, y)))
+                if (x, y) == (0.1, 0.1):
+                    self.ui_text = "取消 搜索历史 搜索小红书"
+                elif (x, y) == (0.2, 0.2):
+                    self.ui_text = "图搜 相册 最近项目"
+                elif (x, y) == (0.3, 0.3):
+                    self.ui_text = "全部照片 收起 RecyclerView"
+                elif (x, y) == (0.4, 0.4):
+                    self.ui_text = "输入关于图片的问题 图片分析中"
+
+            def screenshot(self) -> bytes:
+                return b"png"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ref = root / "ref.jpg"
+            ref.write_bytes(b"ref")
+            item = InputItem(
+                item_id="sku",
+                keyword="桌垫",
+                keyword_candidates=[],
+                reference_image=ref,
+                top_n=1,
+            )
+            device = FakeDevice()
+
+            result = run_deterministic_item(
+                item=item,
+                device=device,
+                media_store=None,
+                profile=self._basic_download_profile(),
+                output_item_dir=root / "items" / item.item_id,
+                output_dir=root,
+                xhs_package="com.xingin.xhs",
+                remote_image_dir="/sdcard/Pictures/xhs_collector",
+                throttle_seconds=0,
+                save_poll_seconds=0,
+                sleep_func=lambda seconds: None,
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertNotIn(("start_app", "com.xingin.xhs"), device.actions)
+            events = (root / "step_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("xhs_home_ready", events)
+
+    def test_deterministic_flow_recovers_non_home_xhs_before_search(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            run_deterministic_item,
+        )
+        from third_party.xhs_collector.xhs_collector.models import InputItem
+
+        class FakeDevice:
+            def __init__(self) -> None:
+                self.actions: list[tuple[str, object]] = []
+                self.ui_text = "评论 点赞 收藏"
+
+            def current_package(self) -> str:
+                return "com.xingin.xhs"
+
+            def start_app(self, package: str) -> None:
+                self.actions.append(("start_app", package))
+                self.ui_text = "首页 发现 推荐"
+
+            def press_back(self) -> None:
+                self.actions.append(("press_back", None))
+                self.ui_text = "首页 发现 推荐"
+
+            def push_reference_image(
+                self, local_path: Path, item_id: str, remote_dir: str
+            ) -> str:
+                self.actions.append(("push", item_id))
+                return f"{remote_dir}/{item_id}{local_path.suffix}"
+
+            def dump_hierarchy(self) -> str:
+                return self.ui_text
+
+            def click_ratio(self, x: float, y: float) -> None:
+                self.actions.append(("click", (x, y)))
+                if (x, y) == (0.1, 0.1):
+                    self.ui_text = "取消 搜索历史 搜索小红书"
+                elif (x, y) == (0.2, 0.2):
+                    self.ui_text = "图搜 相册 最近项目"
+                elif (x, y) == (0.3, 0.3):
+                    self.ui_text = "全部照片 收起 RecyclerView"
+                elif (x, y) == (0.4, 0.4):
+                    self.ui_text = "输入关于图片的问题 图片分析中"
+
+            def screenshot(self) -> bytes:
+                return b"png"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ref = root / "ref.jpg"
+            ref.write_bytes(b"ref")
+            item = InputItem(
+                item_id="sku",
+                keyword="桌垫",
+                keyword_candidates=[],
+                reference_image=ref,
+                top_n=1,
+            )
+            device = FakeDevice()
+
+            result = run_deterministic_item(
+                item=item,
+                device=device,
+                media_store=None,
+                profile=self._basic_download_profile(),
+                output_item_dir=root / "items" / item.item_id,
+                output_dir=root,
+                xhs_package="com.xingin.xhs",
+                remote_image_dir="/sdcard/Pictures/xhs_collector",
+                throttle_seconds=0,
+                save_poll_seconds=0,
+                sleep_func=lambda seconds: None,
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertIn(("press_back", None), device.actions)
+            self.assertLess(
+                device.actions.index(("press_back", None)),
+                device.actions.index(("click", (0.1, 0.1))),
+            )
+
+    def test_deterministic_flow_recovers_search_residue_before_new_run(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            run_deterministic_item,
+        )
+        from third_party.xhs_collector.xhs_collector.models import InputItem
+
+        class FakeDevice:
+            def __init__(self) -> None:
+                self.actions: list[tuple[str, object]] = []
+                self.ui_text = "取消 搜索历史 推荐 搜索小红书"
+
+            def current_package(self) -> str:
+                return "com.xingin.xhs"
+
+            def start_app(self, package: str) -> None:
+                self.actions.append(("start_app", package))
+                self.ui_text = "首页 发现 推荐"
+
+            def press_back(self) -> None:
+                self.actions.append(("press_back", None))
+                self.ui_text = "首页 发现 推荐"
+
+            def push_reference_image(
+                self, local_path: Path, item_id: str, remote_dir: str
+            ) -> str:
+                self.actions.append(("push", item_id))
+                return f"{remote_dir}/{item_id}{local_path.suffix}"
+
+            def dump_hierarchy(self) -> str:
+                return self.ui_text
+
+            def click_ratio(self, x: float, y: float) -> None:
+                self.actions.append(("click", (x, y)))
+                if (x, y) == (0.1, 0.1):
+                    self.ui_text = "取消 搜索历史 搜索小红书"
+                elif (x, y) == (0.2, 0.2):
+                    self.ui_text = "图搜 相册 最近项目"
+                elif (x, y) == (0.3, 0.3):
+                    self.ui_text = "全部照片 收起 RecyclerView"
+                elif (x, y) == (0.4, 0.4):
+                    self.ui_text = "输入关于图片的问题 图片分析中"
+
+            def screenshot(self) -> bytes:
+                return b"png"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ref = root / "ref.jpg"
+            ref.write_bytes(b"ref")
+            item = InputItem(
+                item_id="sku",
+                keyword="桌垫",
+                keyword_candidates=[],
+                reference_image=ref,
+                top_n=1,
+            )
+            device = FakeDevice()
+
+            result = run_deterministic_item(
+                item=item,
+                device=device,
+                media_store=None,
+                profile=self._basic_download_profile(),
+                output_item_dir=root / "items" / item.item_id,
+                output_dir=root,
+                xhs_package="com.xingin.xhs",
+                remote_image_dir="/sdcard/Pictures/xhs_collector",
+                throttle_seconds=0,
+                save_poll_seconds=0,
+                sleep_func=lambda seconds: None,
+            )
+
+            self.assertEqual(result.status, "completed")
+            self.assertLess(
+                device.actions.index(("press_back", None)),
+                device.actions.index(("push", "sku")),
+            )
+            self.assertLess(
+                device.actions.index(("press_back", None)),
+                device.actions.index(("click", (0.1, 0.1))),
+            )
+            events = (root / "step_events.jsonl").read_text(encoding="utf-8")
+            self.assertLess(
+                events.index("recover_xhs_home_before_search"),
+                events.index("push_reference"),
+            )
+
+    def test_xhs_home_page_detection_rejects_search_residue(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            _is_xhs_home_page,
+        )
+
+        self.assertFalse(_is_xhs_home_page("取消 搜索历史 推荐 搜索小红书"))
+        self.assertFalse(_is_xhs_home_page("推荐"))
+        self.assertTrue(_is_xhs_home_page("首页 发现 推荐"))
+
     def test_deterministic_flow_stops_when_image_search_button_never_opens_album(
         self,
     ) -> None:
@@ -6810,6 +7131,98 @@ class XhsCollectorTests(unittest.TestCase):
         )
 
         self.assertEqual(status, "failed")
+
+    def test_manifest_status_is_canceled_when_every_item_canceled(self) -> None:
+        from third_party.xhs_collector.xhs_collector.models import ItemResult
+        from third_party.xhs_collector.xhs_collector.runner import (
+            _manifest_status_from_results,
+        )
+
+        status = _manifest_status_from_results(
+            [
+                ItemResult(
+                    item_id="sku",
+                    keyword="",
+                    status="canceled",
+                    collected_count=0,
+                    risk_events=[{"event": "collection_canceled"}],
+                )
+            ]
+        )
+
+        self.assertEqual(status, "canceled")
+
+    def test_manifest_status_is_partial_when_canceled_after_downloads(self) -> None:
+        from third_party.xhs_collector.xhs_collector.models import ItemResult
+        from third_party.xhs_collector.xhs_collector.runner import (
+            _manifest_status_from_results,
+        )
+
+        status = _manifest_status_from_results(
+            [
+                ItemResult(
+                    item_id="sku",
+                    keyword="",
+                    status="canceled",
+                    collected_count=1,
+                    risk_events=[{"event": "collection_canceled"}],
+                )
+            ]
+        )
+
+        self.assertEqual(status, "partial")
+
+    def test_run_collect_passes_cancel_token_to_deterministic_runner(self) -> None:
+        from third_party.xhs_collector.xhs_collector.runner import run_collect
+
+        class FakeCancelToken:
+            def is_cancel_requested(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "ref.jpg"
+            image_path.write_bytes(b"fake image")
+            excel_path = root / "items.xlsx"
+            _write_xlsx(
+                excel_path,
+                [["item_id", "keyword", "image_path"], ["sku", "桌垫", str(image_path)]],
+            )
+            profile_path = root / "coords.json"
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "points": {
+                            "search_box": [0.1, 0.1],
+                            "image_search_button": [0.15, 0.15],
+                            "album_entry": [0.2, 0.2],
+                            "first_album_image": [0.25, 0.25],
+                            "album_confirm": [0.3, 0.3],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "output_root": str(root / "runs"),
+                        "mode": "deterministic",
+                        "top_n": 1,
+                        "deterministic": {"coordinate_profile": str(profile_path)},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            token = FakeCancelToken()
+
+            with mock.patch(
+                "third_party.xhs_collector.xhs_collector.runner.run_deterministic_collect"
+            ) as deterministic:
+                run_collect(excel_path, config_path, cancel_token=token)
+
+        self.assertIs(deterministic.call_args.kwargs["cancel_token"], token)
 
     def test_run_collect_routes_deterministic_mode(self) -> None:
         from third_party.xhs_collector.xhs_collector.runner import run_collect

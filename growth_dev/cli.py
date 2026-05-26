@@ -615,14 +615,24 @@ def _print_run_artifact(run_dir: Path, artifact: str, label: str) -> int:
 
 
 def _team_status_summary(record, run_dir: Path) -> str:
+    from .team.quality import evaluate_run_quality, summarize_run_health
+
     current = _current_agent(record)
+    health = summarize_run_health(record, run_dir)
+    quality = evaluate_run_quality(record, run_dir)
     lines = [
         f"Run: {record.run_id}",
         f"Status: {record.status}",
+        f"Run health: {health.label} - {health.summary}",
+        f"Artifact quality: {quality.status} ({quality.score:.0%}) - {quality.summary}",
         f"Domain: {record.domain_id}",
         f"Executor: {record.executor}",
         f"Current agent: {current.agent_id if current else 'none'}",
     ]
+    if health.warnings:
+        lines.extend(["Warnings:", *[f"- {warning}" for warning in health.warnings[:3]]])
+    if health.blockers:
+        lines.extend(["Blockers:", *[f"- {blocker}" for blocker in health.blockers[:3]]])
     if current:
         lines.extend(
             [
@@ -776,19 +786,9 @@ def _elapsed_label(started_at: str, finished_at: str) -> str:
 
 
 def _latest_log_lines(run_dir: Path, max_lines: int = 6) -> list[str]:
-    candidates = [
-        run_dir / "codex" / "stdout.jsonl",
-        run_dir / "codex" / "stderr.log",
-        run_dir / "codex" / "reviewer_stdout.log",
-        run_dir / "codex" / "reviewer_stderr.log",
-    ]
-    lines: list[str] = []
-    for path in candidates:
-        if not path.exists():
-            continue
-        for line in _tail_lines(path, max_lines=2):
-            lines.append(f"{path.name}: {line}")
-    return lines[-max_lines:]
+    from .team.quality import summarize_run_logs
+
+    return summarize_run_logs(run_dir, max_lines=max_lines)
 
 
 def _tail_lines(path: Path, max_lines: int = 5) -> list[str]:

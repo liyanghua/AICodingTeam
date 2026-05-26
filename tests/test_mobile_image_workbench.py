@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+from http import HTTPStatus
 import json
 import os
 import re
@@ -845,6 +846,253 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "completed or partial"):
                 manager.sync_job_to_cloud("job-queued")
 
+    def test_job_manager_lists_persisted_jobs_newest_first_for_history(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            old_job = JobRecord(
+                job_id="20260524T000000000000Z",
+                status="failed",
+                job_dir=root / "runs" / "20260524T000000000000Z",
+                settings=JobSettings.for_mode("single_image"),
+                message="device not ready",
+            )
+            newer_job = JobRecord(
+                job_id="20260525T000000000000Z",
+                status="completed",
+                job_dir=root / "runs" / "20260525T000000000000Z",
+                settings=JobSettings.for_mode("batch_images"),
+                collector_run_dir=root / "collector-run",
+                message="采集完成",
+            )
+            manager._write_record(old_job)
+            manager._write_record(newer_job)
+            (root / "runs" / "bad-job").mkdir()
+            (root / "runs" / "bad-job" / "job.json").write_text(
+                "{not valid json",
+                encoding="utf-8",
+            )
+
+            jobs = manager.list_jobs(limit=10)
+
+            self.assertEqual([job.job_id for job in jobs], [newer_job.job_id, old_job.job_id])
+            self.assertEqual(jobs[0].status, "completed")
+            self.assertEqual(jobs[0].settings.mode, "batch_images")
+            self.assertEqual(jobs[0].message, "采集完成")
+
+    def test_jobs_get_route_returns_history_list(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.server import (
+            WorkbenchRequestHandler,
+        )
+
+        class FakeManager:
+            def list_jobs(self, limit=50):
+                self.limit = limit
+                return [
+                    mock.Mock(
+                        to_dict=lambda: {
+                            "jobId": "20260525T000000000000Z",
+                            "status": "completed",
+                            "settings": {"mode": "batch_images"},
+                            "message": "采集完成",
+                        }
+                    )
+                ]
+
+        handler = WorkbenchRequestHandler.__new__(WorkbenchRequestHandler)
+        handler.path = "/api/jobs?limit=5"
+        handler.manager = FakeManager()
+        payloads: list[tuple[dict, HTTPStatus]] = []
+        handler._send_json = lambda payload, status=HTTPStatus.OK: payloads.append(
+            (payload, status)
+        )
+
+        handler.do_GET()
+
+        self.assertEqual(handler.manager.limit, 5)
+        self.assertEqual(payloads[0][0]["jobs"][0]["jobId"], "20260525T000000000000Z")
+        self.assertEqual(payloads[0][0]["jobs"][0]["status"], "completed")
+
+    def test_job_manager_stop_running_job_marks_stopping_and_writes_cancel_marker(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            record = JobRecord(
+                job_id="job-running",
+                status="running",
+                job_dir=root / "runs" / "job-running",
+                settings=JobSettings.for_mode("single_image"),
+                message="采集任务运行中",
+            )
+            manager._write_record(record)
+
+            stopped = manager.stop_job("job-running")
+
+            self.assertEqual(stopped.status, "stopping")
+            self.assertTrue((record.job_dir / "cancel_requested.json").exists())
+            events = (record.job_dir / "job_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("stop_requested", events)
+
+    def test_job_manager_stop_queued_job_finishes_as_canceled(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            record = JobRecord(
+                job_id="job-queued",
+                status="queued",
+                job_dir=root / "runs" / "job-queued",
+                settings=JobSettings.for_mode("single_image"),
+            )
+            manager._write_record(record)
+
+            stopped = manager.stop_job("job-queued")
+
+            self.assertEqual(stopped.status, "canceled")
+            self.assertTrue((record.job_dir / "cancel_requested.json").exists())
+            events = (record.job_dir / "job_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("stop_requested", events)
+            self.assertIn("job_canceled", events)
+
+    def test_job_manager_rejects_stop_after_job_is_terminal(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+            JobRecord,
+        )
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.settings import (
+            JobSettings,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            record = JobRecord(
+                job_id="job-done",
+                status="completed",
+                job_dir=root / "runs" / "job-done",
+                settings=JobSettings.for_mode("single_image"),
+            )
+            manager._write_record(record)
+
+            with self.assertRaisesRegex(ValueError, "cannot stop"):
+                manager.stop_job("job-done")
+
+    def test_job_stop_post_route_calls_manager(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.server import (
+            WorkbenchRequestHandler,
+        )
+
+        calls: list[str] = []
+
+        class FakeManager:
+            def stop_job(self, job_id: str):
+                calls.append(job_id)
+                return mock.Mock(
+                    to_dict=lambda: {"jobId": job_id, "status": "stopping"}
+                )
+
+        handler = WorkbenchRequestHandler.__new__(WorkbenchRequestHandler)
+        handler.path = "/api/jobs/job-1/stop"
+        handler.manager = FakeManager()
+        payloads: list[tuple[dict, HTTPStatus]] = []
+        handler._send_json = lambda payload, status=HTTPStatus.OK: payloads.append(
+            (payload, status)
+        )
+
+        handler.do_POST()
+
+        self.assertEqual(calls, ["job-1"])
+        self.assertEqual(payloads[0][0]["status"], "stopping")
+
+    def test_job_manager_passes_cancel_token_to_collector_and_finishes_canceled(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
+            JobManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = JobManager(root / "runs")
+            image_path = root / "ref.jpg"
+            image_path.write_bytes(b"fake image")
+            payload = {
+                "mode": "single_image",
+                "images": [
+                    {
+                        "filename": "ref.jpg",
+                        "contentBase64": base64.b64encode(b"fake image").decode("ascii"),
+                    }
+                ],
+                "settings": {
+                    "mode": "single_image",
+                    "dryRun": False,
+                    "deterministicMode": True,
+                    "imageTopN": 1,
+                    "keywordTopN": 0,
+                },
+            }
+            record = manager.create_job(payload, start=False)
+
+            class FakeManifest:
+                status = "canceled"
+                output_dir = record.job_dir / "collector_runs" / "fake-run"
+
+            captured = {}
+
+            def fake_collect(*args, **kwargs):
+                captured["cancel_token"] = kwargs["cancel_token"]
+                self.assertFalse(captured["cancel_token"].is_cancel_requested())
+                (FakeManifest.output_dir / "items").mkdir(parents=True)
+                (FakeManifest.output_dir / "manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "run_id": "fake-run",
+                            "status": "canceled",
+                            "output_dir": str(FakeManifest.output_dir),
+                            "input_path": str(record.job_dir / "generated_inputs.json"),
+                            "mode": "deterministic",
+                            "results": [],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return FakeManifest()
+
+            with mock.patch(
+                "third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs.run_direct_items_collect",
+                side_effect=fake_collect,
+            ), mock.patch(
+                "third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs.write_result_exports"
+            ):
+                updated = manager.run_job(record.job_id)
+
+            self.assertEqual(updated.status, "canceled")
+            self.assertIsNotNone(captured["cancel_token"])
+            events = (record.job_dir / "job_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("job_canceled", events)
+
     def test_admin_status_reports_config_and_latest_syncable_job(self) -> None:
         from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
             AdminTaskManager,
@@ -900,6 +1148,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             self.assertTrue(status["cloudSync"]["configured"])
             self.assertTrue(status["vlm"]["configured"])
             self.assertTrue(status["deploy"]["cloud"]["configured"])
+            self.assertIn("macMiniRemote", status["deploy"])
             self.assertIn("install_workbench_launchd.sh", status["deploy"]["mac"]["script"])
             self.assertEqual(status["latestSyncableJob"]["jobId"], "20260525T000000000000Z")
 
@@ -1020,6 +1269,206 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             self.assertIn("install_asset_center_systemd.sh", run_calls[1][0][-1])
             self.assertNotIn(";", run_calls[0][0])
 
+    def test_admin_mac_mini_remote_config_loads_from_dedicated_env_file(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            remote_env = root / "third_party/mobile_deploy/mac-mini/.env.remote"
+            remote_env.parent.mkdir(parents=True)
+            remote_env.write_text(
+                "\n".join(
+                    [
+                        "MWB_MAC_MINI_SSH_TARGET=deployer@192.168.77.85",
+                        "MWB_MAC_MINI_REMOTE_ROOT=/Users/deployer/mobile-runtime",
+                        "MWB_MAC_MINI_SSH_KEY_PATH=/Users/yichen/.ssh/mac-mini",
+                        "MWB_MAC_MINI_SSH_PORT=2222",
+                        "MWB_MAC_MINI_SSH_PASS=secret-should-not-leak",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            admin = AdminTaskManager(root)
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                status = admin.status(mock.Mock(root_dir=root / "runs"))
+
+            remote = status["deploy"]["macMiniRemote"]
+            self.assertTrue(remote["configured"])
+            self.assertEqual(remote["auth"], "key")
+            self.assertEqual(remote["target"], "deployer@192.168.77.85")
+            self.assertEqual(remote["remoteRoot"], "/Users/deployer/mobile-runtime")
+            self.assertEqual(remote["port"], "2222")
+            self.assertNotIn("secret-should-not-leak", json.dumps(remote, ensure_ascii=False))
+
+    def test_admin_mac_mini_remote_config_uses_new_env_before_legacy_names(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admin = AdminTaskManager(root)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MAC_MINI_USER": "legacy@host",
+                    "MAC_NINI_PASS": "legacy-pass",
+                    "RES_DIR": "/legacy/root",
+                    "MWB_MAC_MINI_SSH_TARGET": "new@host",
+                    "MWB_MAC_MINI_REMOTE_ROOT": "/new/root",
+                    "MWB_MAC_MINI_SSH_PASS": "new-pass",
+                },
+                clear=True,
+            ):
+                status = admin.status(mock.Mock(root_dir=root / "runs"))
+
+            remote = status["deploy"]["macMiniRemote"]
+            self.assertTrue(remote["configured"])
+            self.assertEqual(remote["target"], "new@host")
+            self.assertEqual(remote["remoteRoot"], "/new/root")
+            self.assertEqual(remote["auth"], "password")
+
+    def test_admin_mac_mini_remote_deploy_uses_key_auth_whitelisted_commands(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mac_script = root / "third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
+            key_path = root / "keys/mac-mini"
+            mac_script.parent.mkdir(parents=True)
+            key_path.parent.mkdir(parents=True)
+            mac_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            key_path.write_text("fake-key", encoding="utf-8")
+            run_calls = []
+
+            class FakeCompleted:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+
+            def fake_run(command, **kwargs):
+                run_calls.append((command, kwargs))
+                return FakeCompleted()
+
+            admin = AdminTaskManager(root, run_async=False, command_runner=fake_run)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MWB_MAC_MINI_SSH_TARGET": "deployer@192.168.77.85",
+                    "MWB_MAC_MINI_REMOTE_ROOT": "/Users/deployer/mobile-runtime",
+                    "MWB_MAC_MINI_SSH_KEY_PATH": str(key_path),
+                    "MWB_MAC_MINI_SSH_PORT": "2222",
+                },
+                clear=True,
+            ):
+                task = admin.start_mac_mini_remote_deploy()
+
+            self.assertEqual(task["status"], "completed")
+            self.assertEqual([call[0][0] for call in run_calls], ["rsync", "ssh"])
+            self.assertIn("deployer@192.168.77.85:/Users/deployer/mobile-runtime/", run_calls[0][0])
+            self.assertIn("install_workbench_launchd.sh", run_calls[1][0][-1])
+            self.assertIn(f"-i {key_path}", " ".join(run_calls[0][0]))
+            self.assertIn("IdentitiesOnly=yes", " ".join(run_calls[0][0]))
+            self.assertNotIn("secret", "\n".join(" ".join(call[0]) for call in run_calls))
+            self.assertNotIn(";", run_calls[0][0])
+
+    def test_admin_mac_mini_remote_deploy_rejects_missing_key_file_before_rsync(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mac_script = root / "third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
+            mac_script.parent.mkdir(parents=True)
+            mac_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            run_calls = []
+
+            def fake_run(command, **kwargs):
+                run_calls.append((command, kwargs))
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            admin = AdminTaskManager(root, run_async=False, command_runner=fake_run)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MWB_MAC_MINI_SSH_TARGET": "deployer@192.168.77.85",
+                    "MWB_MAC_MINI_REMOTE_ROOT": "/Users/deployer/mobile-runtime",
+                    "MWB_MAC_MINI_SSH_KEY_PATH": "/Users/you/.ssh/mac-mini-deploy",
+                },
+                clear=True,
+            ):
+                task = admin.start_mac_mini_remote_deploy()
+
+            self.assertEqual(task["status"], "failed")
+            self.assertIn("SSH key file not found", task["message"])
+            self.assertEqual(run_calls, [])
+
+    def test_admin_mac_mini_remote_deploy_requires_sshpass_for_password_auth(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.admin import (
+            AdminTaskManager,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mac_script = root / "third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
+            mac_script.parent.mkdir(parents=True)
+            mac_script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            admin = AdminTaskManager(root, run_async=False, command_runner=lambda *args, **kwargs: None)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MWB_MAC_MINI_SSH_TARGET": "deployer@192.168.77.85",
+                    "MWB_MAC_MINI_REMOTE_ROOT": "/Users/deployer/mobile-runtime",
+                    "MAC_NINI_PASS": "legacy-pass",
+                },
+                clear=True,
+            ), mock.patch(
+                "third_party.mobile_image_workbench.backend.mobile_image_workbench.admin.shutil.which",
+                return_value=None,
+            ):
+                task = admin.start_mac_mini_remote_deploy()
+
+            self.assertEqual(task["status"], "failed")
+            self.assertIn("sshpass", task["message"])
+
+    def test_admin_post_route_starts_mac_mini_remote_deploy_with_token(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.server import (
+            WorkbenchRequestHandler,
+        )
+
+        calls: list[str] = []
+
+        class FakeHeaders:
+            def get(self, name, default=None):
+                return "Bearer secret" if name == "Authorization" else default
+
+        class FakeAdmin:
+            def start_mac_mini_remote_deploy(self):
+                calls.append("mac-mini")
+                return {"taskId": "admin-1", "status": "queued"}
+
+        handler = WorkbenchRequestHandler.__new__(WorkbenchRequestHandler)
+        handler.path = "/api/admin/deploy/mac-mini"
+        handler.headers = FakeHeaders()
+        handler.admin_manager = FakeAdmin()
+        payloads: list[tuple[dict, HTTPStatus]] = []
+        handler._send_json = lambda payload, status=HTTPStatus.OK: payloads.append(
+            (payload, status)
+        )
+
+        with mock.patch.dict(os.environ, {"MWB_ADMIN_TOKEN": "secret"}, clear=True):
+            handler.do_POST()
+
+        self.assertEqual(calls, ["mac-mini"])
+        self.assertEqual(payloads[0][0]["taskId"], "admin-1")
+
     def test_frontend_exposes_asset_center_filters_and_results_grid(self) -> None:
         root = Path(__file__).resolve().parents[1]
         app_vue = (
@@ -1062,13 +1511,33 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("/api/admin/status", app_vue)
         self.assertIn("/api/admin/sync/latest", app_vue)
         self.assertIn("/api/admin/deploy/mac", app_vue)
+        self.assertIn("/api/admin/deploy/mac-mini", app_vue)
         self.assertIn("/api/admin/deploy/cloud", app_vue)
         self.assertIn("Authorization: `Bearer ${adminToken.value}`", app_vue)
         self.assertIn("一键同步最新任务", app_vue)
         self.assertIn("部署 Mac 工作台", app_vue)
+        self.assertIn("远程部署 Mac mini", app_vue)
         self.assertIn("部署云端素材中心", app_vue)
         self.assertIn("admin-page", css)
         self.assertIn("admin-log", css)
+
+    def test_frontend_exposes_stop_current_collection_action(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_vue = (
+            root / "third_party/mobile_image_workbench/frontend/src/App.vue"
+        ).read_text(encoding="utf-8")
+        css = (
+            root / "third_party/mobile_image_workbench/frontend/src/styles.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("停止采集", app_vue)
+        self.assertIn("stopCurrentJob", app_vue)
+        self.assertIn("/stop", app_vue)
+        self.assertIn("isStoppingJob", app_vue)
+        self.assertIn("canStopJob", app_vue)
+        self.assertIn("stopping", app_vue)
+        self.assertIn("canceled", app_vue)
+        self.assertIn("stop-button", css)
 
     def test_mobile_deploy_scripts_cover_mac_mini_and_cloud_server(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1084,6 +1553,9 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         mac_env = (
             root / "third_party/mobile_deploy/mac-mini/workbench.env.example"
         ).read_text(encoding="utf-8")
+        remote_env = (
+            root / "third_party/mobile_deploy/mac-mini/remote.env.example"
+        ).read_text(encoding="utf-8")
         server_env = (
             root / "third_party/mobile_deploy/server/asset-center.env.example"
         ).read_text(encoding="utf-8")
@@ -1091,10 +1563,28 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("LaunchAgents", mac_script)
         self.assertIn("mobile_image_workbench", mac_script)
         self.assertIn("<string>serve</string>", mac_script)
+        self.assertIn("MWB_PYTHON_BIN", mac_script)
+        self.assertIn("python3.12", mac_script)
+        self.assertIn("python3.11", mac_script)
+        self.assertIn("Removing incompatible venv", mac_script)
+        self.assertIn("Install Certificates.command", mac_script)
+        self.assertIn("/Applications/Python 3.12/Install Certificates.command", mac_script)
+        self.assertIn("No Python certificate installer found", mac_script)
+        self.assertIn("MWB_PIP_TRUSTED_HOST", mac_script)
+        self.assertIn("PIP_TRUSTED_HOST", mac_script)
+        self.assertIn("MWB_PIP_INDEX_URL", mac_script)
+        self.assertIn("npm not found; using existing frontend/dist", mac_script)
+        self.assertIn("frontend/dist/index.html", mac_script)
+        self.assertIn("ANDROID_HOME_DIR", mac_script)
+        self.assertIn("platform-tools", mac_script)
+        self.assertIn("<key>ANDROID_HOME</key>", mac_script)
         self.assertIn("MWB_CLOUD_SERVER_URL", mac_env)
         self.assertIn("DASHSCOPE_API_KEY", mac_env)
         self.assertIn("MWB_ADMIN_TOKEN", mac_env)
         self.assertIn("MWB_DEPLOY_SSH_HOST", mac_env)
+        self.assertIn("MWB_MAC_MINI_SSH_TARGET", remote_env)
+        self.assertIn("MWB_MAC_MINI_REMOTE_ROOT", remote_env)
+        self.assertIn("MWB_MAC_MINI_SSH_PASS", remote_env)
         self.assertIn("systemctl", server_script)
         self.assertIn("mobile_asset_center", server_script)
         self.assertIn("serve --env-file", server_script)
@@ -1102,6 +1592,8 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("ASSET_CENTER_PROFILE=cloud", server_env)
         self.assertIn("ALIYUN_OSS_BUCKET", server_env)
         self.assertIn("Mac mini", readme)
+        self.assertIn(".env.remote", readme)
+        self.assertIn(".env.asset.cloud", readme)
         self.assertIn("云服务器", readme)
 
     def test_job_settings_defaults_match_input_modes(self) -> None:
@@ -1574,6 +2066,16 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("没有识别到图片", app_vue)
         self.assertIn("event.preventDefault()", app_vue)
 
+    def test_frontend_upload_ids_do_not_require_secure_context_random_uuid(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_vue = (
+            root / "third_party/mobile_image_workbench/frontend/src/App.vue"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("function makeLocalId", app_vue)
+        self.assertIn("globalThis.crypto?.randomUUID", app_vue)
+        self.assertNotIn("id: crypto.randomUUID()", app_vue)
+
     def test_translated_events_order_prepare_collector_then_finish(self) -> None:
         from third_party.mobile_image_workbench.backend.mobile_image_workbench.jobs import (
             JobManager,
@@ -1751,6 +2253,23 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("refreshEvents", app_vue)
         self.assertIn("/events.json", app_vue)
         self.assertIn("await refreshEvents(id)", app_vue)
+
+    def test_frontend_loads_job_history_after_refresh(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_vue = (
+            root / "third_party/mobile_image_workbench/frontend/src/App.vue"
+        ).read_text(encoding="utf-8")
+        css = (
+            root / "third_party/mobile_image_workbench/frontend/src/styles.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("历史任务", app_vue)
+        self.assertIn("jobHistory", app_vue)
+        self.assertIn("loadJobHistory", app_vue)
+        self.assertIn("/api/jobs?limit=20", app_vue)
+        self.assertIn("selectJobHistoryItem", app_vue)
+        self.assertIn("closeEventStream", app_vue)
+        self.assertIn(".history-panel", css)
 
     def test_result_exports_include_original_and_collected_images(self) -> None:
         from third_party.mobile_image_workbench.backend.mobile_image_workbench.exports import (

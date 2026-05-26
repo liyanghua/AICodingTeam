@@ -93,6 +93,8 @@ class DashboardTests(unittest.TestCase):
         (run_dir / "prd.md").write_text("# PRD\n", encoding="utf-8")
         (run_dir / "tech_spec.md").write_text("# Tech Spec\n", encoding="utf-8")
         (run_dir / "ui_spec.md").write_text("# UI Spec\n", encoding="utf-8")
+        (run_dir / "eval.md").write_text("# Eval\n", encoding="utf-8")
+        (run_dir / "final_report.md").write_text("# Final Report\n", encoding="utf-8")
         (codex_dir / "stdout.jsonl").write_text("coding started\ncoding finished\n", encoding="utf-8")
         (codex_dir / "stderr.log").write_text("provider warning\n", encoding="utf-8")
         (codex_dir / "diff.patch").write_text("diff --git a/a b/a\n+dashboard\n", encoding="utf-8")
@@ -117,6 +119,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("before_coding", gate_ids)
         self.assertIn("ci_gate", gate_ids)
         self.assertIn("coding finished", "\n".join(state["logs"]))
+        self.assertIn("health_summary", state)
+        self.assertIn("quality_report", state)
+        self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
+        self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["lines"], 2)
         self.assertEqual(state["apply_gate"]["status"], "passed")
         self.assertNotIn("sk-should-not-leak", payload)
@@ -179,8 +185,46 @@ class DashboardTests(unittest.TestCase):
 
         self.assertIn("data-i18n", html)
         self.assertIn("advanced-settings", html)
+        self.assertIn('id="deliverables-panel"', html)
+        self.assertIn('class="panel deliverables-panel"', html)
+        self.assertIn('class="deliverables-grid"', html)
+        self.assertIn('class="engineering-rail"', html)
+        self.assertNotIn('app.acceptanceSummary', html)
+        self.assertNotIn('app.acceptanceSummaryHint', html)
+        self.assertNotIn("engineering-panel", html)
+        self.assertLess(html.index('id="artifact-actions"'), html.index('id="artifact-preview"'))
+        self.assertEqual(html.count('id="deliverables"'), 0)
         for engineering_copy in ("Pipeline", "Gates", "Logs", "Artifacts", "Executor", "Provider", "Model"):
             self.assertNotIn(engineering_copy, html)
+
+    def test_dashboard_engineering_details_are_third_column_cards(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        rail_start = html.index('class="engineering-rail"')
+        for engineering_id in ("engineering-run", "engineering-events", "engineering-logs", "engineering-diff"):
+            self.assertGreater(html.index(f'id="{engineering_id}"'), rail_start)
+        self.assertEqual(html.count('class="engineering-card"'), 4)
+
+    def test_dashboard_deliverables_panel_uses_list_and_preview_columns(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        panel_start = html.index('id="deliverables-panel"')
+        list_start = html.index('class="deliverables-list-pane"', panel_start)
+        preview_start = html.index('class="deliverables-preview-pane"', panel_start)
+        self.assertLess(list_start, preview_start)
+        self.assertGreater(html.index('id="artifact-actions"', list_start), list_start)
+        self.assertGreater(html.index('id="next-actions"', list_start), list_start)
+        self.assertGreater(html.index('id="artifact-preview"', preview_start), preview_start)
+
+    def test_dashboard_quality_gates_use_compact_two_column_grid(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".gate-list", css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", css)
+        self.assertIn(".gate-card p {\n  grid-column: 1 / -1;", css)
 
     def test_dashboard_frontend_display_copy_comes_from_i18n(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -199,6 +243,20 @@ class DashboardTests(unittest.TestCase):
         for literal in forbidden_display_literals:
             self.assertNotIn(literal, app_js)
             self.assertNotIn(literal, business_view_js)
+
+    def test_dashboard_frontend_tracks_selected_artifact_and_avoids_raw_warning_panel(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("selectedArtifactPath", app_js)
+        self.assertIn("artifact-button selected", app_js)
+        self.assertIn("warningGroups", app_js)
+        self.assertIn(".slice(0, 3)", app_js)
+        self.assertIn("raw_warnings", app_js)
+        self.assertIn("rawWarningsLabel", app_js)
+        self.assertIn('focusSection("deliverables-panel")', app_js)
+        self.assertIn('focusSection("engineering-rail")', app_js)
+        self.assertNotIn("for (const warning of health.warnings", app_js)
 
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -232,6 +290,13 @@ class DashboardTests(unittest.TestCase):
             ],
             "risk_events": [],
             "next_actions": ["python -m growth_dev.cli team apply --run-id biz-run-1"],
+            "health_summary": {"status": "completed_ready", "label": "已完成可采纳", "summary": "结果已通过关键检查。", "warnings": [], "blockers": []},
+            "quality_report": {
+                "status": "passed",
+                "score": 1.0,
+                "summary": "文件产物贴合需求。",
+                "checks": [{"id": "prd.md.specificity", "title": "需求贴题度", "status": "passed", "detail": "通过", "artifact": "prd.md"}],
+            },
         }
         script = f"""
 const fs = require('fs');
@@ -251,6 +316,51 @@ console.log(JSON.stringify(vm));
         self.assertEqual(vm["deliverables"][0]["title"], "任务包")
         self.assertEqual(vm["deliverables"][2]["title"], "架构图")
         self.assertEqual(vm["deliverables"][3]["title"], "代码差异")
+        self.assertEqual(vm["health"]["label"], "已完成可采纳")
+        self.assertEqual(vm["artifactQuality"]["status"], "passed")
+
+    def test_business_view_model_groups_health_warnings_and_recommends_default_artifact(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"
+        module_path = root / "dashboard" / "business_view.js"
+        run = {
+            "run_id": "biz-run-2",
+            "brief": "小改动",
+            "status": "completed",
+            "apply_gate": {"status": "passed", "reason": "ready"},
+            "stages": [],
+            "gates": [],
+            "artifacts": [
+                {"label": "PRD", "path": "prd.md", "scope": "run", "exists": True},
+                {"label": "Review", "path": "review_report.md", "scope": "run", "exists": True},
+                {"label": "Final", "path": "final_report.md", "scope": "run", "exists": True},
+            ],
+            "risk_events": [],
+            "next_actions": [],
+            "health_summary": {
+                "status": "completed_with_warnings",
+                "label": "已完成但有警告",
+                "summary": "存在 2 类非阻塞系统提示，未影响 Review/Test/Report。",
+                "warnings": [],
+                "warning_groups": [
+                    {"id": "plugin_sync", "title": "插件同步提示", "count": 2, "severity": "info"},
+                    {"id": "telemetry", "title": "遥测提示", "count": 1, "severity": "info"},
+                ],
+                "blockers": [],
+            },
+        }
+        script = f"""
+const fs = require('fs');
+const {{ toBusinessViewModel }} = require({json.dumps(str(module_path))});
+const i18n = JSON.parse(fs.readFileSync({json.dumps(str(i18n_path))}, 'utf8'));
+const vm = toBusinessViewModel({json.dumps(run)}, i18n);
+console.log(JSON.stringify(vm));
+"""
+        completed = subprocess.run(["node", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        vm = json.loads(completed.stdout)
+
+        self.assertEqual(vm["health"]["warningGroups"][0]["title"], "插件同步提示")
+        self.assertEqual(vm["recommendedArtifact"]["path"], "final_report.md")
 
     def test_business_view_model_marks_permission_error_as_needs_attention(self) -> None:
         root = Path(__file__).resolve().parents[1]
