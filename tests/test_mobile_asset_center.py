@@ -371,7 +371,7 @@ class MobileAssetCenterTests(unittest.TestCase):
         self.assertEqual(response["filters"]["q"], "")
         self.assertIn("已按", response["message"])
 
-    def test_cloud_frontend_uses_category_sidebar_scene_tabs_feed_and_agent_panel(self) -> None:
+    def test_cloud_frontend_uses_two_column_category_and_asset_layout_without_agent_panel(self) -> None:
         root = Path(__file__).resolve().parents[1]
         html = (
             root / "third_party/mobile_asset_center/frontend/index.html"
@@ -387,19 +387,34 @@ class MobileAssetCenterTests(unittest.TestCase):
         self.assertIn("scene-filter-panel", html)
         self.assertIn("primarySceneTabs", html)
         self.assertIn("detailSceneTabs", html)
+        self.assertIn("<title>场景素材中心</title>", html)
+        self.assertIn("<span>场景素材中心</span>", html)
+        self.assertIn("<h1>场景素材中心</h1>", html)
+        self.assertNotIn("素材检索工作台", html)
         self.assertIn("主标签", html)
         self.assertIn("细分标签", html)
         self.assertIn("asset-feed", html)
-        self.assertIn("agent-panel", html)
         self.assertIn("原始素材", html)
         self.assertIn("抓取素材", html)
+        self.assertNotIn("agent-panel", html)
+        self.assertNotIn("Agent", html)
+        self.assertNotIn("问素材中心", html)
+        self.assertNotIn("agentInput", html)
+        self.assertNotIn("agentButton", html)
+        self.assertNotIn("agentAnswer", html)
+        self.assertNotIn("右侧", html)
         self.assertNotIn("keywordInput", html)
         self.assertNotIn("searchButton", html)
         self.assertIn("activeFilterSummary", html)
         self.assertIn("/api/categories", js)
         self.assertIn("/api/scenes", js)
         self.assertIn("/api/assets", js)
-        self.assertIn("/api/agent/query", js)
+        self.assertNotIn("/api/agent/query", js)
+        self.assertNotIn("askAgent", js)
+        self.assertNotIn("agentInput", js)
+        self.assertNotIn("agentButton", js)
+        self.assertNotIn("agentAnswer", js)
+        self.assertNotIn("state.q", js)
         self.assertIn("primarySceneTabs", js)
         self.assertIn("detailSceneTabs", js)
         self.assertIn("appendSceneGroup", js)
@@ -409,6 +424,12 @@ class MobileAssetCenterTests(unittest.TestCase):
         self.assertIn("scene-kind-detail", js)
         self.assertIn("activeFilterSummary", js)
         self.assertIn("grid-template-columns", css)
+        self.assertIn("grid-template-columns: 236px minmax(0, 1fr)", css)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr))", css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", css)
+        self.assertNotIn("320px", css)
+        self.assertNotIn(".agent-panel", css)
+        self.assertNotIn(".agent-answer", css)
         self.assertIn("--color-action: #1f5d8c", css)
         self.assertIn("scene-filter-panel", css)
         self.assertIn("scene-group-header", css)
@@ -419,17 +440,18 @@ class MobileAssetCenterTests(unittest.TestCase):
         self.assertIn("scene-kind-primary", css)
         self.assertIn("scene-kind-detail", css)
 
-    def test_cloud_frontend_keeps_agent_query_failures_recoverable(self) -> None:
+    def test_cloud_frontend_filter_summary_has_no_agent_keyword_state(self) -> None:
         root = Path(__file__).resolve().parents[1]
         js = (
             root / "third_party/mobile_asset_center/frontend/app.js"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("try {", js)
-        self.assertIn("catch (error)", js)
-        self.assertIn("finally {", js)
-        self.assertIn("查询失败，请调整描述后重试。", js)
-        self.assertIn("state.loading = false;", js)
+        self.assertIn("当前筛选：", js)
+        self.assertIn("state.category", js)
+        self.assertIn("state.scene", js)
+        self.assertIn("state.assetType", js)
+        self.assertNotIn("关键词：", js)
+        self.assertNotIn("filters?.q", js)
 
 
 if __name__ == "__main__":

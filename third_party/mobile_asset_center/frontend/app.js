@@ -1,7 +1,6 @@
 const state = {
   category: '',
   scene: '',
-  q: '',
   assetType: '',
   cursor: '',
   loading: false,
@@ -15,9 +14,6 @@ const loadMoreButton = document.querySelector('#loadMoreButton');
 const resultSummary = document.querySelector('#resultSummary');
 const activeCategoryLabel = document.querySelector('#activeCategoryLabel');
 const activeFilterSummary = document.querySelector('#activeFilterSummary');
-const agentInput = document.querySelector('#agentInput');
-const agentButton = document.querySelector('#agentButton');
-const agentAnswer = document.querySelector('#agentAnswer');
 
 async function init() {
   bindEvents();
@@ -36,7 +32,6 @@ function bindEvents() {
       loadAssets({ reset: true });
     });
   });
-  agentButton.addEventListener('click', askAgent);
 }
 
 async function loadCategories() {
@@ -123,7 +118,6 @@ async function loadAssets({ reset }) {
     const params = new URLSearchParams();
     if (state.category) params.set('category', state.category);
     if (state.scene) params.set('scene', state.scene);
-    if (state.q) params.set('q', state.q);
     if (state.assetType) params.set('assetType', state.assetType);
     if (state.cursor) params.set('cursor', state.cursor);
     const payload = await fetchJson(`/api/assets?${params.toString()}`);
@@ -162,40 +156,11 @@ function assetCard(asset) {
   return article;
 }
 
-async function askAgent() {
-  const query = agentInput.value.trim();
-  if (!query) {
-    agentAnswer.textContent = '请输入你想找的素材。';
-    return;
-  }
-  agentButton.disabled = true;
-  try {
-    const payload = await fetchJson('/api/agent/query', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
-    });
-    state.category = payload.filters?.category || state.category;
-    state.scene = payload.filters?.scene || state.scene;
-    state.q = payload.filters?.q || '';
-    agentAnswer.textContent = payload.message || '已应用查询条件';
-    await loadCategories();
-    await loadScenes();
-    await loadAssets({ reset: true });
-  } catch (error) {
-    agentAnswer.textContent = '查询失败，请调整描述后重试。';
-  } finally {
-    agentButton.disabled = false;
-    state.loading = false;
-  }
-}
-
 function filterSummary() {
   const parts = [];
   parts.push(state.category || '全部品类');
   if (state.scene) parts.push(state.scene);
   if (state.assetType) parts.push(state.assetType === 'original' ? '原始素材' : '抓取素材');
-  if (state.q) parts.push(`关键词：${state.q}`);
   return `当前筛选：${parts.join(' / ')}`;
 }
 

@@ -28,31 +28,21 @@ body {
 }
 
 button,
-input,
-textarea {
+input {
   font: inherit;
 }
 
 .asset-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr) 320px;
+  grid-template-columns: 236px minmax(0, 1fr);
   gap: 0;
 }
 
-.category-sidebar,
-.agent-panel {
+.category-sidebar {
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   padding: 24px 18px;
-}
-
-.agent-panel {
-  border-right: 0;
-  border-left: 1px solid var(--color-border);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
 }
 
 .brand-block,
@@ -69,8 +59,7 @@ textarea {
 }
 
 .brand-block strong,
-.main-header h1,
-.agent-panel h2 {
+.main-header h1 {
   margin: 0;
 }
 
@@ -80,8 +69,6 @@ textarea {
 }
 
 .main-header p,
-.agent-panel p,
-.agent-answer,
 #resultSummary,
 #activeFilterSummary {
   color: var(--color-text-muted);
@@ -98,7 +85,6 @@ textarea {
 .category-list button,
 .scene-chip,
 .segmented button,
-.agent-panel button,
 .load-more {
   min-height: 38px;
   border: 1px solid var(--color-border);
@@ -110,8 +96,7 @@ textarea {
 }
 
 .category-list button.active,
-.segmented button.active,
-.agent-panel button {
+.segmented button.active {
   background: var(--color-action);
   border-color: var(--color-action);
   color: var(--color-surface);
@@ -121,10 +106,6 @@ textarea {
 .segmented button:hover,
 .load-more:hover {
   border-color: var(--color-border-strong);
-}
-
-.agent-panel button:hover {
-  background: var(--color-action-hover);
 }
 
 .asset-main {
@@ -254,8 +235,8 @@ textarea {
 
 .asset-feed {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .asset-card {
@@ -327,31 +308,27 @@ textarea {
   margin-top: 18px;
 }
 
-.agent-panel textarea {
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  background: var(--color-surface);
-  min-height: 108px;
-  resize: vertical;
-}
-
-.agent-answer {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--color-surface-subtle);
-}
-
 @media (max-width: 980px) {
   .asset-shell {
     grid-template-columns: 1fr;
   }
 
-  .category-sidebar,
-  .agent-panel {
+  .category-sidebar {
     border: 0;
     border-bottom: 1px solid var(--color-border);
+  }
+
+  .asset-feed {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .asset-main {
+    padding: 16px;
+  }
+
+  .asset-feed {
+    grid-template-columns: 1fr;
   }
 }
