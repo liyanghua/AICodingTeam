@@ -1,9 +1,11 @@
 const state = {
   selectedRunId: "",
   selectedArtifactPath: "",
+  selectedStageDetail: null,
   timer: null,
   i18n: null,
   currentRun: null,
+  currentVm: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -83,6 +85,7 @@ function renderRunList(runs) {
 async function selectRun(runId) {
   state.selectedRunId = runId;
   state.selectedArtifactPath = "";
+  state.selectedStageDetail = null;
   await refreshRun();
 }
 
@@ -90,7 +93,8 @@ async function refreshRun() {
   if (!state.selectedRunId) return;
   const run = await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}`);
   state.currentRun = run;
-  renderBusinessRun(view.toBusinessViewModel(run, state.i18n));
+  state.currentVm = view.toBusinessViewModel(run, state.i18n);
+  renderBusinessRun(state.currentVm);
 }
 
 function renderBusinessRun(vm) {
@@ -103,6 +107,7 @@ function renderBusinessRun(vm) {
   pill.textContent = vm.statusLabel;
 
   renderStages(vm.stages || []);
+  renderStageDetail(vm);
   renderHealth(vm.health || {});
   renderArtifactQuality(vm.artifactQuality || {});
   renderGates(vm.qualityGates || []);
@@ -201,7 +206,7 @@ function handleStageAction(action, stage) {
   if (action === "viewDeliverables") {
     const first = (stage.artifacts || []).find((artifact) => artifact.exists);
     if (first) selectArtifact(first);
-    focusSection("deliverables-panel");
+    toggleStageDetail(stage, "deliverables");
     return;
   }
   if (action === "viewRisks") {
@@ -209,7 +214,169 @@ function handleStageAction(action, stage) {
     focusSection("deliverables-panel");
     return;
   }
-  focusSection("engineering-rail");
+  toggleStageDetail(stage, "engineering");
+}
+
+function toggleStageDetail(stage, mode) {
+  const current = state.selectedStageDetail || {};
+  if (current.stageId === stage.id && current.mode === mode) {
+    state.selectedStageDetail = null;
+  } else {
+    state.selectedStageDetail = { stageId: stage.id, mode };
+  }
+  renderStageDetail(state.currentVm || view.toBusinessViewModel(state.currentRun || {}, state.i18n));
+}
+
+function renderStageDetail(vm) {
+  const panel = $("stage-detail-panel");
+  if (!panel) return;
+  panel.textContent = "";
+  const selection = state.selectedStageDetail;
+  if (!selection) {
+    panel.hidden = true;
+    return;
+  }
+  const stage = (vm.stages || []).find((item) => item.id === selection.stageId);
+  if (!stage) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+
+  const header = document.createElement("div");
+  header.className = "stage-detail-header";
+  const title = document.createElement("h3");
+  title.textContent = `${stage.title} / ${selection.mode === "engineering" ? t("stageDetail.engineeringSuffix") : t("stageDetail.deliverablesSuffix")}`;
+  const status = document.createElement("span");
+  status.className = `mini-status ${statusClass(stage.tone)}`;
+  status.textContent = stage.statusLabel;
+  header.append(title, status);
+
+  const body = document.createElement("div");
+  body.className = "stage-detail-body";
+  if (selection.mode === "engineering") {
+    renderStageEngineering(stage, vm, body);
+  } else {
+    renderStageDeliverables(stage, body);
+  }
+
+  panel.append(header, body);
+}
+
+function renderStageDeliverables(stage, container) {
+  const artifacts = (stage.artifacts || []).filter((artifact) => artifact.exists);
+  if (!artifacts.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = t("stageDetail.emptyDeliverables");
+    container.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "stage-artifact-list";
+  for (const artifact of artifacts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = artifact.path === state.selectedArtifactPath ? "artifact-button selected" : "artifact-button";
+    button.textContent = artifact.title;
+    button.addEventListener("click", () => {
+      selectArtifact(artifact);
+      renderStageDetail(state.currentVm || view.toBusinessViewModel(state.currentRun || {}, state.i18n));
+    });
+    list.appendChild(button);
+  }
+
+  const preview = document.createElement("div");
+  preview.className = "stage-detail-preview";
+  const selected = artifacts.find((artifact) => artifact.path === state.selectedArtifactPath) || artifacts[0];
+  const heading = document.createElement("h4");
+  heading.textContent = `${t("stageDetail.selectedArtifact")}: ${selected.title}`;
+  const description = document.createElement("p");
+  description.className = "summary-text";
+  description.textContent = selected.description || t("stageDetail.globalArtifactsHint");
+  const content = document.createElement("pre");
+  content.className = "stage-artifact-preview";
+  content.textContent = "";
+  const hint = document.createElement("p");
+  hint.className = "meta";
+  hint.textContent = t("stageDetail.globalArtifactsHint");
+  preview.append(heading, description, content, hint);
+  loadArtifactContent(selected).then((value) => {
+    content.textContent = value;
+  }).catch((error) => {
+    content.textContent = String(error.message || error);
+  });
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "ghost small";
+  action.textContent = t("stageDetail.openGlobalDeliverables");
+  action.addEventListener("click", () => focusSection("deliverables-panel"));
+  preview.appendChild(action);
+
+  container.append(list, preview);
+}
+
+function renderStageEngineering(stage, vm, container) {
+  const related = filterEngineeringForStage(stage, vm);
+  const agents = document.createElement("div");
+  agents.className = "stage-detail-block";
+  const agentTitle = document.createElement("strong");
+  agentTitle.textContent = t("stageDetail.relatedAgents");
+  const agentText = document.createElement("p");
+  agentText.className = "summary-text";
+  agentText.textContent = (stage.agentIds || []).join(", ") || t("stageDetail.emptyEngineering");
+  agents.append(agentTitle, agentText);
+
+  const events = stageDetailList(t("stageDetail.relatedEvents"), related.events, t("stageDetail.emptyEngineering"));
+  const logs = stageDetailList(t("stageDetail.relatedLogs"), related.logs, t("stageDetail.globalEngineeringHint"));
+  const risks = stageDetailList(t("stageDetail.riskEvents"), related.risks, t("actions.noRisk"));
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "ghost small";
+  action.textContent = t("stageDetail.openGlobalEngineering");
+  action.addEventListener("click", () => focusSection("engineering-rail"));
+
+  container.append(agents, events, logs, risks, action);
+}
+
+function stageDetailList(title, values, emptyText) {
+  const block = document.createElement("div");
+  block.className = "stage-detail-block";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  block.appendChild(heading);
+  const items = (values || []).filter(Boolean).slice(0, 4);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = emptyText;
+    block.appendChild(empty);
+    return block;
+  }
+  const list = document.createElement("ul");
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.textContent = typeof item === "string" ? item : JSON.stringify(item);
+    list.appendChild(row);
+  }
+  block.appendChild(list);
+  return block;
+}
+
+function filterEngineeringForStage(stage, vm) {
+  const agentIds = stage.agentIds || [];
+  const engineering = vm.engineering || {};
+  const events = (engineering.events || []).filter((event) => {
+    const text = JSON.stringify(event);
+    return agentIds.some((agentId) => text.includes(agentId));
+  });
+  const logs = (engineering.logs || []).filter((line) => agentIds.some((agentId) => String(line).includes(agentId)));
+  const fallbackLogs = logs.length ? logs : (engineering.logs || []).slice(0, 3);
+  const risks = (vm.risks || []).filter((risk) => risk && risk !== t("actions.noRisk"));
+  return { events, logs: fallbackLogs, risks };
 }
 
 function focusSection(id) {
@@ -282,9 +449,13 @@ function renderSelectedArtifact(artifact) {
 
 async function loadArtifact(artifact) {
   if (!state.selectedRunId) return;
+  $("artifact-preview").textContent = await loadArtifactContent(artifact);
+}
+
+async function loadArtifactContent(artifact) {
   const params = new URLSearchParams({ path: artifact.path, scope: artifact.scope || "run" });
   const data = await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}/artifact?${params.toString()}`);
-  $("artifact-preview").textContent = data.content || "";
+  return data.content || "";
 }
 
 function renderNextActions(actions) {

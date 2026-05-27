@@ -186,6 +186,7 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("data-i18n", html)
         self.assertIn("advanced-settings", html)
         self.assertIn('id="deliverables-panel"', html)
+        self.assertIn('id="stage-detail-panel"', html)
         self.assertIn('class="panel deliverables-panel"', html)
         self.assertIn('class="deliverables-grid"', html)
         self.assertIn('class="engineering-rail"', html)
@@ -194,6 +195,8 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("engineering-panel", html)
         self.assertLess(html.index('id="artifact-actions"'), html.index('id="artifact-preview"'))
         self.assertEqual(html.count('id="deliverables"'), 0)
+        self.assertLess(html.index('id="business-stages"'), html.index('id="stage-detail-panel"'))
+        self.assertLess(html.index('id="stage-detail-panel"'), html.index('id="health-summary"'))
         for engineering_copy in ("Pipeline", "Gates", "Logs", "Artifacts", "Executor", "Provider", "Model"):
             self.assertNotIn(engineering_copy, html)
 
@@ -226,6 +229,28 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", css)
         self.assertIn(".gate-card p {\n  grid-column: 1 / -1;", css)
 
+    def test_dashboard_stage_detail_has_i18n_and_render_helpers(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn("selectedStageDetail", app_js)
+        self.assertIn("renderStageDetail", app_js)
+        self.assertIn("renderStageDeliverables", app_js)
+        self.assertIn("renderStageEngineering", app_js)
+        self.assertIn("filterEngineeringForStage", app_js)
+        self.assertIn("loadArtifactContent", app_js)
+        self.assertIn("stageDetail", i18n)
+        for key in (
+            "deliverablesSuffix",
+            "engineeringSuffix",
+            "emptyDeliverables",
+            "emptyEngineering",
+            "openGlobalDeliverables",
+            "openGlobalEngineering",
+        ):
+            self.assertIn(key, i18n["stageDetail"])
+
     def test_dashboard_frontend_display_copy_comes_from_i18n(self) -> None:
         root = Path(__file__).resolve().parents[1]
         app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
@@ -256,6 +281,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("rawWarningsLabel", app_js)
         self.assertIn('focusSection("deliverables-panel")', app_js)
         self.assertIn('focusSection("engineering-rail")', app_js)
+        self.assertIn('toggleStageDetail(stage, "deliverables")', app_js)
+        self.assertIn('toggleStageDetail(stage, "engineering")', app_js)
         self.assertNotIn("for (const warning of health.warnings", app_js)
 
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
@@ -318,6 +345,13 @@ console.log(JSON.stringify(vm));
         self.assertEqual(vm["deliverables"][3]["title"], "代码差异")
         self.assertEqual(vm["health"]["label"], "已完成可采纳")
         self.assertEqual(vm["artifactQuality"]["status"], "passed")
+        design_stage = vm["stages"][1]
+        implementation_stage = vm["stages"][2]
+        self.assertEqual(design_stage["agentIds"], ["product", "architect", "ux", "qa"])
+        self.assertTrue(any(artifact["path"] == "prd.md" for artifact in design_stage["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
+        self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
+        self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
 
     def test_business_view_model_groups_health_warnings_and_recommends_default_artifact(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -183,6 +183,22 @@
     "unknownSummary": "暂时没有文件质量评估。",
     "noChecks": "暂无质量检查结果。"
   },
+  "stageDetail": {
+    "deliverablesSuffix": "产物",
+    "engineeringSuffix": "工程详情",
+    "emptyDeliverables": "这个阶段还没有可查看产物。",
+    "emptyEngineering": "这个阶段还没有可关联的工程事件。",
+    "relatedArtifacts": "阶段关联产物",
+    "relatedAgents": "关联角色",
+    "relatedEvents": "相关事件",
+    "relatedLogs": "相关日志",
+    "globalArtifactsHint": "完整交付包仍在下方“产物与验收”中查看。",
+    "globalEngineeringHint": "完整运行材料仍在右侧“工程详情”中查看。",
+    "openGlobalDeliverables": "查看完整产物与验收",
+    "openGlobalEngineering": "查看完整工程详情",
+    "selectedArtifact": "当前产物",
+    "riskEvents": "风险提示"
+  },
   "actions": {
     "viewDeliverables": "查看产物",
     "viewRisks": "查看风险",

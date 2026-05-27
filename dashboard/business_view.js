@@ -69,7 +69,16 @@
   function buildStage(run, i18n, group) {
     const status = stageStatus(run, group);
     const copy = lookup(i18n, `stages.${group.id}`, {});
-    const stageArtifacts = (run.artifacts || []).filter((artifact) => group.artifactPaths.includes(artifact.path) || group.artifactPaths.includes(artifact.label));
+    const stageArtifacts = (run.artifacts || [])
+      .filter((artifact) => group.artifactPaths.includes(artifact.path) || group.artifactPaths.includes(artifact.label))
+      .map((artifact) => {
+        const artifactText = artifactCopy(i18n, artifact);
+        return {
+          ...artifact,
+          title: artifactText.title || artifact.label || artifact.path || unknown(i18n),
+          description: artifactText.description || "",
+        };
+      });
     return {
       id: group.id,
       title: copy.title || unknown(i18n),
