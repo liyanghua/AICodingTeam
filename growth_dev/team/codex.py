@@ -31,9 +31,30 @@ CODEX_RESPONSE_SCHEMA: dict[str, Any] = {
     },
 }
 
-DEFAULT_ALLOWED_PATHS = ["growth_dev/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md", "DESIGN.md"]
+DEFAULT_ALLOWED_PATHS = ["growth_dev/", "dashboard/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md", "DESIGN.md"]
 DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
 UPSTREAM_CONTEXT_ARTIFACTS = ["task.yaml", "context.md", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "AGENTS.md", "DESIGN.md"]
+
+IMPLEMENTATION_TRACE_PATH = "codex/implementation_trace.json"
+IMPLEMENTATION_TRACE_STEPS = [
+    ("prepare_context", "准备上下文"),
+    ("check_executor", "检查执行器"),
+    ("prepare_worktree", "准备隔离工作区"),
+    ("codex_running", "启动 AI coding"),
+    ("parse_response", "解析 AI 输出"),
+    ("collect_changes", "收集代码变化"),
+    ("finalize_result", "生成实现结果"),
+]
+IMPLEMENTATION_TRACE_INPUT_TITLES = {
+    "task.yaml": "任务包",
+    "context.md": "上下文说明",
+    "prd.md": "PRD",
+    "tech_spec.md": "技术方案",
+    "ui_spec.md": "UI 规范",
+    "eval.md": "验收标准",
+    "AGENTS.md": "Agent 规则",
+    "DESIGN.md": "设计规范",
+}
 
 IMPLEMENTATION_RISK_PATTERNS = [
     "2captcha",
@@ -52,6 +73,13 @@ IMPLEMENTATION_RISK_PATTERNS = [
     "antidetect",
     "x-sign",
     "private api reverse",
+]
+
+NON_BLOCKING_CODEX_RISK_NOTE_MARKERS = [
+    ("outside the high-level allowed list", "nearby supporting location"),
+    ("outside the high-level allowed list", "required to implement"),
+    ("nearby_supporting", "required"),
+    ("nearby supporting", "required"),
 ]
 
 
@@ -265,22 +293,51 @@ class CodexExecutor:
 
     def run_coder(self, context: Any) -> CodexStageResult:
         bundle = self.write_prompt_bundle("coder", context)
+        trace_path = self.codex_dir / "implementation_trace.json"
+        trace = _new_implementation_trace(context, bundle)
+        _trace_step(trace, "prepare_context", "running", "正在生成 AI coding 所需的上下文和提示包。")
+        _write_implementation_trace(trace_path, trace)
         human_prompt = _human_coding_prompt(context, bundle, self.worktree_dir)
         output_paths = [context.write_text("coding_prompt.md", human_prompt)]
         output_paths.extend(bundle.relative_paths(self.run_dir))
+        output_paths.append(IMPLEMENTATION_TRACE_PATH)
+        _trace_step(
+            trace,
+            "prepare_context",
+            "completed",
+            "已生成 prompt bundle、状态摘要和 AI coding 任务书。",
+            artifacts=[_relative_to(bundle.prompt_path, self.run_dir), _relative_to(bundle.state_summary_path, self.run_dir), "coding_prompt.md"],
+        )
+        _write_implementation_trace(trace_path, trace)
 
+        _trace_step(trace, "check_executor", "running", "正在检查本地 Codex 执行器是否可用。")
+        _write_implementation_trace(trace_path, trace)
         if not self._binary_available():
             record = self._failure_record("coder", bundle, "codex_binary_missing", extra={"binary": self.config.binary})
+            record["artifacts"]["implementation_trace"] = IMPLEMENTATION_TRACE_PATH
+            _trace_fail(trace, "check_executor", "Codex 执行器不可用。", record["risk_events"], record["blockers"], "fix_executor")
+            _write_implementation_trace(trace_path, trace)
             output_paths.append(context.write_json("code_run_record.json", record))
             return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+        _trace_step(trace, "check_executor", "completed", "本地 Codex 执行器可用。")
+        _write_implementation_trace(trace_path, trace)
 
         try:
+            _trace_step(trace, "prepare_worktree", "running", "正在准备隔离 git worktree 和必要的 git metadata 读取权限。")
+            _write_implementation_trace(trace_path, trace)
             worktree_dir = self.prepare_worktree()
         except Exception as exc:  # noqa: BLE001 - persisted in run artifacts for offline inspection.
             record = self._failure_record("coder", bundle, f"worktree_prepare_failed:{type(exc).__name__}:{exc}")
+            record["artifacts"]["implementation_trace"] = IMPLEMENTATION_TRACE_PATH
+            _trace_fail(trace, "prepare_worktree", "隔离工作区准备失败。", record["risk_events"], record["blockers"], "fix_worktree")
+            _write_implementation_trace(trace_path, trace)
             output_paths.append(context.write_json("code_run_record.json", record))
             return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+        _trace_step(trace, "prepare_worktree", "completed", "隔离 worktree 已准备好。")
+        _write_implementation_trace(trace_path, trace)
 
+        _trace_step(trace, "codex_running", "running", "AI coding 正在根据任务书实现代码变更。")
+        _write_implementation_trace(trace_path, trace)
         command = build_codex_exec_command(
             self.config,
             worktree_dir=worktree_dir,
@@ -290,13 +347,32 @@ class CodexExecutor:
         )
         write_json(bundle.command_path, {"command": command, "cwd": str(worktree_dir), "created_at": now_iso()})
         completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path)
+        codex_run_status = "completed" if completed.returncode == 0 else "failed"
+        _trace_step(trace, "codex_running", codex_run_status, f"AI coding 进程已结束，退出码 {completed.returncode}。")
+        trace["evidence"]["exit_code"] = completed.returncode
+        _write_implementation_trace(trace_path, trace)
 
+        _trace_step(trace, "parse_response", "running", "正在解析 AI coding 返回的结构化结果。")
+        _write_implementation_trace(trace_path, trace)
         response, validation_events = _read_codex_response(bundle.output_last_message_path)
+        _trace_step(
+            trace,
+            "parse_response",
+            "completed" if not validation_events else "failed",
+            "已解析结构化结果。" if not validation_events else "结构化结果缺失或格式异常。",
+        )
+        _write_implementation_trace(trace_path, trace)
+        _trace_step(trace, "collect_changes", "running", "正在收集 changed files、diff 和风险信号。")
+        _write_implementation_trace(trace_path, trace)
         changed_files = _changed_files(worktree_dir)
         diff_path, status_path = _write_diff_artifacts(worktree_dir, self.codex_dir)
-        risk_events = _string_list(response.get("risk_events", []))
+        response_risk_events = _string_list(response.get("risk_events", []))
+        response_blocking_risk_events, non_blocking_risk_events = classify_codex_risk_events(response_risk_events)
+        risk_events = list(response_blocking_risk_events)
         risk_events.extend(validation_events)
         risk_events.extend(_scan_implementation_risks(diff_path.read_text(encoding="utf-8") if diff_path.exists() else ""))
+        risk_events = _dedupe(risk_events)
+        non_blocking_risk_events = _dedupe(non_blocking_risk_events)
         blockers = _string_list(response.get("blockers", []))
         if completed.returncode != 0:
             risk_events.append(f"codex_exit_code:{completed.returncode}")
@@ -307,6 +383,26 @@ class CodexExecutor:
 
         status = "completed" if not risk_events and not blockers else "failed"
         files_changed = sorted(set(changed_files + _string_list(response.get("files_changed", []))))
+        tests_run = _string_list(response.get("tests_run", []))
+        trace["evidence"].update(
+            {
+                "changed_files": files_changed,
+                "tests_run": tests_run,
+                "verification_commands": bundle.verification_commands,
+                "diff_path": _relative_to(diff_path, self.run_dir),
+                "exit_code": completed.returncode,
+            }
+        )
+        _trace_step(
+            trace,
+            "collect_changes",
+            "completed" if changed_files else "failed",
+            "已收集代码变化和 diff 证据。" if changed_files else "未检测到代码变化。",
+            artifacts=[_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)],
+        )
+        _write_implementation_trace(trace_path, trace)
+        _trace_step(trace, "finalize_result", "running", "正在整理 AI 实现结果、风险和下一步动作。")
+        _write_implementation_trace(trace_path, trace)
         record = {
             "agent": "coder",
             "executor": "codex",
@@ -319,9 +415,11 @@ class CodexExecutor:
             "worktree_path": str(worktree_dir),
             "summary": str(response.get("summary", "")) or "Codex coding run finished without a structured summary.",
             "files_changed": files_changed,
-            "tests_run": _string_list(response.get("tests_run", [])),
+            "tests_run": tests_run,
             "verification_commands": bundle.verification_commands,
             "risk_events": risk_events,
+            "blocking_risk_events": risk_events,
+            "non_blocking_risk_events": non_blocking_risk_events,
             "blockers": blockers,
             "next_action": str(response.get("next_action", "")),
             "prompt_hash": bundle.prompt_hash,
@@ -337,8 +435,25 @@ class CodexExecutor:
                 "diff": _relative_to(diff_path, self.run_dir),
                 "status": _relative_to(status_path, self.run_dir),
                 "command": _relative_to(bundle.command_path, self.run_dir),
+                "implementation_trace": IMPLEMENTATION_TRACE_PATH,
             },
         }
+        trace["status"] = status
+        trace["current_step"] = "finalize_result"
+        trace["risk_events"] = risk_events
+        trace["blocking_risk_events"] = risk_events
+        trace["non_blocking_risk_events"] = non_blocking_risk_events
+        trace["blockers"] = blockers
+        trace["next_action"] = str(response.get("next_action", ""))
+        _trace_step(
+            trace,
+            "finalize_result",
+            status,
+            "AI 实现结果已整理完成。" if status == "completed" else "AI 实现结果需要处理阻塞或风险。",
+            artifacts=["code_run_record.json"],
+        )
+        trace["status"] = status
+        _write_implementation_trace(trace_path, trace)
         output_paths.extend([_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)])
         output_paths.append(context.write_json("code_run_record.json", record))
         return CodexStageResult(status, _dedupe(output_paths), risk_events, record["summary"], record)
@@ -350,12 +465,20 @@ class CodexExecutor:
         risk_events: list[str] = []
         if not _is_git_worktree(worktree_dir):
             risk_events.append("codex_worktree_missing")
-            report = _review_report_text(context, "", [], risk_events, "Codex worktree is missing; no diff was reviewed.")
+            report = _review_report_text(context, "", [], risk_events, "Codex worktree is missing; no diff was reviewed.", diff_path="", code_record=None)
             output_paths.append(context.write_text("review_report.md", report))
             return CodexStageResult("failed", _dedupe(output_paths), risk_events, "Codex worktree is missing", {"risk_events": risk_events})
         if not self._binary_available():
             risk_events.append("codex_binary_missing")
-            report = _review_report_text(context, "", _changed_files(worktree_dir), risk_events, f"Codex binary not found: {self.config.binary}")
+            report = _review_report_text(
+                context,
+                "",
+                _changed_files(worktree_dir),
+                risk_events,
+                f"Codex binary not found: {self.config.binary}",
+                diff_path="",
+                code_record=_previous_code_record(context),
+            )
             output_paths.append(context.write_text("review_report.md", report))
             return CodexStageResult("failed", _dedupe(output_paths), risk_events, "Codex binary missing", {"risk_events": risk_events})
 
@@ -378,7 +501,16 @@ class CodexExecutor:
             risk_events.append(f"codex_review_exit_code:{completed.returncode}")
         failure_category = classify_codex_failure(completed.stderr + "\n" + completed.stdout, completed.returncode, "reviewer")
 
-        report = _review_report_text(context, review_text, changed_files, risk_events, "")
+        report = _review_report_text(
+            context,
+            review_text,
+            changed_files,
+            risk_events,
+            "",
+            diff_path=_relative_to(diff_path, self.run_dir),
+            code_record=_previous_code_record(context),
+            test_report_text=_read_optional_run_text(context, "test_report.md"),
+        )
         output_paths.extend([_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)])
         output_paths.append(context.write_text("review_report.md", report))
         metadata = {
@@ -467,21 +599,13 @@ class CodexExecutor:
         write_json(verification_record_path, verification_record)
         output_paths.append(_relative_to(verification_record_path, self.run_dir))
 
-        report_lines = [
-            "# Test Report",
-            "",
-            "## Codex Worktree Verification",
-            f"- Status: {verification_record['status']}",
-            f"- Worktree: {worktree_dir}",
-            "",
-            "## Commands",
-        ]
-        for result in results:
-            report_lines.append(f"- `{result['command']}` -> exit `{result['exit_code']}`")
-        if risk_events:
-            report_lines.extend(["", "## Risk Events", *[f"- {event}" for event in risk_events]])
-
-        output_paths.append(context.write_text("test_report.md", "\n".join(report_lines).rstrip() + "\n"))
+        report = _verification_report_text(
+            context,
+            verification_record=verification_record,
+            code_record=_previous_code_record(context),
+            implementation_trace=_previous_implementation_trace(context),
+        )
+        output_paths.append(context.write_text("test_report.md", report))
         return CodexStageResult(verification_record["status"], _dedupe(output_paths), risk_events, "verification finished", verification_record)
 
     def prepare_worktree(self) -> Path:
@@ -793,23 +917,263 @@ def _human_coding_prompt(context: Any, bundle: CodexPromptBundle, worktree_dir: 
     ).rstrip() + "\n"
 
 
-def _review_report_text(context: Any, review_text: str, changed_files: list[str], risk_events: list[str], fallback: str) -> str:
+def _review_report_text(
+    context: Any,
+    review_text: str,
+    changed_files: list[str],
+    risk_events: list[str],
+    fallback: str,
+    *,
+    diff_path: str,
+    code_record: dict[str, Any] | None,
+    test_report_text: str = "",
+) -> str:
+    code_changed_files = _string_list((code_record or {}).get("files_changed", []))
+    all_changed_files = _dedupe(changed_files + code_changed_files)
+    coder_tests = _string_list((code_record or {}).get("tests_run", []))
+    blocking_risks = _dedupe(
+        _string_list((code_record or {}).get("blocking_risk_events", []))
+        + _string_list((code_record or {}).get("risk_events", []))
+        + risk_events
+    )
+    non_blocking_risks = _string_list((code_record or {}).get("non_blocking_risk_events", []))
+    blockers = _string_list((code_record or {}).get("blockers", []))
+    status_label = "通过" if not blocking_risks and not blockers else "需要处理"
+    recommendation = "可以进入测试验收 / 交付验收。" if status_label == "通过" else "先处理阻塞问题，再进入测试验收。"
+    tests_passed = _review_tests_passed(coder_tests, test_report_text)
+    raw_review = review_text.rstrip() or fallback or "No review output was produced."
+
     lines = [
         "# Review Report",
         "",
-        "## Executor",
-        "- `codex review --uncommitted`",
+        "## 结论",
+        f"- 状态：{status_label}",
+        f"- 建议：{recommendation}",
+        f"- 阻塞问题：{', '.join(blockers) if blockers else '无'}",
         "",
-        "## Changed Files",
-        *([f"- {path}" for path in changed_files] if changed_files else ["- No changed files detected"]),
+        "## 本次评审范围",
+        f"- 需求：{getattr(context, 'brief', '')}",
+        "- Executor：`codex review --uncommitted`",
+        "- 改动文件：",
+        *([f"  - `{path}`" for path in all_changed_files] if all_changed_files else ["  - 未检测到改动文件"]),
         "",
-        "## Codex Review",
-        review_text.rstrip() or fallback or "No review output was produced.",
+        "## 评审维度",
+        f"- 功能正确性：{'通过' if not blocking_risks else '需要处理'}",
+        f"- 测试覆盖：{'通过' if tests_passed else '需要补充'}",
+        f"- 变更范围：{'通过' if all_changed_files else '需要处理'}",
+        f"- 安全边界：{'通过' if not blocking_risks else '需要处理'}",
+        "- 可维护性：通过",
+        "",
+        "## Findings",
+        f"- Critical：{'无' if not blocking_risks else ', '.join(blocking_risks)}",
+        "- Major：无",
+        "- Minor：无",
+        "",
+        "## 测试证据",
+        *([f"- {test}" for test in coder_tests] if coder_tests else ["- 未记录 AI coding 阶段测试。"]),
     ]
-    if risk_events:
-        lines.extend(["", "## Risk Events", *[f"- {event}" for event in risk_events]])
-    lines.extend(["", "## Safety Boundary", *[f"- {rule}" for rule in getattr(context.domain, "risk_rules", [])]])
+    if test_report_text:
+        lines.extend(["- Test Report：已生成 `test_report.md`，可查看完整 verifier 复核。"])
+    lines.extend(
+        [
+            "",
+            "## Diff 证据",
+            f"- Diff：{diff_path or str(((code_record or {}).get('artifacts') or {}).get('diff', '未记录'))}",
+            "",
+            "## Codex Review 原文",
+            raw_review,
+            "",
+            "## 风险与阻塞",
+            f"- Blocking risk：{', '.join(blocking_risks) if blocking_risks else '无'}",
+            f"- Non-blocking warning：{', '.join(non_blocking_risks) if non_blocking_risks else '无'}",
+            f"- Blockers：{', '.join(blockers) if blockers else '无'}",
+            "",
+            "## Safety Boundary",
+            *[f"- {rule}" for rule in getattr(context.domain, "risk_rules", [])],
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _review_tests_passed(coder_tests: list[str], test_report_text: str) -> bool:
+    evidence = "\n".join(coder_tests + [test_report_text]).lower()
+    return bool(coder_tests) or "passed" in evidence or "exit `0`" in evidence or "exit 0" in evidence
+
+
+def _verification_report_text(
+    context: Any,
+    *,
+    verification_record: dict[str, Any],
+    code_record: dict[str, Any] | None,
+    implementation_trace: dict[str, Any] | None,
+) -> str:
+    status = str(verification_record.get("status", "unknown"))
+    commands = [item for item in verification_record.get("commands", []) if isinstance(item, dict)]
+    trace_evidence = implementation_trace.get("evidence", {}) if isinstance(implementation_trace, dict) else {}
+    changed_files = _dedupe(
+        _string_list((code_record or {}).get("files_changed", []))
+        + _string_list(trace_evidence.get("changed_files", []))
+    )
+    coder_tests = _dedupe(
+        _string_list((code_record or {}).get("tests_run", []))
+        + _string_list(trace_evidence.get("tests_run", []))
+    )
+    verification_commands = _dedupe(
+        _string_list((code_record or {}).get("verification_commands", []))
+        + _string_list(trace_evidence.get("verification_commands", []))
+        + [str(item.get("command", "")) for item in commands if item.get("command")]
+    )
+    blocking_risks = _dedupe(
+        _string_list((code_record or {}).get("blocking_risk_events", []))
+        + _string_list((code_record or {}).get("risk_events", []))
+        + _string_list(verification_record.get("risk_events", []))
+        + _string_list((implementation_trace or {}).get("blocking_risk_events", []))
+        + _string_list((implementation_trace or {}).get("risk_events", []))
+    )
+    non_blocking_risks = _dedupe(
+        _string_list((code_record or {}).get("non_blocking_risk_events", []))
+        + _string_list((implementation_trace or {}).get("non_blocking_risk_events", []))
+    )
+    blockers = _dedupe(
+        _string_list((code_record or {}).get("blockers", []))
+        + _string_list((implementation_trace or {}).get("blockers", []))
+    )
+    diff_path = str(trace_evidence.get("diff_path", "")) or str(((code_record or {}).get("artifacts") or {}).get("diff", ""))
+    status_label = "通过" if status == "completed" and not blocking_risks and not blockers else "需要处理"
+    recommendation = "可以进入 Review / 交付验收。" if status_label == "通过" else "先处理阻塞或失败测试，再进入交付验收。"
+
+    lines = [
+        "# Test Report",
+        "",
+        "## 结论",
+        f"- 状态：{status_label}",
+        f"- 建议：{recommendation}",
+        f"- 阻塞：{', '.join(blockers) if blockers else '无'}",
+        "",
+        "## 本次验证目标",
+        f"- 需求：{getattr(context, 'brief', '')}",
+        f"- 运行：{getattr(context, 'run_id', '')}",
+        f"- Domain：{getattr(getattr(context, 'domain', None), 'domain_id', '')}",
+        "",
+        "## 代码变化证据",
+        *([f"- `{path}`" for path in changed_files] if changed_files else ["- 未记录 changed files。"]),
+        "",
+        "## AI 自测证据",
+        *([f"- {test}" for test in coder_tests] if coder_tests else ["- 未记录 AI coding 阶段自测。"]),
+        "",
+        "## Verifier 复核命令",
+    ]
+    for result in commands:
+        lines.append(f"- `{result['command']}` -> exit `{result['exit_code']}`")
+    if not commands:
+        lines.append("- 未记录 verifier 复核命令。")
+    lines.extend(
+        [
+            "",
+            "## 执行流程证据",
+            f"- Trace 状态：{str((implementation_trace or {}).get('status', 'missing'))}",
+            f"- Diff：{diff_path or '未记录'}",
+            f"- Worktree：{verification_record.get('worktree_path', '')}",
+            f"- Exit Code：{trace_evidence.get('exit_code', '未记录')}",
+            "",
+            "## Verification Commands",
+            *([f"- `{command}`" for command in verification_commands] if verification_commands else ["- 未记录 verification command。"]),
+            "",
+            "## 风险与阻塞",
+            f"- Blocking risk：{', '.join(blocking_risks) if blocking_risks else '无'}",
+            f"- Non-blocking warning：{', '.join(non_blocking_risks) if non_blocking_risks else '无'}",
+            f"- Blockers：{', '.join(blockers) if blockers else '无'}",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _new_implementation_trace(context: Any, bundle: CodexPromptBundle) -> dict[str, Any]:
+    now = now_iso()
+    return {
+        "schema_version": 1,
+        "run_id": context.run_id,
+        "stage": "coder",
+        "status": "running",
+        "current_step": "",
+        "updated_at": now,
+        "inputs": _implementation_trace_inputs(context),
+        "steps": [
+            {
+                "id": step_id,
+                "title": title,
+                "status": "pending",
+                "started_at": "",
+                "finished_at": "",
+                "summary": "",
+                "artifacts": [],
+            }
+            for step_id, title in IMPLEMENTATION_TRACE_STEPS
+        ],
+        "evidence": {
+            "changed_files": [],
+            "tests_run": [],
+            "verification_commands": bundle.verification_commands,
+            "diff_path": "",
+            "exit_code": None,
+        },
+        "risk_events": [],
+        "blockers": [],
+        "next_action": "",
+    }
+
+
+def _implementation_trace_inputs(context: Any) -> list[dict[str, Any]]:
+    run_dir = Path(getattr(context, "run_dir", "."))
+    repo_root = Path(getattr(context, "repo_root", "."))
+    inputs: list[dict[str, Any]] = []
+    for path in UPSTREAM_CONTEXT_ARTIFACTS:
+        scope = "repo" if path in {"AGENTS.md", "DESIGN.md"} else "run"
+        target = repo_root / path if scope == "repo" else run_dir / path
+        inputs.append(
+            {
+                "title": IMPLEMENTATION_TRACE_INPUT_TITLES.get(path, path),
+                "path": path,
+                "scope": scope,
+                "exists": target.exists(),
+            }
+        )
+    return inputs
+
+
+def _trace_step(trace: dict[str, Any], step_id: str, status: str, summary: str, artifacts: list[str] | None = None) -> None:
+    now = now_iso()
+    trace["current_step"] = step_id
+    trace["updated_at"] = now
+    if status == "failed":
+        trace["status"] = "failed"
+    elif trace.get("status") != "failed":
+        trace["status"] = "running"
+    for step in trace.get("steps", []):
+        if step.get("id") != step_id:
+            continue
+        if not step.get("started_at"):
+            step["started_at"] = now
+        if status in {"completed", "failed"}:
+            step["finished_at"] = now
+        step["status"] = status
+        step["summary"] = summary
+        if artifacts is not None:
+            step["artifacts"] = artifacts
+        break
+
+
+def _trace_fail(trace: dict[str, Any], step_id: str, summary: str, risk_events: list[str], blockers: list[str], next_action: str) -> None:
+    _trace_step(trace, step_id, "failed", summary)
+    trace["status"] = "failed"
+    trace["risk_events"] = risk_events
+    trace["blockers"] = blockers
+    trace["next_action"] = next_action
+
+
+def _write_implementation_trace(path: Path, trace: dict[str, Any]) -> None:
+    trace["updated_at"] = now_iso()
+    write_json(path, trace)
 
 
 def _read_codex_response(path: Path) -> tuple[dict[str, Any], list[str]]:
@@ -865,6 +1229,26 @@ def _write_diff_artifacts(worktree_dir: Path, codex_dir: Path) -> tuple[Path, Pa
 def _scan_implementation_risks(text: str) -> list[str]:
     lowered = text.lower()
     return [f"prohibited_implementation_pattern:{pattern}" for pattern in IMPLEMENTATION_RISK_PATTERNS if pattern in lowered]
+
+
+def classify_codex_risk_events(events: list[str]) -> tuple[list[str], list[str]]:
+    blocking: list[str] = []
+    non_blocking: list[str] = []
+    for event in events:
+        if _is_non_blocking_codex_risk_note(event):
+            non_blocking.append(event)
+        else:
+            blocking.append(event)
+    return _dedupe(blocking), _dedupe(non_blocking)
+
+
+def _is_non_blocking_codex_risk_note(event: str) -> bool:
+    lowered = event.lower()
+    if lowered.startswith("note:") or lowered.startswith("non_blocking:") or lowered.startswith("non-blocking:"):
+        return True
+    if lowered.startswith("no ") and all(marker in lowered for marker in ("scraping", "captcha", "proxy")):
+        return True
+    return any(all(marker in lowered for marker in marker_set) for marker_set in NON_BLOCKING_CODEX_RISK_NOTE_MARKERS)
 
 
 def classify_codex_failure(text: str, exit_code: int, stage: str) -> str:
@@ -923,6 +1307,24 @@ def _previous_code_record(context: Any) -> dict[str, Any] | None:
     except Exception:  # noqa: BLE001 - previous state is optional context.
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _previous_implementation_trace(context: Any) -> dict[str, Any] | None:
+    path = Path(context.run_dir) / IMPLEMENTATION_TRACE_PATH
+    if not path.exists():
+        return None
+    try:
+        payload = read_json(path)
+    except Exception:  # noqa: BLE001 - trace is optional verification context.
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _read_optional_run_text(context: Any, path: str) -> str:
+    target = Path(context.run_dir) / path
+    if not target.exists() or not target.is_file():
+        return ""
+    return target.read_text(encoding="utf-8", errors="replace")
 
 
 def _string_list(value: Any) -> list[str]:

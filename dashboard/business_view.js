@@ -8,7 +8,7 @@
   const STAGE_GROUPS = [
     { id: "requirement", agents: ["orchestrator"], artifactPaths: ["task.yaml", "context.md"] },
     { id: "design", agents: ["product", "architect", "ux", "qa"], artifactPaths: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md"] },
-    { id: "implementation", agents: ["coder"], artifactPaths: ["coding_prompt.md", "codex/diff.patch"] },
+    { id: "implementation", agents: ["coder"], artifactPaths: ["coding_prompt.md", "codex/implementation_trace.json", "codex/diff.patch"] },
     { id: "quality", agents: ["reviewer", "verifier"], artifactPaths: ["review_report.md", "test_report.md"] },
     { id: "delivery", agents: ["publisher"], artifactPaths: ["final_report.md"] },
   ];
@@ -28,6 +28,9 @@
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
       recommendedArtifact: recommendedArtifact(run, i18n),
+      implementationFlow: run.implementation_trace || {},
+      acceptance: run.acceptance || { status: "not_started", steps: [], applied: false },
+      applyGate: run.apply_gate || {},
       nextActions: run.next_actions || [],
       risks: buildRisks(run, i18n),
       engineering: {

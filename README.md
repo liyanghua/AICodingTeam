@@ -140,7 +140,7 @@ python -m growth_dev.cli team serve-dashboard \
   --open-browser
 ```
 
-Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next CLI actions. The dashboard can start and inspect runs, but applying a completed worktree diff remains a CLI action through `growth-dev team apply`.
+Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next actions. When a completed run passes the apply gate, the dashboard can trigger a human-confirmed acceptance flow: it applies the run with `python3 -m growth_dev.cli team apply --run-id <run-id>` and then runs `python3 -m unittest discover -s tests -v`, with progress and log tails written under `runs/<run_id>/acceptance/`. The CLI `growth-dev team apply` path remains available for manual operation.
 
 ## Safety
 

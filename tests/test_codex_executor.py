@@ -79,6 +79,64 @@ sys.exit(2)
     return script
 
 
+def _write_note_risk_fake_codex(path: Path) -> Path:
+    script = path / "codex-risk-notes"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    target = os.path.join(workspace, "growth_dev", "fake_target.py")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "a", encoding="utf-8") as handle:
+        handle.write("\\n# fake codex change with non-blocking notes\\n")
+
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {
+        "summary": "fake codex implemented the requested dashboard change",
+        "files_changed": ["growth_dev/fake_target.py"],
+        "tests_run": ["python3 -c \\"print('ok')\\""],
+        "risk_events": [
+            "Dashboard UI assets live in top-level dashboard/, which was outside the high-level allowed list but was the nearby supporting location required to implement this Dashboard UI change.",
+            "dashboard_assets_modified_as_nearby_supporting_files_required_for_the_requested_dashboard_ui_copy_change",
+            "No scraping, login, captcha, proxy, fingerprinting, anti-detect, or private API behavior was added.",
+        ],
+        "blockers": [],
+        "next_action": "review",
+    }
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({"event": "exec.completed", "target": "growth_dev/fake_target.py"}))
+    sys.exit(0)
+
+if "review" in args:
+    print("# Fake Codex Review\\n\\nNo blocking issues found.")
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_provider_asserting_fake_codex(path: Path, expected_key: str) -> Path:
     script = path / "codex-provider"
     script.write_text(
@@ -177,6 +235,27 @@ class CodexExecutorTests(unittest.TestCase):
         self.assertEqual(classify_codex_failure("review model failed", 1, "reviewer"), "review_failed")
         self.assertEqual(classify_codex_failure("FAILED tests/test_demo.py", 1, "verifier"), "test_failed")
         self.assertEqual(classify_codex_failure("", 0, "coder"), "")
+
+    def test_codex_risk_classifier_keeps_dangerous_risks_blocking(self) -> None:
+        from growth_dev.team.codex import classify_codex_risk_events
+
+        blocking, non_blocking = classify_codex_risk_events(
+            [
+                "No scraping, login, captcha, proxy, fingerprinting, anti-detect, or private API behavior was added.",
+                "dashboard_assets_modified_as_nearby_supporting_files_required_for_the_requested_dashboard_ui_copy_change",
+                "prohibited_implementation_pattern:proxy rotation",
+                "codex_response_missing_field:summary",
+            ]
+        )
+
+        self.assertEqual(
+            non_blocking,
+            [
+                "No scraping, login, captcha, proxy, fingerprinting, anti-detect, or private API behavior was added.",
+                "dashboard_assets_modified_as_nearby_supporting_files_required_for_the_requested_dashboard_ui_copy_change",
+            ],
+        )
+        self.assertEqual(blocking, ["prohibited_implementation_pattern:proxy rotation", "codex_response_missing_field:summary"])
 
     def test_codex_exec_command_contains_context_controls(self) -> None:
         from growth_dev.team.codex import CodexExecutorConfig, build_codex_exec_command
@@ -380,9 +459,13 @@ class CodexExecutorTests(unittest.TestCase):
                 run_dir=run_dir,
             ).run_coder(context)
             code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            trace = json.loads((run_dir / "codex" / "implementation_trace.json").read_text(encoding="utf-8"))
             prompt_exists = (run_dir / "codex" / "codex_prompt.md").exists()
 
             self.assertEqual(result.status, "failed")
+            self.assertEqual(trace["status"], "failed")
+            self.assertEqual(trace["current_step"], "check_executor")
+            self.assertIn("codex_binary_missing", trace["blockers"])
             self.assertIn("codex_binary_missing", code_record["risk_events"])
             self.assertTrue(prompt_exists)
 
@@ -416,16 +499,94 @@ class CodexExecutorTests(unittest.TestCase):
 
             run_dir = root / "runs" / "run-1"
             code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            trace = json.loads((run_dir / "codex" / "implementation_trace.json").read_text(encoding="utf-8"))
             review_report = (run_dir / "review_report.md").read_text(encoding="utf-8")
             test_report = (run_dir / "test_report.md").read_text(encoding="utf-8")
             diff_exists = (run_dir / "codex" / "diff.patch").exists()
 
             self.assertEqual(record.status, "completed")
             self.assertEqual(code_record["executor"], "codex")
+            self.assertEqual(trace["status"], "completed")
+            self.assertEqual(trace["stage"], "coder")
+            self.assertTrue(trace["steps"])
+            self.assertEqual(trace["evidence"]["diff_path"], "codex/diff.patch")
+            self.assertIn("growth_dev/fake_target.py", trace["evidence"]["changed_files"])
+            self.assertIn("python3 -c \"print('ok')\"", trace["evidence"]["tests_run"])
+            self.assertEqual(code_record["artifacts"]["implementation_trace"], "codex/implementation_trace.json")
             self.assertIn("growth_dev/fake_target.py", code_record["files_changed"])
             self.assertTrue(diff_exists)
             self.assertIn("Fake Codex Review", review_report)
+            self.assertIn("## 结论", review_report)
+            self.assertIn("状态：通过", review_report)
+            self.assertIn("建议：可以进入测试验收 / 交付验收。", review_report)
+            self.assertIn("## 本次评审范围", review_report)
+            self.assertIn("growth_dev/fake_target.py", review_report)
+            self.assertIn("## 评审维度", review_report)
+            self.assertIn("功能正确性：通过", review_report)
+            self.assertIn("测试覆盖：通过", review_report)
+            self.assertIn("## Findings", review_report)
+            self.assertIn("Critical：无", review_report)
+            self.assertIn("## 测试证据", review_report)
+            self.assertIn("python3 -c \"print('ok')\"", review_report)
+            self.assertIn("## Diff 证据", review_report)
+            self.assertIn("codex/diff.patch", review_report)
+            self.assertIn("## 风险与阻塞", review_report)
+            self.assertIn("Blocking risk：无", review_report)
             self.assertIn("python3 -c", test_report)
+            self.assertIn("## 结论", test_report)
+            self.assertIn("状态：通过", test_report)
+            self.assertIn("## 代码变化证据", test_report)
+            self.assertIn("growth_dev/fake_target.py", test_report)
+            self.assertIn("## AI 自测证据", test_report)
+            self.assertIn("python3 -c \"print('ok')\"", test_report)
+            self.assertIn("## 执行流程证据", test_report)
+            self.assertIn("codex/diff.patch", test_report)
+            self.assertIn("## 风险与阻塞", test_report)
+            self.assertIn("阻塞：无", test_report)
+
+    def test_codex_non_blocking_risk_notes_do_not_fail_coder_gate(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_note_risk_fake_codex(root)
+
+            runtime = TeamRuntime(
+                team=default_team_spec(),
+                domain=DomainSpec(domain_id="demo", summary="Demo coding domain", risk_rules=["manual_login_only"]),
+                runs_dir=root / "runs",
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+                codex_reasoning_effort="medium",
+            )
+            record = runtime.run(
+                "Implement a tiny change",
+                inputs={
+                    "allowed_paths": ["growth_dev/fake_target.py"],
+                    "verification_commands": ["python3 -c \"print('ok')\""],
+                },
+                run_id="run-1",
+            )
+
+            run_dir = root / "runs" / "run-1"
+            code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            trace = json.loads((run_dir / "codex" / "implementation_trace.json").read_text(encoding="utf-8"))
+            coder_run = next(agent_run for agent_run in record.agent_runs if agent_run.agent_id == "coder")
+
+            self.assertEqual(record.status, "completed")
+            self.assertEqual(coder_run.status, "completed")
+            self.assertEqual(coder_run.risk_events, [])
+            self.assertEqual(code_record["status"], "completed")
+            self.assertEqual(code_record["risk_events"], [])
+            self.assertEqual(code_record["blocking_risk_events"], [])
+            self.assertEqual(len(code_record["non_blocking_risk_events"]), 3)
+            self.assertEqual(trace["status"], "completed")
+            self.assertEqual(trace["risk_events"], [])
+            self.assertEqual(len(trace["non_blocking_risk_events"]), 3)
 
     def test_team_runtime_aicodemirror_provider_uses_env_key_without_recording_secret(self) -> None:
         from growth_dev.team.models import DomainSpec

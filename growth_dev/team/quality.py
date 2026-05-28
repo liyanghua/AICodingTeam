@@ -136,7 +136,8 @@ def evaluate_run_quality(record: TeamRunRecord, run_dir: Path) -> ArtifactQualit
 
 def summarize_run_health(record: TeamRunRecord, run_dir: Path) -> RunHealthSummary:
     warnings, blockers = _log_warnings_and_blockers(run_dir)
-    warning_groups = _warning_groups(warnings + list(record.risk_events))
+    non_blocking_risk_notes = _non_blocking_risk_notes(record)
+    warning_groups = _warning_groups(warnings + list(record.risk_events) + non_blocking_risk_notes)
     if record.status == "failed":
         blockers.extend(_record_blockers(record))
         return RunHealthSummary(
@@ -158,7 +159,7 @@ def summarize_run_health(record: TeamRunRecord, run_dir: Path) -> RunHealthSumma
             warning_groups=warning_groups,
             raw_warnings=_dedupe(warnings),
         )
-    if record.status == "completed" and (warnings or record.risk_events):
+    if record.status == "completed" and (warnings or record.risk_events or non_blocking_risk_notes):
         group_count = len(warning_groups)
         summary = (
             f"存在 {group_count} 类非阻塞系统提示（非阻塞警告），未影响 Review/Test/Report。"
@@ -172,7 +173,7 @@ def summarize_run_health(record: TeamRunRecord, run_dir: Path) -> RunHealthSumma
             warnings=_warning_group_summaries(warning_groups),
             blockers=[],
             warning_groups=warning_groups,
-            raw_warnings=_dedupe(warnings),
+            raw_warnings=_dedupe(warnings + non_blocking_risk_notes),
         )
     if record.status == "completed":
         return RunHealthSummary(
@@ -285,6 +286,8 @@ def _warning_groups(warnings: list[str]) -> list[dict[str, Any]]:
 
 def _warning_group_for(warning: str) -> tuple[str, str]:
     lower = warning.lower()
+    if "no scraping" in lower or "outside the high-level allowed list" in lower or "non_blocking" in lower or "non-blocking" in lower:
+        return "execution_boundary_note", "执行边界说明"
     if "plugin" in lower and ("sync" in lower or "catalog" in lower):
         return "plugin_sync", "插件同步提示"
     if "telemetry" in lower or "codex_otel" in lower or "metrics counter" in lower:
@@ -309,6 +312,18 @@ def _record_blockers(record: TeamRunRecord) -> list[str]:
             failure_category = (agent_run.metadata or {}).get("failure_category")
             blockers.append(str(failure_category or agent_run.message or f"agent_failed:{agent_run.agent_id}"))
     return blockers
+
+
+def _non_blocking_risk_notes(record: TeamRunRecord) -> list[str]:
+    notes: list[str] = []
+    for agent_run in record.agent_runs:
+        metadata = agent_run.metadata or {}
+        raw_notes = metadata.get("non_blocking_risk_events", [])
+        if isinstance(raw_notes, str):
+            notes.append(raw_notes)
+        elif isinstance(raw_notes, list):
+            notes.extend(str(item) for item in raw_notes)
+    return _dedupe(notes)
 
 
 def _task_terms(record: TeamRunRecord) -> list[str]:

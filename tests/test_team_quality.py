@@ -88,6 +88,21 @@ class TeamQualityTests(unittest.TestCase):
         self.assertIn("非阻塞警告", health.summary)
         self.assertFalse(health.blockers)
 
+    def test_completed_run_with_non_blocking_risk_notes_is_warning_not_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "risk-note-run"
+            run_dir.mkdir()
+            record = _write_record(run_dir)
+            record.agent_runs[0].metadata["non_blocking_risk_events"] = [
+                "No scraping, login, captcha, proxy, fingerprinting, anti-detect, or private API behavior was added."
+            ]
+
+            health = summarize_run_health(record, run_dir)
+
+        self.assertEqual(health.status, "completed_with_warnings")
+        self.assertFalse(health.blockers)
+        self.assertTrue(any("执行边界说明" in warning for warning in health.warnings))
+
     def test_non_blocking_codex_warnings_are_grouped_for_business_health(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir) / "grouped-warning-run"

@@ -5,7 +5,9 @@ import subprocess
 import tempfile
 import time
 import unittest
+from http import HTTPStatus
 from pathlib import Path
+from unittest import mock
 
 from tests.test_team_models import TEAM_YAML
 
@@ -95,9 +97,62 @@ class DashboardTests(unittest.TestCase):
         (run_dir / "ui_spec.md").write_text("# UI Spec\n", encoding="utf-8")
         (run_dir / "eval.md").write_text("# Eval\n", encoding="utf-8")
         (run_dir / "final_report.md").write_text("# Final Report\n", encoding="utf-8")
+        (codex_dir / "implementation_trace.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "stage": "coder",
+                    "status": "completed",
+                    "current_step": "finalize_result",
+                    "updated_at": "2026-05-23T00:00:30+00:00",
+                    "inputs": [{"title": "PRD", "path": "prd.md", "scope": "run", "exists": True}],
+                    "steps": [
+                        {"id": "prepare_context", "title": "准备上下文", "status": "completed", "summary": "已生成上下文。"},
+                        {"id": "codex_running", "title": "启动 AI coding", "status": "completed", "summary": "AI coding 已完成。"},
+                    ],
+                    "evidence": {
+                        "changed_files": ["dashboard/app.js"],
+                        "tests_run": ["python3 -m unittest tests.test_dashboard -v"],
+                        "verification_commands": ["python3 -m unittest tests.test_dashboard -v"],
+                        "diff_path": "codex/diff.patch",
+                        "exit_code": 0,
+                    },
+                    "risk_events": [],
+                    "blockers": [],
+                    "next_action": "review",
+                }
+            ),
+            encoding="utf-8",
+        )
         (codex_dir / "stdout.jsonl").write_text("coding started\ncoding finished\n", encoding="utf-8")
         (codex_dir / "stderr.log").write_text("provider warning\n", encoding="utf-8")
-        (codex_dir / "diff.patch").write_text("diff --git a/a b/a\n+dashboard\n", encoding="utf-8")
+        (codex_dir / "diff.patch").write_text(
+            "\n".join(
+                [
+                    "diff --git a/dashboard/app.js b/dashboard/app.js",
+                    "index 1111111..2222222 100644",
+                    "--- a/dashboard/app.js",
+                    "+++ b/dashboard/app.js",
+                    "@@ -1,3 +1,4 @@",
+                    " const state = {};",
+                    "-oldLine();",
+                    "+newLine();",
+                    "+extraLine();",
+                    " keepLine();",
+                    "diff --git a/tests/test_dashboard.py b/tests/test_dashboard.py",
+                    "new file mode 100644",
+                    "index 0000000..3333333",
+                    "--- /dev/null",
+                    "+++ b/tests/test_dashboard.py",
+                    "@@ -0,0 +1,2 @@",
+                    "+def test_diff_view():",
+                    "+    assert True",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -121,12 +176,130 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("coding finished", "\n".join(state["logs"]))
         self.assertIn("health_summary", state)
         self.assertIn("quality_report", state)
+        self.assertEqual(state["implementation_trace"]["status"], "completed")
+        self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
-        self.assertEqual(state["diff_summary"]["lines"], 2)
+        self.assertEqual(state["diff_summary"]["files_changed"], 2)
+        self.assertEqual(state["diff_summary"]["additions"], 4)
+        self.assertEqual(state["diff_summary"]["deletions"], 1)
+        self.assertEqual(state["diff_summary"]["files"][0]["path"], "dashboard/app.js")
+        self.assertEqual(state["diff_summary"]["files"][0]["status"], "modified")
+        self.assertEqual(state["diff_summary"]["files"][0]["additions"], 2)
+        self.assertEqual(state["diff_summary"]["files"][0]["deletions"], 1)
+        self.assertEqual(state["diff_summary"]["files"][1]["status"], "added")
         self.assertEqual(state["apply_gate"]["status"], "passed")
         self.assertNotIn("sk-should-not-leak", payload)
         self.assertNotIn(".env", payload)
+
+    def test_dashboard_acceptance_runner_records_successful_apply_and_tests(self) -> None:
+        from growth_dev.team.dashboard import run_dashboard_acceptance_once
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                if command[:5] == ["python3", "-m", "growth_dev.cli", "team", "apply"]:
+                    return subprocess.CompletedProcess(command, 0, "applied from .env with sk-should-not-leak\n", "")
+                return subprocess.CompletedProcess(command, 0, "Ran 23 tests\nOK\n", "checked .env and sk-should-not-leak\n")
+
+            result = run_dashboard_acceptance_once("dashboard-run-1", runs_dir=runs_dir, repo_root=root, command_runner=fake_run)
+            payload = json.dumps(result, ensure_ascii=False)
+
+            self.assertEqual(result["status"], "completed")
+            self.assertTrue(result["applied"])
+            self.assertEqual(result["steps"][0]["id"], "apply")
+            self.assertEqual(result["steps"][0]["exit_code"], 0)
+            self.assertEqual(result["steps"][1]["id"], "tests")
+            self.assertEqual(result["steps"][1]["exit_code"], 0)
+            self.assertIn("已采纳且测试通过", result["conclusion"])
+            self.assertEqual(calls[0][:5], ["python3", "-m", "growth_dev.cli", "team", "apply"])
+            self.assertEqual(calls[1], ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"])
+            self.assertNotIn(".env", payload)
+            self.assertNotIn("sk-should-not-leak", payload)
+            status_path = runs_dir / "dashboard-run-1" / "acceptance" / "status.json"
+            self.assertTrue(status_path.exists())
+            apply_log = (runs_dir / "dashboard-run-1" / "acceptance" / "apply_stdout.log").read_text(encoding="utf-8")
+            tests_log = (runs_dir / "dashboard-run-1" / "acceptance" / "tests_stderr.log").read_text(encoding="utf-8")
+            self.assertNotIn(".env", apply_log)
+            self.assertNotIn("sk-should-not-leak", apply_log)
+            self.assertNotIn(".env", tests_log)
+            self.assertNotIn("sk-should-not-leak", tests_log)
+
+    def test_dashboard_acceptance_runner_keeps_applied_changes_when_tests_fail(self) -> None:
+        from growth_dev.team.dashboard import run_dashboard_acceptance_once
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if command[:5] == ["python3", "-m", "growth_dev.cli", "team", "apply"]:
+                    return subprocess.CompletedProcess(command, 0, "applied\n", "")
+                return subprocess.CompletedProcess(command, 1, "FAILED tests\n", "failure detail\n")
+
+            result = run_dashboard_acceptance_once("dashboard-run-1", runs_dir=runs_dir, repo_root=root, command_runner=fake_run)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["steps"][1]["exit_code"], 1)
+        self.assertIn("已采纳但测试失败", result["conclusion"])
+        self.assertIn("不自动回滚", result["next_action"])
+
+    def test_dashboard_acceptance_runner_stops_when_apply_fails(self) -> None:
+        from growth_dev.team.dashboard import run_dashboard_acceptance_once
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 1, "", "git apply failed\n")
+
+            result = run_dashboard_acceptance_once("dashboard-run-1", runs_dir=runs_dir, repo_root=root, command_runner=fake_run)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["current_step"], "apply")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("采纳失败", result["conclusion"])
+
+    def test_dashboard_acceptance_post_requires_passed_apply_gate(self) -> None:
+        from growth_dev.team.dashboard import start_dashboard_acceptance
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_completed_run(runs_dir)
+            record = json.loads((run_dir / "team_run_record.json").read_text(encoding="utf-8"))
+            record["status"] = "failed"
+            (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                start_dashboard_acceptance("dashboard-run-1", runs_dir=runs_dir, repo_root=root)
+
+        self.assertFalse((runs_dir / "dashboard-run-1" / "acceptance" / "status.json").exists())
+
+    def test_dashboard_acceptance_rejects_run_id_path_escape(self) -> None:
+        from growth_dev.team.dashboard import start_dashboard_acceptance
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+
+            with self.assertRaises(ValueError):
+                start_dashboard_acceptance("../dashboard-run-1", runs_dir=runs_dir, repo_root=root)
+
+        self.assertFalse((root / "dashboard-run-1" / "acceptance" / "status.json").exists())
 
     def test_dashboard_artifact_reader_is_confined_to_allowed_paths(self) -> None:
         from growth_dev.team.dashboard import read_dashboard_artifact
@@ -175,6 +348,9 @@ class DashboardTests(unittest.TestCase):
             self.assertIn(app_key, payload["app"])
         for action_key in ("artifactPending", "readyForConfirmation", "noNextAction"):
             self.assertIn(action_key, payload["actions"])
+        self.assertIn("acceptance", payload)
+        for acceptance_key in ("title", "confirmButton", "running", "completed", "failed", "notStarted"):
+            self.assertIn(acceptance_key, payload["acceptance"])
         for stage in ("requirement", "design", "implementation", "quality", "delivery"):
             self.assertIn(stage, payload["stages"])
             self.assertIn("title", payload["stages"][stage])
@@ -186,6 +362,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("data-i18n", html)
         self.assertIn("advanced-settings", html)
         self.assertIn('id="deliverables-panel"', html)
+        self.assertIn('id="acceptance-panel"', html)
+        self.assertIn('id="acceptance-action"', html)
+        self.assertIn('id="acceptance-steps"', html)
         self.assertIn('id="stage-detail-panel"', html)
         self.assertIn('class="panel deliverables-panel"', html)
         self.assertIn('class="deliverables-grid"', html)
@@ -238,9 +417,11 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("renderStageDetail", app_js)
         self.assertIn("renderStageDeliverables", app_js)
         self.assertIn("renderStageEngineering", app_js)
+        self.assertIn("renderImplementationFlow", app_js)
         self.assertIn("filterEngineeringForStage", app_js)
         self.assertIn("loadArtifactContent", app_js)
         self.assertIn("stageDetail", i18n)
+        self.assertIn("implementationFlow", i18n)
         for key in (
             "deliverablesSuffix",
             "engineeringSuffix",
@@ -250,6 +431,42 @@ class DashboardTests(unittest.TestCase):
             "openGlobalEngineering",
         ):
             self.assertIn(key, i18n["stageDetail"])
+
+    def test_dashboard_stage_detail_content_is_bounded_inside_card(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('body.className = `stage-detail-body ${selection.mode === "engineering" ? "engineering-mode" : "deliverables-mode"}`', app_js)
+        self.assertIn('list.className = "stage-detail-list"', app_js)
+        self.assertIn(".stage-detail-panel {\n  display: grid;", css)
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", css)
+        self.assertIn("max-height: min(620px, 72vh);", css)
+        self.assertIn(".stage-detail-body.engineering-mode {\n  display: flex;\n  flex-direction: column;", css)
+        self.assertIn("overflow: auto;", css)
+        self.assertIn("align-items: stretch;", css)
+        self.assertIn(".implementation-flow", css)
+        self.assertIn("max-height: none;", css)
+        self.assertIn("min-height: auto;", css)
+        self.assertIn("overflow: visible;", css)
+        self.assertIn(".stage-detail-body.engineering-mode > .stage-detail-block", css)
+        self.assertIn("width: 100%;", css)
+        self.assertIn("white-space: nowrap;", css)
+        self.assertIn(".stage-detail-list li", css)
+        self.assertIn("overflow-wrap: anywhere;", css)
+
+    def test_dashboard_stage_detail_scroll_is_preserved_during_polling_refresh(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("stageDetailScroll", app_js)
+        self.assertIn("function stageDetailKey", app_js)
+        self.assertIn("function captureStageDetailScroll", app_js)
+        self.assertIn("function restoreStageDetailScroll", app_js)
+        self.assertIn("captureStageDetailScroll();", app_js)
+        self.assertIn('body.addEventListener("scroll"', app_js)
+        self.assertIn("restoreStageDetailScroll(body);", app_js)
+        self.assertIn('state.stageDetailScroll = { key: "", top: 0 };', app_js)
 
     def test_dashboard_frontend_display_copy_comes_from_i18n(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -285,6 +502,45 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('toggleStageDetail(stage, "engineering")', app_js)
         self.assertNotIn("for (const warning of health.warnings", app_js)
 
+    def test_dashboard_diff_view_uses_file_grouped_codex_style_preview(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn("selectedDiffFilePath", app_js)
+        self.assertIn("renderDiffArtifact", app_js)
+        self.assertIn("parseUnifiedDiff", app_js)
+        self.assertIn("renderDiffSummary", app_js)
+        self.assertIn('artifact.path === "codex/diff.patch"', app_js)
+        self.assertNotIn('JSON.stringify(vm.engineering.diffSummary || {}, null, 2)', app_js)
+        self.assertIn("diffView", i18n)
+        for key in ("changedFiles", "additions", "deletions", "empty", "binaryOrNoText"):
+            self.assertIn(key, i18n["diffView"])
+        for class_name in (
+            ".diff-view",
+            ".diff-file-list",
+            ".diff-file-button",
+            ".diff-preview",
+            ".diff-line-add",
+            ".diff-line-remove",
+            ".diff-line-meta",
+        ):
+            self.assertIn(class_name, css)
+
+    def test_dashboard_acceptance_frontend_exposes_button_and_renderer(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("renderAcceptance", app_js)
+        self.assertIn("startAcceptance", app_js)
+        self.assertIn('/acceptance"', app_js)
+        self.assertIn("acceptance-action", app_js)
+        self.assertIn("acceptance-step", app_js)
+        self.assertIn(".acceptance-panel", css)
+        self.assertIn(".acceptance-step", css)
+
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
         root = Path(__file__).resolve().parents[1]
         i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"
@@ -313,8 +569,17 @@ class DashboardTests(unittest.TestCase):
                 {"label": "Task Package", "path": "task.yaml", "scope": "run", "exists": True},
                 {"label": "PRD", "path": "prd.md", "scope": "run", "exists": True},
                 {"label": "Architecture Diagram", "path": "architecture_diagram.md", "scope": "run", "exists": False},
+                {"label": "Implementation Trace", "path": "codex/implementation_trace.json", "scope": "run", "exists": True},
                 {"label": "Diff Evidence", "path": "codex/diff.patch", "scope": "run", "exists": True},
             ],
+            "implementation_trace": {
+                "status": "completed",
+                "current_step": "finalize_result",
+                "steps": [{"id": "finalize_result", "title": "生成实现结果", "status": "completed"}],
+                "evidence": {"changed_files": ["dashboard/app.js"], "tests_run": ["python3 -m unittest tests.test_dashboard -v"]},
+                "blockers": [],
+                "risk_events": [],
+            },
             "risk_events": [],
             "next_actions": ["python -m growth_dev.cli team apply --run-id biz-run-1"],
             "health_summary": {"status": "completed_ready", "label": "已完成可采纳", "summary": "结果已通过关键检查。", "warnings": [], "blockers": []},
@@ -342,13 +607,15 @@ console.log(JSON.stringify(vm));
         self.assertEqual(vm["stages"][4]["statusLabel"], "等待确认")
         self.assertEqual(vm["deliverables"][0]["title"], "任务包")
         self.assertEqual(vm["deliverables"][2]["title"], "架构图")
-        self.assertEqual(vm["deliverables"][3]["title"], "代码差异")
+        self.assertEqual(vm["deliverables"][3]["title"], "AI 实现流程")
         self.assertEqual(vm["health"]["label"], "已完成可采纳")
         self.assertEqual(vm["artifactQuality"]["status"], "passed")
+        self.assertEqual(vm["implementationFlow"]["status"], "completed")
         design_stage = vm["stages"][1]
         implementation_stage = vm["stages"][2]
         self.assertEqual(design_stage["agentIds"], ["product", "architect", "ux", "qa"])
         self.assertTrue(any(artifact["path"] == "prd.md" for artifact in design_stage["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "codex/implementation_trace.json" for artifact in implementation_stage["artifacts"]))
         self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
         self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
         self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
