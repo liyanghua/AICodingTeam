@@ -31,6 +31,7 @@ python -m growth_dev code \
 python -m growth_dev team status --run-id <run-id> --summary
 python -m growth_dev team watch --run-id <run-id>
 python -m growth_dev team diff --run-id <run-id>
+python -m growth_dev team retrospective generate --run-id <run-id>
 python -m growth_dev team memory export --run-id <run-id> --vault-dir /path/to/ObsidianVault
 python -m growth_dev review --run-id <run-id>
 python -m growth_dev test --run-id <run-id>
@@ -108,6 +109,22 @@ Project-level third-party provider config is read from `.env` only for the child
 
 Every team run also writes `events.jsonl` as a stage timeline and `process.json` for background process metadata.
 
+### Run retrospective
+
+Terminal team runs now write deterministic learning artifacts after completion or failure:
+
+- `retrospective.md`: business-friendly run review and next-time guidance.
+- `learning_summary.json`: structured outcome, failure modes, recommended Project Skills, reusable context, and context to avoid.
+
+You can regenerate them for historical runs:
+
+```bash
+python -m growth_dev.cli team retrospective generate --run-id <run-id>
+python -m growth_dev.cli team retrospective generate --all --limit 50
+```
+
+Retrospectives are observability and memory artifacts only. They do not change gate results or inject memory into future Codex prompts.
+
 ### Obsidian project memory
 
 The first memory layer is a manual Markdown export for Obsidian. It reads existing `runs/<run_id>/` artifacts and writes business-friendly project evolution notes into the selected vault without changing runtime behavior or injecting memory into future Codex prompts.
@@ -123,7 +140,7 @@ python -m growth_dev.cli team memory export \
   --vault-dir /path/to/ObsidianVault
 ```
 
-Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
+Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, retrospectives, recommended skills, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
 
 ### Local dashboard
 

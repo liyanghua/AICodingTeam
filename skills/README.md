@@ -31,3 +31,5 @@ Skills 不是越多越好。Too many active skills create trigger noise, context
 - `AGENTS.md` points agents at this registry.
 - `README.md` summarizes the same order for humans.
 - `skills/registry.yaml` is the machine-readable index for future runtime wiring.
+- `run_retrospective` is listed separately under `memory_skills`; it is not an active coding skill.
+- Retrospective output may recommend active skills for the next run, but it should not be loaded into coding context unless explicitly selected and cited.

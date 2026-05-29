@@ -7,6 +7,7 @@ from typing import Any
 
 from ..utils import ensure_dir, read_json
 from .models import TeamRunRecord
+from .retrospective import ensure_run_retrospective
 
 
 MEMORY_ROOT_NAME = "AI Coding Memory"
@@ -59,6 +60,7 @@ SECRET_REPLACEMENTS = [
 def export_run_to_obsidian(run_id: str, *, runs_dir: Path = Path("runs"), vault_dir: Path) -> dict[str, Any]:
     runs_path = Path(runs_dir)
     record, run_dir = _load_record(run_id, runs_path)
+    ensure_run_retrospective(record.run_id, runs_dir=runs_path)
     memory_root = _memory_root(vault_dir)
     written = [_write_run_note(record, run_dir, memory_root)]
     written.extend(_regenerate_indexes(memory_root))
@@ -73,6 +75,7 @@ def export_recent_runs_to_obsidian(*, runs_dir: Path = Path("runs"), vault_dir: 
     written: list[Path] = []
     run_ids: list[str] = []
     for record, run_dir in selected:
+        ensure_run_retrospective(record.run_id, runs_dir=runs_path)
         written.append(_write_run_note(record, run_dir, memory_root))
         run_ids.append(record.run_id)
     written.extend(_regenerate_indexes(memory_root))
@@ -177,6 +180,18 @@ def _run_note(record: TeamRunRecord, run_dir: Path) -> str:
         "",
         *_lesson_lines(record, changed_files, risk_events),
         "",
+        "## 任务复盘",
+        "",
+        *_retrospective_lines(run_dir),
+        "",
+        "## 推荐 Project Skills",
+        "",
+        *_recommended_skill_lines(run_dir),
+        "",
+        "## 下次上下文策略",
+        "",
+        *_context_strategy_lines(run_dir),
+        "",
         "## 本地产物链接",
         "",
         *_artifact_link_lines(run_dir),
@@ -272,6 +287,47 @@ def _lesson_lines(record: TeamRunRecord, changed_files: list[str], risk_events: 
     if changed_files:
         lines.append(f"- 主要影响面：{', '.join(f'`{path}`' for path in changed_files[:5])}")
     return lines
+
+
+def _retrospective_lines(run_dir: Path) -> list[str]:
+    learning = _learning_summary(run_dir)
+    if learning:
+        return [
+            f"- Outcome: `{learning.get('outcome', 'unknown')}`",
+            f"- Task type: `{learning.get('task_type', 'unknown')}`",
+            f"- Source: [retrospective.md]({(run_dir / 'retrospective.md').resolve().as_uri()})",
+        ]
+    summary = _summarize_text(run_dir / "retrospective.md")
+    return [summary] if summary else ["暂无复盘摘要。"]
+
+
+def _recommended_skill_lines(run_dir: Path) -> list[str]:
+    skills = _learning_summary(run_dir).get("recommended_skills", [])
+    if not isinstance(skills, list) or not skills:
+        return ["暂无推荐 skill。"]
+    return [f"- `{_redact(str(skill))}`" for skill in skills]
+
+
+def _context_strategy_lines(run_dir: Path) -> list[str]:
+    learning = _learning_summary(run_dir)
+    reusable = learning.get("reusable_context", [])
+    avoid = learning.get("avoid_context", [])
+    lines: list[str] = []
+    if isinstance(reusable, list) and reusable:
+        lines.append("### 可复用上下文")
+        lines.extend(f"- `{_redact(str(item))}`" for item in reusable[:8])
+    if isinstance(avoid, list) and avoid:
+        lines.append("### 避免注入")
+        lines.extend(f"- `{_redact(str(item))}`" for item in avoid[:8])
+    return lines or ["暂无上下文策略。"]
+
+
+def _learning_summary(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "learning_summary.json"
+    if not path.exists():
+        return {}
+    payload = read_json(path)
+    return payload if isinstance(payload, dict) else {}
 
 
 def _artifact_link_lines(run_dir: Path) -> list[str]:

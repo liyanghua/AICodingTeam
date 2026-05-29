@@ -118,6 +118,16 @@ def _build_parser() -> argparse.ArgumentParser:
     team_apply.add_argument("--repo-root", default=".")
     team_apply.set_defaults(func=_cmd_team_apply)
 
+    team_retrospective = team_sub.add_parser("retrospective", help="Generate deterministic run retrospectives")
+    team_retrospective_sub = team_retrospective.add_subparsers(dest="retrospective_command", required=True)
+    team_retrospective_generate = team_retrospective_sub.add_parser("generate", help="Generate retrospective artifacts")
+    retrospective_target = team_retrospective_generate.add_mutually_exclusive_group(required=True)
+    retrospective_target.add_argument("--run-id", default=None)
+    retrospective_target.add_argument("--all", dest="generate_all", action="store_true")
+    team_retrospective_generate.add_argument("--runs-dir", default="runs")
+    team_retrospective_generate.add_argument("--limit", type=int, default=50)
+    team_retrospective_generate.set_defaults(func=_cmd_team_retrospective_generate)
+
     team_memory = team_sub.add_parser("memory", help="Export team run memory to Obsidian Markdown")
     team_memory_sub = team_memory.add_subparsers(dest="memory_command", required=True)
     team_memory_export = team_memory_sub.add_parser("export", help="Export run summaries to an Obsidian vault")
@@ -568,6 +578,21 @@ def _cmd_team_memory_export(args: argparse.Namespace) -> int:
                 runs_dir=Path(args.runs_dir),
                 vault_dir=Path(args.vault_dir),
             )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_team_retrospective_generate(args: argparse.Namespace) -> int:
+    from .team.retrospective import generate_recent_run_retrospectives, generate_run_retrospective
+
+    try:
+        if getattr(args, "generate_all", False):
+            result = generate_recent_run_retrospectives(runs_dir=Path(args.runs_dir), limit=args.limit)
+        else:
+            result = generate_run_retrospective(str(args.run_id), runs_dir=Path(args.runs_dir))
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -246,3 +246,34 @@ skills:
       - review_report_template.md
     context_budget:
       default: read diff, tests, and acceptance criteria before broad source context
+
+memory_skills:
+  - id: run_retrospective
+    active: false
+    stage: memory
+    priority: P1
+    source_inspiration: project-run-retrospective
+    path: skills/90_memory/run_retrospective
+    inputs:
+      - runs/<run_id>/team_run_record.json
+      - runs/<run_id>/events.jsonl
+      - review_report.md
+      - test_report.md
+      - codex/implementation_trace.json
+      - acceptance/status.json
+    outputs:
+      - runs/<run_id>/retrospective.md
+      - runs/<run_id>/learning_summary.json
+    triggers:
+      - run reaches completed or failed terminal state
+      - user exports run memory to Obsidian
+      - user asks what should be reused next time
+    quality_gates:
+      - does not copy raw logs, prompts, full diff, or secrets
+      - recommended skills reference active registry ids
+      - context reuse and avoid lists are explicit
+    templates:
+      - retrospective_template.md
+      - learning_summary_schema.md
+    context_budget:
+      default: read run summaries and artifact headers, not raw execution payloads

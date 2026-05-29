@@ -165,12 +165,16 @@ class TeamRuntimeTests(unittest.TestCase):
 
             events_path = root / "runs" / "run-1" / "events.jsonl"
             events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+            retrospective_exists = (root / "runs" / "run-1" / "retrospective.md").exists()
+            learning_exists = (root / "runs" / "run-1" / "learning_summary.json").exists()
 
         self.assertEqual(record.status, "completed")
         self.assertEqual(events[0]["event"], "run_started")
         self.assertIn("agent_started", [event["event"] for event in events])
         self.assertIn("gate_checked", [event["event"] for event in events])
         self.assertEqual(events[-1]["event"], "run_completed")
+        self.assertTrue(retrospective_exists)
+        self.assertTrue(learning_exists)
 
     def test_runtime_writes_failed_gate_event_with_missing_artifacts(self) -> None:
         from growth_dev.team.models import AgentSpec, DomainSpec, GateSpec, TeamSpec
@@ -190,11 +194,32 @@ class TeamRuntimeTests(unittest.TestCase):
             events_path = root / "runs" / "run-1" / "events.jsonl"
             events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
             gate_events = [event for event in events if event["event"] == "gate_checked"]
+            retrospective_exists = (root / "runs" / "run-1" / "retrospective.md").exists()
+            learning_exists = (root / "runs" / "run-1" / "learning_summary.json").exists()
 
         self.assertEqual(record.status, "failed")
         self.assertEqual(gate_events[0]["status"], "failed")
         self.assertEqual(gate_events[0]["missing_artifacts"], ["prd.md"])
         self.assertEqual(events[-1]["event"], "run_failed")
+        self.assertTrue(retrospective_exists)
+        self.assertTrue(learning_exists)
+
+    def test_runtime_keeps_run_status_when_retrospective_generation_fails(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+
+            with patch("growth_dev.team.runtime.generate_run_retrospective", side_effect=RuntimeError("retro failed")):
+                record = runtime.run("demo", run_id="run-1")
+
+            events_path = root / "runs" / "run-1" / "events.jsonl"
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(record.status, "completed")
+        self.assertIn("retrospective_failed", [event["event"] for event in events])
 
 
 if __name__ == "__main__":

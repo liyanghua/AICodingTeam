@@ -9,6 +9,7 @@ from .agents import AgentContext, run_deterministic_agent
 from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
 from .domain import load_domain_spec, load_team_spec
 from .models import AgentRun, AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
+from .retrospective import generate_run_retrospective
 
 
 class GateFailure(RuntimeError):
@@ -208,6 +209,7 @@ class TeamRuntime:
                 record.finished_at = now_iso()
                 self._write_record(record)
                 self._write_event(record, "run_failed", reason="gate_failed")
+                self._write_retrospective(record)
                 return record
 
             agent_context = AgentContext(
@@ -259,12 +261,14 @@ class TeamRuntime:
                 record.finished_at = now_iso()
                 self._write_record(record)
                 self._write_event(record, "run_failed", reason=f"agent_failed:{agent.id}")
+                self._write_retrospective(record)
                 return record
 
         record.status = "completed"
         record.finished_at = now_iso()
         self._write_record(record)
         self._write_event(record, "run_completed")
+        self._write_retrospective(record)
         return record
 
     def check_gate(self, run_dir: Path, gate_id: str) -> GateResult:
@@ -309,6 +313,19 @@ class TeamRuntime:
         }
         with (record.run_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event_payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+    def _write_retrospective(self, record: TeamRunRecord) -> None:
+        try:
+            result = generate_run_retrospective(record.run_id, runs_dir=record.run_dir.parent)
+        except Exception as exc:  # noqa: BLE001 - retrospective must not change run outcome.
+            self._write_event(record, "retrospective_failed", error=str(exc))
+            return
+        record.artifacts["retrospective.md"] = "retrospective.md"
+        record.artifacts["learning_summary.json"] = "learning_summary.json"
+        for output_path in ("retrospective.md", "learning_summary.json"):
+            if output_path not in record.output_paths:
+                record.output_paths.append(output_path)
+        self._write_record(record)
 
     @staticmethod
     def load_record(run_id: str, runs_dir: Path = Path("runs")) -> TeamRunRecord:

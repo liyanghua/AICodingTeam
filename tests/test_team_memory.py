@@ -145,6 +145,8 @@ class TeamMemoryTests(unittest.TestCase):
             note_path = vault_dir / "AI Coding Memory" / "Runs" / "memory-run-1.md"
             note_exists = note_path.exists()
             note = note_path.read_text(encoding="utf-8")
+            retrospective_exists = (run_dir / "retrospective.md").exists()
+            learning_exists = (run_dir / "learning_summary.json").exists()
 
         self.assertIn("memory-run-1", result["run_ids"])
         self.assertTrue(note_exists)
@@ -156,8 +158,13 @@ class TeamMemoryTests(unittest.TestCase):
         self.assertIn("## 本次需求", note)
         self.assertIn("## 阶段时间线", note)
         self.assertIn("## 质量检查与关卡", note)
+        self.assertIn("## 任务复盘", note)
+        self.assertIn("## 推荐 Project Skills", note)
+        self.assertIn("## 下次上下文策略", note)
         self.assertIn("## 本地产物链接", note)
         self.assertIn(run_dir.resolve().as_uri(), note)
+        self.assertTrue(retrospective_exists)
+        self.assertTrue(learning_exists)
 
     def test_export_redacts_secrets_and_does_not_copy_raw_logs_or_diff(self) -> None:
         from growth_dev.team.memory import export_run_to_obsidian

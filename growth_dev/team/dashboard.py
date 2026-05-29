@@ -633,6 +633,8 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("review_report.md", "Review Report", "run"),
         ("test_report.md", "Test Report", "run"),
         ("final_report.md", "Final Report", "run"),
+        ("retrospective.md", "Run Retrospective", "run"),
+        ("learning_summary.json", "Learning Summary", "run"),
     ]
     seen: set[tuple[str, str]] = set()
     artifacts: list[dict[str, Any]] = []

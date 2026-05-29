@@ -24,6 +24,20 @@ risk_rules:
 
 
 class DashboardTests(unittest.TestCase):
+    def _business_view_model(self, run: dict[str, object]) -> dict[str, object]:
+        root = Path(__file__).resolve().parents[1]
+        i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"
+        module_path = root / "dashboard" / "business_view.js"
+        script = f"""
+const fs = require('fs');
+const {{ toBusinessViewModel }} = require({json.dumps(str(module_path))});
+const i18n = JSON.parse(fs.readFileSync({json.dumps(str(i18n_path))}, 'utf8'));
+const vm = toBusinessViewModel({json.dumps(run)}, i18n);
+console.log(JSON.stringify(vm));
+"""
+        completed = subprocess.run(["node", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return json.loads(completed.stdout)
+
     def _write_completed_run(self, runs_dir: Path, run_id: str = "dashboard-run-1") -> Path:
         run_dir = runs_dir / run_id
         codex_dir = run_dir / "codex"
@@ -178,6 +192,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("quality_report", state)
         self.assertEqual(state["implementation_trace"]["status"], "completed")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "retrospective.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "learning_summary.json" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -354,6 +370,16 @@ class DashboardTests(unittest.TestCase):
         for stage in ("requirement", "design", "implementation", "quality", "delivery"):
             self.assertIn(stage, payload["stages"])
             self.assertIn("title", payload["stages"][stage])
+
+    def test_dashboard_acceptance_empty_state_explains_confirmed_apply_and_full_tests(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        expected = "确认后会应用本次代码变更，并自动运行全量测试"
+
+        self.assertEqual(i18n["acceptance"]["notStarted"], expected)
+        self.assertIn(expected, html)
 
     def test_dashboard_html_defaults_to_business_copy_and_hides_engineering_controls(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -619,6 +645,48 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
         self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
         self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
+
+    def test_business_view_model_marks_delivery_completed_after_acceptance_success(self) -> None:
+        run = {
+            "run_id": "accepted-run-1",
+            "brief": "验收成功后更新交付阶段",
+            "status": "completed",
+            "stages": [{"id": "publisher", "status": "completed", "outputs": ["final_report.md"]}],
+            "gates": [],
+            "apply_gate": {"status": "passed", "reason": "ready"},
+            "acceptance": {"status": "completed", "applied": True, "conclusion": "已采纳且测试通过。"},
+            "artifacts": [{"label": "Final", "path": "final_report.md", "scope": "run", "exists": True}],
+            "risk_events": [],
+        }
+
+        vm = self._business_view_model(run)
+        delivery_stage = vm["stages"][4]
+
+        self.assertEqual(vm["status"], "completed")
+        self.assertEqual(vm["statusLabel"], "已完成")
+        self.assertEqual(delivery_stage["status"], "completed")
+        self.assertEqual(delivery_stage["statusLabel"], "已完成")
+
+    def test_business_view_model_marks_delivery_needs_attention_after_acceptance_failure(self) -> None:
+        run = {
+            "run_id": "accepted-run-2",
+            "brief": "验收失败后提示处理",
+            "status": "completed",
+            "stages": [{"id": "publisher", "status": "completed", "outputs": ["final_report.md"]}],
+            "gates": [],
+            "apply_gate": {"status": "passed", "reason": "ready"},
+            "acceptance": {"status": "failed", "applied": True, "conclusion": "已采纳但测试失败，需修复后再验证。"},
+            "artifacts": [{"label": "Final", "path": "final_report.md", "scope": "run", "exists": True}],
+            "risk_events": [],
+        }
+
+        vm = self._business_view_model(run)
+        delivery_stage = vm["stages"][4]
+
+        self.assertEqual(vm["status"], "needs_attention")
+        self.assertEqual(vm["statusLabel"], "需要处理")
+        self.assertEqual(delivery_stage["status"], "needs_attention")
+        self.assertEqual(delivery_stage["statusLabel"], "需要处理")
 
     def test_business_view_model_groups_health_warnings_and_recommends_default_artifact(self) -> None:
         root = Path(__file__).resolve().parents[1]

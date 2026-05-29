@@ -107,8 +107,11 @@
     }
     const agentMap = new Map((run.stages || []).map((stage) => [stage.id, stage]));
     const agents = group.agents.map((id) => agentMap.get(id)).filter(Boolean);
-    if (group.id === "delivery" && run.status === "completed" && (run.apply_gate || {}).status === "passed") {
-      return "waiting_confirmation";
+    if (group.id === "delivery") {
+      const deliveryStatus = acceptanceDeliveryStatus(run);
+      if (deliveryStatus) {
+        return deliveryStatus;
+      }
     }
     if (agents.some((agent) => isFailed(agent.status))) {
       return "needs_attention";
@@ -132,6 +135,16 @@
     if (run.status === "failed") {
       return "needs_attention";
     }
+    const acceptedStatus = acceptanceStatus(run);
+    if (acceptedStatus === "completed") {
+      return "completed";
+    }
+    if (acceptedStatus === "failed") {
+      return "needs_attention";
+    }
+    if (acceptedStatus === "queued" || acceptedStatus === "running") {
+      return "processing";
+    }
     if (run.status === "completed" && (run.apply_gate || {}).status === "passed") {
       return "waiting_confirmation";
     }
@@ -142,6 +155,21 @@
       return "processing";
     }
     return "not_started";
+  }
+
+  function acceptanceDeliveryStatus(run) {
+    const status = acceptanceStatus(run);
+    if (status === "completed") return "completed";
+    if (status === "failed") return "needs_attention";
+    if (status === "queued" || status === "running") return "processing";
+    if (run.status === "completed" && (run.apply_gate || {}).status === "passed") {
+      return "waiting_confirmation";
+    }
+    return "";
+  }
+
+  function acceptanceStatus(run) {
+    return ((run.acceptance || {}).status || "not_started");
   }
 
   function buildGates(run, i18n) {

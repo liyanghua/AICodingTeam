@@ -55,9 +55,17 @@ EXPECTED_ORDER = (
     "debugging_and_error_recovery -> code_review_and_quality"
 )
 
+MEMORY_SKILLS = {
+    "run_retrospective": {
+        "dir": "skills/90_memory/run_retrospective",
+        "templates": ["retrospective_template.md", "learning_summary_schema.md"],
+    }
+}
+
 
 def _registry_ids(registry_text: str) -> list[str]:
-    return re.findall(r"^\s+- id: ([a-z0-9_]+)$", registry_text, flags=re.MULTILINE)
+    active_text = registry_text.split("\nmemory_skills:", 1)[0]
+    return re.findall(r"^\s+- id: ([a-z0-9_]+)$", active_text, flags=re.MULTILINE)
 
 
 def _registry_block(registry_text: str, skill_id: str) -> str:
@@ -96,6 +104,16 @@ class ProjectSkillsTests(unittest.TestCase):
         for old_skill_id in OLD_ACTIVE_SKILLS:
             self.assertNotIn(old_skill_id, _registry_ids(registry_text))
 
+    def test_registry_declares_run_retrospective_as_non_active_memory_skill(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        registry_text = (root / "skills" / "registry.yaml").read_text(encoding="utf-8")
+
+        self.assertEqual(_registry_ids(registry_text), list(EXPECTED_SKILLS.keys()))
+        self.assertIn("memory_skills:", registry_text)
+        self.assertIn("- id: run_retrospective", registry_text)
+        self.assertIn("path: skills/90_memory/run_retrospective", registry_text)
+        self.assertIn("active: false", registry_text)
+
     def test_each_project_skill_has_required_contract_sections_and_templates(self) -> None:
         root = Path(__file__).resolve().parents[1]
         required_sections = (
@@ -117,6 +135,16 @@ class ProjectSkillsTests(unittest.TestCase):
             self.assertIn("description:", text)
             for section in required_sections:
                 self.assertIn(section, text, f"{skill_id} missing {section}")
+            for template in spec["templates"]:
+                self.assertTrue((skill_dir / template).exists(), f"{skill_id} missing {template}")
+
+        for skill_id, spec in MEMORY_SKILLS.items():
+            skill_dir = root / spec["dir"]
+            skill_md = skill_dir / "SKILL.md"
+            text = skill_md.read_text(encoding="utf-8")
+            self.assertIn(f"name: {skill_id}", text)
+            self.assertIn("## Purpose", text)
+            self.assertIn("## Context Hygiene", text)
             for template in spec["templates"]:
                 self.assertTrue((skill_dir / template).exists(), f"{skill_id} missing {template}")
 
