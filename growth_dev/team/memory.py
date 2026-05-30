@@ -184,6 +184,14 @@ def _run_note(record: TeamRunRecord, run_dir: Path) -> str:
         "",
         *_retrospective_lines(run_dir),
         "",
+        "## 历史任务召回",
+        "",
+        *_memory_recall_lines(run_dir),
+        "",
+        "## 发布准备",
+        "",
+        *_release_readiness_lines(run_dir),
+        "",
         "## 推荐 Project Skills",
         "",
         *_recommended_skill_lines(run_dir),
@@ -322,8 +330,84 @@ def _context_strategy_lines(run_dir: Path) -> list[str]:
     return lines or ["暂无上下文策略。"]
 
 
+def _memory_recall_lines(run_dir: Path) -> list[str]:
+    recall = _memory_recall(run_dir)
+    matches = recall.get("matches", []) if isinstance(recall.get("matches"), list) else []
+    skills = recall.get("recommended_skills", []) if isinstance(recall.get("recommended_skills"), list) else []
+    lines: list[str] = []
+    if matches:
+        lines.append("### 相似历史任务")
+        for match in matches[:5]:
+            if not isinstance(match, dict):
+                continue
+            run_id = _redact(str(match.get("run_id", "")))
+            score = match.get("score", 0)
+            task_type = _redact(str(match.get("task_type", "")))
+            lines.append(f"- `{run_id}` score={score} task=`{task_type}`")
+    else:
+        lines.append("暂无历史任务召回结果。")
+    if skills:
+        lines.append("### 召回推荐 Skills")
+        for skill in skills[:5]:
+            if not isinstance(skill, dict):
+                continue
+            lines.append(f"- `{_redact(str(skill.get('id', '')))}`：{_redact(str(skill.get('why', '')))}")
+    recall_path = run_dir / "memory_recall.md"
+    if recall_path.exists():
+        lines.append(f"- Source: [memory_recall.md]({recall_path.resolve().as_uri()})")
+    return lines
+
+
+def _release_readiness_lines(run_dir: Path) -> list[str]:
+    readiness = _release_readiness(run_dir)
+    if not readiness:
+        return ["暂无发布准备报告。"]
+    decision = _redact(str(readiness.get("release_decision", "unknown")))
+    summary = _redact(str(readiness.get("summary", "")))
+    blockers = readiness.get("blockers", []) if isinstance(readiness.get("blockers"), list) else []
+    warnings = readiness.get("warnings", []) if isinstance(readiness.get("warnings"), list) else []
+    next_actions = readiness.get("next_actions", []) if isinstance(readiness.get("next_actions"), list) else []
+    lines = [
+        f"- Decision: `{decision}`",
+    ]
+    if summary:
+        lines.append(f"- Summary: {summary}")
+    if blockers:
+        lines.append("### Blockers")
+        lines.extend(f"- {_redact(str(item))}" for item in blockers[:6])
+    if warnings:
+        lines.append("### Warnings")
+        lines.extend(f"- {_redact(str(item))}" for item in warnings[:6])
+    if next_actions:
+        lines.append("### 推荐下一步")
+        lines.extend(f"- `{_redact(str(item))}`" for item in next_actions[:4])
+    readiness_path = run_dir / "release_readiness.md"
+    pr_path = run_dir / "pr_draft.md"
+    if readiness_path.exists():
+        lines.append(f"- Source: [release_readiness.md]({readiness_path.resolve().as_uri()})")
+    if pr_path.exists():
+        lines.append(f"- PR draft: [pr_draft.md]({pr_path.resolve().as_uri()})")
+    return lines
+
+
 def _learning_summary(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "learning_summary.json"
+    if not path.exists():
+        return {}
+    payload = read_json(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _memory_recall(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "memory_recall.json"
+    if not path.exists():
+        return {}
+    payload = read_json(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _release_readiness(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "release_readiness.json"
     if not path.exists():
         return {}
     payload = read_json(path)

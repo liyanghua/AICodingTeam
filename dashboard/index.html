@@ -95,6 +95,23 @@
             </div>
           </section>
 
+          <section id="memory-recall-panel" class="panel memory-recall-panel">
+            <div class="panel-header">
+              <h2 data-i18n="memoryRecall.title">历史参考 / Skill 推荐</h2>
+            </div>
+            <p id="memory-recall-summary" class="summary-text" data-i18n="memoryRecall.empty">暂无历史任务召回。</p>
+            <div class="two-column compact-panel-grid">
+              <div>
+                <h3 data-i18n="memoryRecall.skills">推荐 Project Skills</h3>
+                <div id="memory-recall-skills" class="quality-list"></div>
+              </div>
+              <div>
+                <h3 data-i18n="memoryRecall.matches">相似历史任务</h3>
+                <div id="memory-recall-matches" class="quality-list"></div>
+              </div>
+            </div>
+          </section>
+
           <section class="panel">
             <div>
               <div class="panel-header">
@@ -112,6 +129,24 @@
             <p id="acceptance-summary" class="summary-text" data-i18n="acceptance.notStarted">确认后会应用本次代码变更，并自动运行全量测试</p>
             <div id="acceptance-steps" class="acceptance-steps"></div>
             <div id="acceptance-next-action" class="action-row meta"></div>
+          </section>
+
+          <section id="release-readiness-panel" class="panel release-readiness-panel">
+            <div class="panel-header">
+              <h2 data-i18n="releaseReadiness.title">发布准备</h2>
+              <button id="release-readiness-action" type="button" data-i18n="releaseReadiness.generateButton">生成发布准备报告</button>
+            </div>
+            <p id="release-readiness-summary" class="summary-text" data-i18n="releaseReadiness.empty">采纳验收通过后，可生成本地发布准备报告和 PR draft。</p>
+            <div class="two-column compact-panel-grid">
+              <div>
+                <h3 data-i18n="releaseReadiness.gates">发布关卡</h3>
+                <div id="release-readiness-gates" class="quality-list"></div>
+              </div>
+              <div>
+                <h3 data-i18n="releaseReadiness.prDraft">PR Draft 摘要</h3>
+                <div id="release-readiness-pr" class="quality-list"></div>
+              </div>
+            </div>
           </section>
 
           <section id="deliverables-panel" class="panel deliverables-panel">

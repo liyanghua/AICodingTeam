@@ -127,10 +127,196 @@ def _write_run(
     codex_dir.mkdir()
     (codex_dir / "stdout.jsonl").write_text("raw secret token=raw-log-secret\n", encoding="utf-8")
     (codex_dir / "diff.patch").write_text("+raw diff line that should not be copied\n", encoding="utf-8")
+    (run_dir / "release_readiness.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "release_decision": "ready_with_warnings",
+                "summary": "核心验收通过，但存在 warning。",
+                "blockers": [],
+                "warnings": ["文件质量存在 needs_attention"],
+                "next_actions": ["人工阅读 pr_draft.md"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "release_readiness.md").write_text("# Release Readiness\n\nDo not copy full readiness body.\n", encoding="utf-8")
+    (run_dir / "pr_draft.md").write_text("# PR Title\n\nDo not copy full PR draft body.\n", encoding="utf-8")
     return run_dir
 
 
+def _write_learning_summary(
+    run_dir: Path,
+    *,
+    run_id: str,
+    domain_id: str = "web_monitoring",
+    task_type: str = "dashboard_ui_change",
+    outcome: str = "accepted_and_verified",
+    recommended_skills: list[str] | None = None,
+    reusable_context: list[str] | None = None,
+    avoid_context: list[str] | None = None,
+    failure_modes: list[str] | None = None,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "domain_id": domain_id,
+        "status": "completed",
+        "task_type": task_type,
+        "outcome": outcome,
+        "quality_findings": {
+            "status": "passed",
+            "summary": "Dashboard 交付验收状态和空态提示贴合需求。",
+            "failed_checks": [],
+        },
+        "implementation_findings": {
+            "changed_files": ["dashboard/index.html", "dashboard/app.js", "tests/test_dashboard.py"],
+            "tests_run": ["python3 -m unittest tests.test_dashboard -v"],
+            "blockers": [],
+            "risk_events": [],
+        },
+        "review_test_findings": {
+            "review_summary": "Review 通过。",
+            "test_summary": "Dashboard tests passed.",
+            "acceptance_status": "completed",
+            "applied": True,
+        },
+        "failure_modes": failure_modes or [],
+        "recommended_skills": recommended_skills or ["context_engineering", "code_review_and_quality", "unknown_skill"],
+        "reusable_context": reusable_context or ["dashboard/index.html", "dashboard/app.js", "tests/test_dashboard.py"],
+        "avoid_context": avoid_context or ["raw stdout/stderr", ".env/provider secrets"],
+        "next_time_checklist": ["先复用 Dashboard 采纳验收状态用例。", "避免注入无关 domain。"],
+        "source_artifacts": ["learning_summary.json", "retrospective.md"],
+    }
+    (run_dir / "learning_summary.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
 class TeamMemoryTests(unittest.TestCase):
+    def test_memory_search_recalls_matching_learning_summaries_and_recommends_active_skills(self) -> None:
+        from growth_dev.team.memory_recall import search_memory
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            matching = _write_run(runs_dir, "dashboard-run")
+            _write_learning_summary(matching, run_id="dashboard-run")
+            unrelated = _write_run(runs_dir, "collector-run", domain_id="xhs_browser_benchmark")
+            _write_learning_summary(
+                unrelated,
+                run_id="collector-run",
+                domain_id="xhs_browser_benchmark",
+                task_type="collector_fix",
+                reusable_context=["growth_dev/xhs_collector.py"],
+            )
+
+            result = search_memory(
+                "Dashboard 交付验收状态",
+                runs_dir=runs_dir,
+                domain_id="web_monitoring",
+                limit=5,
+            )
+            payload = json.dumps(result, ensure_ascii=False)
+
+        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["query"], "Dashboard 交付验收状态")
+        self.assertEqual(result["matches"][0]["run_id"], "dashboard-run")
+        self.assertIn("same_domain", result["matches"][0]["reasons"])
+        self.assertIn("context_engineering", [item["id"] for item in result["recommended_skills"]])
+        self.assertNotIn("unknown_skill", [item["id"] for item in result["recommended_skills"]])
+        self.assertIn("dashboard/index.html", result["context_strategy"]["reuse"])
+        self.assertIn("raw stdout/stderr", result["context_strategy"]["avoid"])
+        self.assertNotIn("raw diff line", payload)
+        self.assertNotIn(".env", payload)
+
+    def test_memory_search_can_refresh_missing_learning_summaries_only_when_requested(self) -> None:
+        from growth_dev.team.memory_recall import search_memory
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = _write_run(runs_dir, "missing-summary-run")
+
+            without_refresh = search_memory("memory dashboard", runs_dir=runs_dir, refresh_missing=False)
+            exists_without_refresh = (run_dir / "learning_summary.json").exists()
+            with_refresh = search_memory("memory dashboard", runs_dir=runs_dir, refresh_missing=True)
+            exists_with_refresh = (run_dir / "learning_summary.json").exists()
+
+        self.assertEqual(without_refresh["matches"], [])
+        self.assertFalse(exists_without_refresh)
+        self.assertTrue(exists_with_refresh)
+        self.assertTrue(any(match["run_id"] == "missing-summary-run" for match in with_refresh["matches"]))
+
+    def test_memory_recall_writes_json_and_markdown_artifacts(self) -> None:
+        from growth_dev.team.memory_recall import generate_memory_recall
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            source = _write_run(runs_dir, "source-run")
+            _write_learning_summary(source, run_id="source-run")
+            current = _write_run(runs_dir, "current-run")
+
+            result = generate_memory_recall(
+                "Dashboard 交付验收状态",
+                run_id="current-run",
+                runs_dir=runs_dir,
+                domain_id="web_monitoring",
+            )
+            recall_json = json.loads((current / "memory_recall.json").read_text(encoding="utf-8"))
+            recall_md = (current / "memory_recall.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["artifacts"]["memory_recall"], "memory_recall.md")
+        self.assertEqual(recall_json["run_id"], "current-run")
+        self.assertTrue(any(match["run_id"] == "source-run" for match in recall_json["matches"]))
+        self.assertIn("## 相似历史任务", recall_md)
+        self.assertIn("## 推荐 Project Skills", recall_md)
+        self.assertIn("source-run", recall_md)
+
+    def test_cli_memory_search_outputs_human_and_json_results(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = _write_run(runs_dir, "cli-memory-run")
+            _write_learning_summary(run_dir, run_id="cli-memory-run")
+
+            with _captured_output() as (stdout, stderr):
+                exit_code = main(
+                    [
+                        "team",
+                        "memory",
+                        "search",
+                        "--query",
+                        "Dashboard 交付验收状态",
+                        "--runs-dir",
+                        str(runs_dir),
+                    ]
+                )
+            with _captured_output() as (json_stdout, json_stderr):
+                json_exit_code = main(
+                    [
+                        "team",
+                        "memory",
+                        "search",
+                        "--query",
+                        "Dashboard 交付验收状态",
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--json",
+                    ]
+                )
+            parsed = json.loads(json_stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn("cli-memory-run", stdout.getvalue())
+        self.assertIn("推荐 Project Skills", stdout.getvalue())
+        self.assertEqual(json_exit_code, 0)
+        self.assertEqual(json_stderr.getvalue(), "")
+        self.assertEqual(parsed["matches"][0]["run_id"], "cli-memory-run")
+
     def test_export_run_writes_obsidian_notes_with_business_sections(self) -> None:
         from growth_dev.team.memory import export_run_to_obsidian
 
@@ -159,10 +345,16 @@ class TeamMemoryTests(unittest.TestCase):
         self.assertIn("## 阶段时间线", note)
         self.assertIn("## 质量检查与关卡", note)
         self.assertIn("## 任务复盘", note)
+        self.assertIn("## 历史任务召回", note)
+        self.assertIn("## 发布准备", note)
         self.assertIn("## 推荐 Project Skills", note)
         self.assertIn("## 下次上下文策略", note)
         self.assertIn("## 本地产物链接", note)
         self.assertIn(run_dir.resolve().as_uri(), note)
+        self.assertIn("ready_with_warnings", note)
+        self.assertIn("release_readiness.md", note)
+        self.assertIn("pr_draft.md", note)
+        self.assertNotIn("Do not copy full PR draft body", note)
         self.assertTrue(retrospective_exists)
         self.assertTrue(learning_exists)
 

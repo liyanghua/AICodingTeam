@@ -8,6 +8,7 @@ from ..utils import ensure_dir, now_iso, timestamp_slug, write_json
 from .agents import AgentContext, run_deterministic_agent
 from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
 from .domain import load_domain_spec, load_team_spec
+from .memory_recall import generate_memory_recall
 from .models import AgentRun, AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 from .retrospective import generate_run_retrospective
 
@@ -201,6 +202,7 @@ class TeamRuntime:
         )
         write_json(run_dir / "team_spec.json", self.team.to_dict())
         write_json(run_dir / "domain_spec.json", self.domain.to_dict())
+        self._write_memory_recall(record)
 
         for agent in self.team.agents:
             gate_failed = self._run_gates_before(agent.id, record)
@@ -326,6 +328,29 @@ class TeamRuntime:
             if output_path not in record.output_paths:
                 record.output_paths.append(output_path)
         self._write_record(record)
+
+    def _write_memory_recall(self, record: TeamRunRecord) -> None:
+        try:
+            result = generate_memory_recall(
+                record.brief,
+                run_id=record.run_id,
+                runs_dir=record.run_dir.parent,
+                domain_id=record.domain_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - recall must not change run outcome.
+            self._write_event(record, "memory_recall_failed", error=str(exc))
+            return
+        record.artifacts["memory_recall.md"] = "memory_recall.md"
+        record.artifacts["memory_recall.json"] = "memory_recall.json"
+        for output_path in ("memory_recall.md", "memory_recall.json"):
+            if output_path not in record.output_paths:
+                record.output_paths.append(output_path)
+        self._write_record(record)
+        self._write_event(
+            record,
+            "memory_recall_generated",
+            match_count=len(result.get("memory_recall", {}).get("matches", [])),
+        )
 
     @staticmethod
     def load_record(run_id: str, runs_dir: Path = Path("runs")) -> TeamRunRecord:

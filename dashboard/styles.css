@@ -619,6 +619,14 @@ h3 {
   gap: 14px;
 }
 
+.compact-panel-grid {
+  margin-top: var(--space-3);
+}
+
+.compact-panel-grid h3 {
+  margin-bottom: var(--space-2);
+}
+
 .gate-list,
 .artifact-list,
 .action-list,
@@ -653,8 +661,36 @@ h3 {
   gap: var(--space-3);
 }
 
-.acceptance-panel .panel-header {
+.acceptance-panel .panel-header,
+.release-readiness-panel .panel-header {
   margin-bottom: 0;
+}
+
+.release-readiness-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.release-gate-row {
+  overflow-wrap: anywhere;
+}
+
+.release-gate-passed {
+  border-color: #c9e3d5;
+  background: #f7fcf9;
+  color: var(--color-status-completed);
+}
+
+.release-gate-warning {
+  border-color: #efd99a;
+  background: #fffbef;
+  color: var(--color-status-waiting);
+}
+
+.release-gate-blocked {
+  border-color: #efc7c7;
+  background: #fff8f8;
+  color: var(--color-status-attention);
 }
 
 .acceptance-steps {

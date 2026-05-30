@@ -160,6 +160,9 @@
     "review_report.md": {"title": "评审报告", "description": "代码评审结果。"},
     "test_report.md": {"title": "测试报告", "description": "验证命令和结果。"},
     "final_report.md": {"title": "最终报告", "description": "交付摘要和下一步建议。"},
+    "release_readiness.md": {"title": "发布准备报告", "description": "判断本次 run 是否值得进入 PR/CI。"},
+    "release_readiness.json": {"title": "发布准备数据", "description": "发布 Gate、证据、阻塞和 warning 的结构化结果。"},
+    "pr_draft.md": {"title": "PR Draft", "description": "可复制到 PR 的标题、说明、验证和风险清单。"},
     "codex/diff.patch": {"title": "代码差异", "description": "AI 实现产生的变更证据。"}
   },
   "events": {
@@ -183,6 +186,34 @@
   "quality": {
     "unknownSummary": "暂时没有文件质量评估。",
     "noChecks": "暂无质量检查结果。"
+  },
+  "memoryRecall": {
+    "title": "历史参考 / Skill 推荐",
+    "empty": "暂无历史任务召回。",
+    "summaryWithMatches": "找到 {count} 个相似历史任务，可辅助判断上下文和 Skill 选择。",
+    "skills": "推荐 Project Skills",
+    "matches": "相似历史任务",
+    "noSkills": "暂无推荐 skill。",
+    "noMatches": "暂无相似历史任务。"
+  },
+  "releaseReadiness": {
+    "title": "发布准备",
+    "generateButton": "生成发布准备报告",
+    "generating": "生成中",
+    "empty": "采纳验收通过后，可生成本地发布准备报告和 PR draft。",
+    "readyToGenerate": "采纳验收已通过，可以生成发布准备报告。",
+    "decision": "发布判断",
+    "gates": "Release Gates",
+    "prDraft": "PR Draft 摘要",
+    "prTitle": "PR 标题",
+    "nextActions": "下一步",
+    "noGates": "尚未生成发布 Gate。",
+    "decisions": {
+      "not_generated": "尚未生成",
+      "ready_for_pr_ci": "可进入 PR/CI",
+      "ready_with_warnings": "可进入 PR/CI，但需关注 warning",
+      "blocked": "暂不建议进入 PR/CI"
+    }
   },
   "stageDetail": {
     "deliverablesSuffix": "产物",

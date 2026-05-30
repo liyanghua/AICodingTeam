@@ -111,6 +111,48 @@ console.log(JSON.stringify(vm));
         (run_dir / "ui_spec.md").write_text("# UI Spec\n", encoding="utf-8")
         (run_dir / "eval.md").write_text("# Eval\n", encoding="utf-8")
         (run_dir / "final_report.md").write_text("# Final Report\n", encoding="utf-8")
+        (run_dir / "memory_recall.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "query": "给 dashboard 增加可视化闭环",
+                    "run_id": run_id,
+                    "domain_id": "web_monitoring",
+                    "generated_at": "2026-05-23T00:00:05+00:00",
+                    "matches": [
+                        {
+                            "run_id": "historical-dashboard-run",
+                            "domain_id": "web_monitoring",
+                            "task_type": "dashboard_ui_change",
+                            "status": "completed",
+                            "outcome": "accepted_and_verified",
+                            "score": 0.91,
+                            "reasons": ["same_domain", "matched_reusable_context"],
+                            "recommended_skills": ["context_engineering"],
+                            "reusable_context": ["dashboard/index.html"],
+                            "avoid_context": ["raw stdout/stderr"],
+                            "failure_modes": [],
+                            "source_artifacts": ["learning_summary.json"],
+                        }
+                    ],
+                    "recommended_skills": [
+                        {
+                            "id": "context_engineering",
+                            "confidence": 0.91,
+                            "source_run_ids": ["historical-dashboard-run"],
+                            "why": "历史相似任务需要收窄 Dashboard 上下文。",
+                        }
+                    ],
+                    "context_strategy": {
+                        "reuse": ["dashboard/index.html"],
+                        "avoid": ["raw stdout/stderr"],
+                        "checklist": ["复用历史 Dashboard 验收经验。"],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "memory_recall.md").write_text("# Historical Task Recall\n", encoding="utf-8")
         (codex_dir / "implementation_trace.json").write_text(
             json.dumps(
                 {
@@ -167,6 +209,26 @@ console.log(JSON.stringify(vm));
             + "\n",
             encoding="utf-8",
         )
+        (run_dir / "release_readiness.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "generated_at": "2026-05-23T00:02:00+00:00",
+                    "release_decision": "ready_for_pr_ci",
+                    "summary": "采纳验收、Review/Test 和变更边界均通过，值得进入 PR/CI。",
+                    "gates": [{"id": "acceptance_tests", "status": "passed", "reason": "全量测试通过。", "evidence": ["tests.exit_code=0"]}],
+                    "evidence": {"changed_files": ["dashboard/app.js"], "tests_run": ["python3 -m unittest discover -s tests -v"]},
+                    "pr_draft": {"title": "web_monitoring: Dashboard 状态修复", "body": "## Why This Should Enter PR/CI\n\n本地验收通过。"},
+                    "blockers": [],
+                    "warnings": [],
+                    "next_actions": ["python3 -m unittest discover -s tests -v"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "release_readiness.md").write_text("# Release Readiness\n", encoding="utf-8")
+        (run_dir / "pr_draft.md").write_text("# PR Title\n\nweb_monitoring: Dashboard 状态修复\n", encoding="utf-8")
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -191,9 +253,16 @@ console.log(JSON.stringify(vm));
         self.assertIn("health_summary", state)
         self.assertIn("quality_report", state)
         self.assertEqual(state["implementation_trace"]["status"], "completed")
+        self.assertEqual(state["memory_recall"]["matches"][0]["run_id"], "historical-dashboard-run")
+        self.assertEqual(state["release_readiness"]["release_decision"], "ready_for_pr_ci")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "memory_recall.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "retrospective.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "learning_summary.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "release_readiness.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "release_readiness.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "pr_draft.md" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -353,7 +422,7 @@ console.log(JSON.stringify(vm));
 
         payload = json.loads(i18n_path.read_text(encoding="utf-8"))
 
-        for section in ("app", "status", "stages", "agents", "gates", "artifacts", "events", "actions"):
+        for section in ("app", "status", "stages", "agents", "gates", "artifacts", "events", "actions", "memoryRecall", "releaseReadiness"):
             self.assertIn(section, payload)
         for status in ("not_started", "processing", "completed", "needs_attention", "waiting_confirmation", "planned"):
             self.assertIn(status, payload["status"])
@@ -367,6 +436,8 @@ console.log(JSON.stringify(vm));
         self.assertIn("acceptance", payload)
         for acceptance_key in ("title", "confirmButton", "running", "completed", "failed", "notStarted"):
             self.assertIn(acceptance_key, payload["acceptance"])
+        for readiness_key in ("title", "generateButton", "empty", "decision", "gates", "prDraft", "nextActions"):
+            self.assertIn(readiness_key, payload["releaseReadiness"])
         for stage in ("requirement", "design", "implementation", "quality", "delivery"):
             self.assertIn(stage, payload["stages"])
             self.assertIn("title", payload["stages"][stage])
@@ -380,6 +451,29 @@ console.log(JSON.stringify(vm));
 
         self.assertEqual(i18n["acceptance"]["notStarted"], expected)
         self.assertIn(expected, html)
+
+    def test_dashboard_html_contains_memory_recall_panel_before_quality_gates(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="memory-recall-panel"', html)
+        self.assertIn('id="memory-recall-summary"', html)
+        self.assertIn('id="memory-recall-skills"', html)
+        self.assertIn('id="memory-recall-matches"', html)
+        self.assertLess(html.index('id="artifact-quality-checks"'), html.index('id="memory-recall-panel"'))
+        self.assertLess(html.index('id="memory-recall-panel"'), html.index('id="quality-gates"'))
+
+    def test_dashboard_html_contains_release_readiness_panel_after_acceptance(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="release-readiness-panel"', html)
+        self.assertIn('id="release-readiness-action"', html)
+        self.assertIn('id="release-readiness-summary"', html)
+        self.assertIn('id="release-readiness-gates"', html)
+        self.assertIn('id="release-readiness-pr"', html)
+        self.assertLess(html.index('id="acceptance-panel"'), html.index('id="release-readiness-panel"'))
+        self.assertLess(html.index('id="release-readiness-panel"'), html.index('id="deliverables-panel"'))
 
     def test_dashboard_html_defaults_to_business_copy_and_hides_engineering_controls(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -560,12 +654,19 @@ console.log(JSON.stringify(vm));
         css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn("renderAcceptance", app_js)
+        self.assertIn("renderMemoryRecall", app_js)
+        self.assertIn("renderReleaseReadiness", app_js)
         self.assertIn("startAcceptance", app_js)
+        self.assertIn("startReleaseReadiness", app_js)
         self.assertIn('/acceptance"', app_js)
+        self.assertIn('/release/readiness"', app_js)
         self.assertIn("acceptance-action", app_js)
+        self.assertIn("release-readiness-action", app_js)
         self.assertIn("acceptance-step", app_js)
         self.assertIn(".acceptance-panel", css)
         self.assertIn(".acceptance-step", css)
+        self.assertIn(".release-readiness-panel", css)
+        self.assertIn(".release-gate-row", css)
 
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -615,6 +716,31 @@ console.log(JSON.stringify(vm));
                 "summary": "文件产物贴合需求。",
                 "checks": [{"id": "prd.md.specificity", "title": "需求贴题度", "status": "passed", "detail": "通过", "artifact": "prd.md"}],
             },
+            "memory_recall": {
+                "matches": [
+                    {
+                        "run_id": "similar-run",
+                        "domain_id": "web_monitoring",
+                        "task_type": "dashboard_ui_change",
+                        "score": 0.84,
+                        "reasons": ["same_domain"],
+                        "recommended_skills": ["context_engineering"],
+                    }
+                ],
+                "recommended_skills": [
+                    {
+                        "id": "context_engineering",
+                        "confidence": 0.84,
+                        "source_run_ids": ["similar-run"],
+                        "why": "历史任务需要收窄上下文。",
+                    }
+                ],
+                "context_strategy": {
+                    "reuse": ["dashboard/app.js"],
+                    "avoid": ["raw stdout/stderr"],
+                    "checklist": ["先看历史验收。"],
+                },
+            },
         }
         script = f"""
 const fs = require('fs');
@@ -637,6 +763,8 @@ console.log(JSON.stringify(vm));
         self.assertEqual(vm["health"]["label"], "已完成可采纳")
         self.assertEqual(vm["artifactQuality"]["status"], "passed")
         self.assertEqual(vm["implementationFlow"]["status"], "completed")
+        self.assertEqual(vm["memoryRecall"]["matches"][0]["run_id"], "similar-run")
+        self.assertEqual(vm["memoryRecall"]["recommendedSkills"][0]["id"], "context_engineering")
         design_stage = vm["stages"][1]
         implementation_stage = vm["stages"][2]
         self.assertEqual(design_stage["agentIds"], ["product", "architect", "ux", "qa"])

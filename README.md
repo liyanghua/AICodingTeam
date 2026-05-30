@@ -125,6 +125,34 @@ python -m growth_dev.cli team retrospective generate --all --limit 50
 
 Retrospectives are observability and memory artifacts only. They do not change gate results or inject memory into future Codex prompts.
 
+### Historical task recall
+
+The lightweight recall layer searches local `runs/*/learning_summary.json` files and recommends similar historical runs, reusable context, context to avoid, and active Project Skills. It is deterministic and report-only: results are written to `memory_recall.md` / `memory_recall.json` for new runs and are not injected into Codex prompts.
+
+```bash
+python -m growth_dev.cli team memory search \
+  --query "Dashboard 交付验收状态" \
+  --limit 5
+
+python -m growth_dev.cli team memory search \
+  --query "Dashboard 交付验收状态" \
+  --domain-id web_monitoring \
+  --json
+```
+
+Use `--refresh-missing` only when you explicitly want to generate missing retrospective summaries for historical runs. Recall output excludes raw logs, full diffs, raw prompts, `.env`, and provider secrets.
+
+### Release readiness and PR draft
+
+After a run has been accepted and full local tests pass, generate a local release readiness report:
+
+```bash
+python -m growth_dev.cli team release readiness --run-id <run-id>
+python -m growth_dev.cli team release readiness --run-id <run-id> --json
+```
+
+This writes `release_readiness.json`, `release_readiness.md`, and `pr_draft.md` under `runs/<run_id>/`. The decision is one of `ready_for_pr_ci`, `ready_with_warnings`, or `blocked`, based on acceptance status, Review/Test reports, risk/blocker state, changed-file evidence, and current git status. It does not create a PR, push code, or trigger remote CI.
+
 ### Obsidian project memory
 
 The first memory layer is a manual Markdown export for Obsidian. It reads existing `runs/<run_id>/` artifacts and writes business-friendly project evolution notes into the selected vault without changing runtime behavior or injecting memory into future Codex prompts.
@@ -140,7 +168,7 @@ python -m growth_dev.cli team memory export \
   --vault-dir /path/to/ObsidianVault
 ```
 
-Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, retrospectives, recommended skills, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
+Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, historical recall, release readiness, retrospectives, recommended skills, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
 
 ### Local dashboard
 
@@ -157,7 +185,7 @@ python -m growth_dev.cli team serve-dashboard \
   --open-browser
 ```
 
-Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next actions. When a completed run passes the apply gate, the dashboard can trigger a human-confirmed acceptance flow: it applies the run with `python3 -m growth_dev.cli team apply --run-id <run-id>` and then runs `python3 -m unittest discover -s tests -v`, with progress and log tails written under `runs/<run_id>/acceptance/`. The CLI `growth-dev team apply` path remains available for manual operation.
+Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next actions. When a completed run passes the apply gate, the dashboard can trigger a human-confirmed acceptance flow: it applies the run with `python3 -m growth_dev.cli team apply --run-id <run-id>` and then runs `python3 -m unittest discover -s tests -v`, with progress and log tails written under `runs/<run_id>/acceptance/`. After acceptance passes, the dashboard can generate the local release readiness report and PR draft; it still does not push, create PRs, or trigger remote CI. The CLI `growth-dev team apply` path remains available for manual operation.
 
 ## Safety
 

@@ -277,3 +277,34 @@ memory_skills:
       - learning_summary_schema.md
     context_budget:
       default: read run summaries and artifact headers, not raw execution payloads
+
+  - id: historical_task_recall
+    active: false
+    stage: memory
+    priority: P1
+    source_inspiration: project-learning-summary-recall
+    path: skills/90_memory/historical_task_recall
+    inputs:
+      - runs/*/learning_summary.json
+      - current brief or query
+      - optional domain_id
+      - optional task_type
+    outputs:
+      - runs/<run_id>/memory_recall.md
+      - runs/<run_id>/memory_recall.json
+      - recommended active Project Skills
+      - reusable and avoided context hints
+    triggers:
+      - a new run starts and needs auditable historical references
+      - user asks for similar historical tasks
+      - user asks which Project Skills should guide a similar task
+    quality_gates:
+      - reads only summary artifacts by default
+      - does not inject memory into Codex prompts
+      - recommended skills reference active registry ids
+      - raw logs, full diff, prompts, and secrets are excluded
+    templates:
+      - memory_recall_template.md
+      - recall_result_schema.md
+    context_budget:
+      default: load matching summaries and citations only, not raw run artifacts

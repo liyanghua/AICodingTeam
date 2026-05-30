@@ -25,6 +25,8 @@
       stages,
       health: buildHealth(run, i18n),
       artifactQuality: buildArtifactQuality(run, i18n),
+      memoryRecall: buildMemoryRecall(run, i18n),
+      releaseReadiness: buildReleaseReadiness(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
       recommendedArtifact: recommendedArtifact(run, i18n),
@@ -66,6 +68,43 @@
       score: quality.score == null ? null : quality.score,
       summary: quality.summary || lookup(i18n, "quality.unknownSummary", ""),
       checks: quality.checks || [],
+    };
+  }
+
+  function buildMemoryRecall(run, i18n) {
+    const recall = run.memory_recall || {};
+    const matches = Array.isArray(recall.matches) ? recall.matches : [];
+    const recommendedSkills = Array.isArray(recall.recommended_skills) ? recall.recommended_skills : [];
+    const strategy = recall.context_strategy || {};
+    return {
+      summary: matches.length
+        ? lookup(i18n, "memoryRecall.summaryWithMatches", "").replace("{count}", String(matches.length))
+        : lookup(i18n, "memoryRecall.empty", ""),
+      matches,
+      recommendedSkills,
+      contextStrategy: {
+        reuse: strategy.reuse || [],
+        avoid: strategy.avoid || [],
+        checklist: strategy.checklist || [],
+      },
+    };
+  }
+
+  function buildReleaseReadiness(run, i18n) {
+    const readiness = run.release_readiness || {};
+    const gates = Array.isArray(readiness.gates) ? readiness.gates : [];
+    const prDraft = readiness.pr_draft || {};
+    const decision = readiness.release_decision || "not_generated";
+    return {
+      decision,
+      decisionLabel: lookup(i18n, `releaseReadiness.decisions.${decision}`, decision),
+      summary: readiness.summary || lookup(i18n, "releaseReadiness.empty", ""),
+      gates,
+      prDraft,
+      blockers: readiness.blockers || [],
+      warnings: readiness.warnings || [],
+      nextActions: readiness.next_actions || [],
+      generatedAt: readiness.generated_at || "",
     };
   }
 
@@ -200,7 +239,7 @@
 
   function recommendedArtifact(run, i18n) {
     const artifacts = buildArtifacts(run, i18n).filter((artifact) => artifact.exists);
-    const priority = ["final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
+    const priority = ["pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
     for (const path of priority) {
       const found = artifacts.find((artifact) => artifact.path === path);
       if (found) return found;

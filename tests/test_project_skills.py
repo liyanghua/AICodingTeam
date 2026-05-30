@@ -59,6 +59,10 @@ MEMORY_SKILLS = {
     "run_retrospective": {
         "dir": "skills/90_memory/run_retrospective",
         "templates": ["retrospective_template.md", "learning_summary_schema.md"],
+    },
+    "historical_task_recall": {
+        "dir": "skills/90_memory/historical_task_recall",
+        "templates": ["memory_recall_template.md", "recall_result_schema.md"],
     }
 }
 
@@ -112,6 +116,8 @@ class ProjectSkillsTests(unittest.TestCase):
         self.assertIn("memory_skills:", registry_text)
         self.assertIn("- id: run_retrospective", registry_text)
         self.assertIn("path: skills/90_memory/run_retrospective", registry_text)
+        self.assertIn("- id: historical_task_recall", registry_text)
+        self.assertIn("path: skills/90_memory/historical_task_recall", registry_text)
         self.assertIn("active: false", registry_text)
 
     def test_each_project_skill_has_required_contract_sections_and_templates(self) -> None:

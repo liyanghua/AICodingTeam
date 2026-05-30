@@ -66,6 +66,8 @@ class TeamCliTests(unittest.TestCase):
             ["team", "watch", "--run-id", "team-run-1", "--once"],
             ["team", "diff", "--run-id", "team-run-1"],
             ["team", "apply", "--run-id", "team-run-1"],
+            ["team", "release", "readiness", "--run-id", "team-run-1"],
+            ["team", "release", "readiness", "--run-id", "team-run-1", "--json"],
         ]
 
         for argv in examples:

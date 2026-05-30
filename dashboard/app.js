@@ -13,6 +13,7 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const view = window.BusinessView;
 const ACCEPTANCE_ENDPOINT_SUFFIX = "/acceptance";
+const RELEASE_READINESS_ENDPOINT_SUFFIX = "/release/readiness";
 
 function t(path, fallback = "") {
   return view.lookup(state.i18n, path, fallback || view.lookup(state.i18n, "app.unknown", "未知项"));
@@ -115,8 +116,10 @@ function renderBusinessRun(vm) {
   renderStageDetail(vm);
   renderHealth(vm.health || {});
   renderArtifactQuality(vm.artifactQuality || {});
+  renderMemoryRecall(vm.memoryRecall || {});
   renderGates(vm.qualityGates || []);
   renderAcceptance(vm);
+  renderReleaseReadiness(vm);
   renderArtifactActions(vm.deliverables || []);
   ensureSelectedArtifact(vm);
   renderNextActions(vm.nextActions || []);
@@ -159,6 +162,46 @@ function renderArtifactQuality(quality) {
     row.className = `quality-row quality-${check.status || "unknown"}`;
     row.textContent = `${check.title || check.id}: ${check.detail || ""}`;
     list.appendChild(row);
+  }
+}
+
+function renderMemoryRecall(memoryRecall) {
+  const summary = $("memory-recall-summary");
+  const skills = $("memory-recall-skills");
+  const matches = $("memory-recall-matches");
+  if (!summary || !skills || !matches) return;
+  summary.textContent = memoryRecall.summary || t("memoryRecall.empty");
+  skills.textContent = "";
+  matches.textContent = "";
+
+  const skillItems = (memoryRecall.recommendedSkills || []).slice(0, 4);
+  if (!skillItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("memoryRecall.noSkills");
+    skills.appendChild(empty);
+  } else {
+    for (const skill of skillItems) {
+      const row = document.createElement("div");
+      row.className = "quality-row";
+      row.textContent = `${skill.id || t("app.unknown")} · ${Math.round(Number(skill.confidence || 0) * 100)}% · ${skill.why || ""}`;
+      skills.appendChild(row);
+    }
+  }
+
+  const matchItems = (memoryRecall.matches || []).slice(0, 4);
+  if (!matchItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("memoryRecall.noMatches");
+    matches.appendChild(empty);
+  } else {
+    for (const match of matchItems) {
+      const row = document.createElement("div");
+      row.className = "quality-row";
+      row.textContent = `${match.run_id || t("app.unknown")} · ${Math.round(Number(match.score || 0) * 100)}% · ${match.task_type || ""}`;
+      matches.appendChild(row);
+    }
   }
 }
 
@@ -574,6 +617,72 @@ async function startAcceptance() {
   action.disabled = true;
   action.textContent = t("acceptance.running");
   await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${ACCEPTANCE_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderReleaseReadiness(vm) {
+  const readiness = vm.releaseReadiness || {};
+  const acceptance = vm.acceptance || {};
+  const action = $("release-readiness-action");
+  const summary = $("release-readiness-summary");
+  const gates = $("release-readiness-gates");
+  const pr = $("release-readiness-pr");
+  if (!action || !summary || !gates || !pr) return;
+
+  const canGenerate = (vm.status === "completed" || acceptance.status === "completed") && acceptance.status === "completed";
+  action.disabled = !canGenerate;
+  action.textContent = t("releaseReadiness.generateButton");
+  action.onclick = startReleaseReadiness;
+  summary.textContent = readiness.summary || (canGenerate ? t("releaseReadiness.readyToGenerate") : t("releaseReadiness.empty"));
+
+  gates.textContent = "";
+  const gateItems = (readiness.gates || []).slice(0, 6);
+  if (!gateItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("releaseReadiness.noGates");
+    gates.appendChild(empty);
+  } else {
+    for (const gate of gateItems) {
+      const row = document.createElement("div");
+      row.className = `quality-row release-gate-row release-gate-${gate.status || "unknown"}`;
+      row.textContent = `${gate.id || t("app.unknown")}: ${gate.status || ""} · ${gate.reason || ""}`;
+      gates.appendChild(row);
+    }
+  }
+
+  pr.textContent = "";
+  const decision = document.createElement("div");
+  decision.className = "quality-row";
+  decision.textContent = `${t("releaseReadiness.decision")}: ${readiness.decisionLabel || t("releaseReadiness.decisions.not_generated")}`;
+  pr.appendChild(decision);
+  if (readiness.prDraft && readiness.prDraft.title) {
+    const title = document.createElement("div");
+    title.className = "quality-row";
+    title.textContent = `${t("releaseReadiness.prTitle")}: ${readiness.prDraft.title}`;
+    pr.appendChild(title);
+  }
+  const nextActions = (readiness.nextActions || []).slice(0, 3);
+  if (nextActions.length) {
+    for (const item of nextActions) {
+      const row = document.createElement("div");
+      row.className = "quality-row";
+      row.textContent = `${t("releaseReadiness.nextActions")}: ${item}`;
+      pr.appendChild(row);
+    }
+  }
+}
+
+async function startReleaseReadiness() {
+  if (!state.selectedRunId) return;
+  const action = $("release-readiness-action");
+  action.disabled = true;
+  action.textContent = t("releaseReadiness.generating");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${RELEASE_READINESS_ENDPOINT_SUFFIX}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

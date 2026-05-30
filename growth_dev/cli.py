@@ -118,6 +118,15 @@ def _build_parser() -> argparse.ArgumentParser:
     team_apply.add_argument("--repo-root", default=".")
     team_apply.set_defaults(func=_cmd_team_apply)
 
+    team_release = team_sub.add_parser("release", help="Generate release readiness reports")
+    team_release_sub = team_release.add_subparsers(dest="release_command", required=True)
+    team_release_readiness = team_release_sub.add_parser("readiness", help="Generate local release readiness and PR draft artifacts")
+    team_release_readiness.add_argument("--run-id", required=True)
+    team_release_readiness.add_argument("--runs-dir", default="runs")
+    team_release_readiness.add_argument("--repo-root", default=".")
+    team_release_readiness.add_argument("--json", action="store_true", dest="json_output")
+    team_release_readiness.set_defaults(func=_cmd_team_release_readiness)
+
     team_retrospective = team_sub.add_parser("retrospective", help="Generate deterministic run retrospectives")
     team_retrospective_sub = team_retrospective.add_subparsers(dest="retrospective_command", required=True)
     team_retrospective_generate = team_retrospective_sub.add_parser("generate", help="Generate retrospective artifacts")
@@ -138,6 +147,16 @@ def _build_parser() -> argparse.ArgumentParser:
     team_memory_export.add_argument("--vault-dir", required=True)
     team_memory_export.add_argument("--limit", type=int, default=50)
     team_memory_export.set_defaults(func=_cmd_team_memory_export)
+
+    team_memory_search = team_memory_sub.add_parser("search", help="Search historical learning summaries")
+    team_memory_search.add_argument("--query", required=True)
+    team_memory_search.add_argument("--runs-dir", default="runs")
+    team_memory_search.add_argument("--domain-id", default="")
+    team_memory_search.add_argument("--task-type", default="")
+    team_memory_search.add_argument("--limit", type=int, default=5)
+    team_memory_search.add_argument("--refresh-missing", action="store_true")
+    team_memory_search.add_argument("--json", action="store_true", dest="json_output")
+    team_memory_search.set_defaults(func=_cmd_team_memory_search)
 
     team_dashboard = team_sub.add_parser("serve-dashboard", help="Run the local Agent Team dashboard")
     team_dashboard.add_argument("--host", default="127.0.0.1")
@@ -582,6 +601,39 @@ def _cmd_team_memory_export(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_team_memory_search(args: argparse.Namespace) -> int:
+    from .team.memory_recall import format_memory_search_result, search_memory
+
+    result = search_memory(
+        str(args.query),
+        runs_dir=Path(args.runs_dir),
+        domain_id=str(args.domain_id or ""),
+        task_type=str(args.task_type or ""),
+        limit=int(args.limit),
+        refresh_missing=bool(args.refresh_missing),
+    )
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_memory_search_result(result), end="")
+    return 0
+
+
+def _cmd_team_release_readiness(args: argparse.Namespace) -> int:
+    from .team.release import format_release_readiness, generate_release_readiness
+
+    try:
+        result = generate_release_readiness(str(args.run_id), runs_dir=Path(args.runs_dir), repo_root=Path(args.repo_root))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_release_readiness(result), end="")
     return 0
 
 
