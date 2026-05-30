@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>场景素材中心</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="asset-shell">
+      <aside class="category-sidebar">
+        <div class="brand-block">
+          <span>场景素材中心</span>
+          <strong>品类导航</strong>
+        </div>
+        <nav id="categoryList" class="category-list" aria-label="品类列表"></nav>
+      </aside>
+
+      <section class="asset-main">
+        <header class="main-header">
+          <div>
+            <span id="activeCategoryLabel" class="eyebrow">全部品类</span>
+            <h1>场景素材中心</h1>
+            <p id="activeFilterSummary">选择品类、主标签和细分标签查看素材。</p>
+          </div>
+        </header>
+
+        <section class="scene-filter-panel" aria-label="场景分类 TAB 页">
+          <div class="scene-group">
+            <div class="scene-group-header">
+              <strong>主标签</strong>
+              <span>按稳定场景快速定位</span>
+            </div>
+            <nav id="primarySceneTabs" class="scene-tabs scene-tabs-primary" aria-label="主场景标签"></nav>
+          </div>
+          <div class="scene-group">
+            <div class="scene-group-header">
+              <strong>细分标签</strong>
+              <span>按图案、氛围、用途继续筛选</span>
+            </div>
+            <nav id="detailSceneTabs" class="scene-tabs scene-tabs-detail" aria-label="细分场景标签"></nav>
+          </div>
+        </section>
+
+        <div class="feed-toolbar">
+          <div class="segmented">
+            <button class="active" data-asset-type="">全部素材</button>
+            <button data-asset-type="original">原始素材</button>
+            <button data-asset-type="collected">抓取素材</button>
+          </div>
+          <span id="resultSummary">等待查询</span>
+        </div>
+
+        <section id="assetFeed" class="asset-feed" aria-live="polite"></section>
+        <button id="loadMoreButton" class="load-more" type="button">加载更多</button>
+      </section>
+    </main>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

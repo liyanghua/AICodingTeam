@@ -1,126 +1,310 @@
 skills:
-  - id: requirement_grilling
-    stage: requirement
+  - id: using_agent_skills
+    stage: meta
     priority: P0
-    source_inspiration: mattpocock/skills/grill-with-docs
-    path: skills/10_requirement/requirement_grilling
+    source_inspiration: addyosmani/agent-skills/using-agent-skills
+    path: skills/00_meta/using_agent_skills
+    replaces: []
+    inputs:
+      - user brief
+      - current task phase
+      - available run artifacts
+    outputs:
+      - selected primary skill
+      - optional companion skill
+      - explicit non-selected skills
+    triggers:
+      - task phase is ambiguous
+      - agent needs to choose a workflow discipline
+      - multiple project skills appear relevant
+    quality_gates:
+      - only one primary skill is selected
+      - at most one companion skill is selected
+      - selected skill matches current artifact state
+    templates:
+      - routing_matrix.md
+      - context_budget.md
+    context_budget:
+      default: load registry plus selected SKILL.md only
+      max_companion_skills: 1
+
+  - id: spec_driven_development
+    stage: define
+    priority: P0
+    source_inspiration: addyosmani/agent-skills/spec-driven-development
+    path: skills/10_define/spec_driven_development
+    replaces:
+      - requirement_grilling
+      - requirement_to_prd
     inputs:
       - business brief
-      - current context
-      - glossary
-    outputs:
       - tasks/current/context.md
-      - optional ADR
-    quality_gates:
-      - terms are aligned
-      - scope is explicit
-      - open questions are captured
-    templates:
-      - question_bank.md
-      - context_format.md
-      - adr_format.md
-
-  - id: requirement_to_prd
-    stage: requirement
-    priority: P0
-    source_inspiration: mattpocock/skills/to-prd
-    path: skills/10_requirement/requirement_to_prd
-    inputs:
-      - brief
-      - context.md
-      - design.md
+      - DESIGN.md when UI is involved
+      - AGENTS.md
     outputs:
       - tasks/current/prd.md
       - tasks/current/acceptance_criteria.md
+      - explicit out-of-scope list
+    triggers:
+      - new feature or domain request
+      - material behavior change
+      - acceptance criteria are missing or vague
     quality_gates:
-      - business goal is clear
-      - user roles are explicit
+      - business goal is explicit
+      - users and scope boundaries are named
       - acceptance criteria are testable
+      - open questions are captured instead of guessed
     templates:
-      - prd_template.md
+      - spec_template.md
       - acceptance_criteria_template.md
+    context_budget:
+      default: read brief, context, and only design docs relevant to the task
 
-  - id: repo_context_compiler
-    stage: requirement
+  - id: context_engineering
+    stage: define
     priority: P0
-    source_inspiration: mattpocock/skills/zoom-out
-    path: skills/10_requirement/repo_context_compiler
+    source_inspiration: addyosmani/agent-skills/context-engineering
+    path: skills/10_define/context_engineering
+    replaces:
+      - repo_context_compiler
     inputs:
+      - prd.md
       - repo structure
       - domain pack
-      - current task package
+      - recent run artifacts
+      - Obsidian memory export summaries when explicitly provided
     outputs:
       - tasks/current/context.md
+      - tasks/current/context_pack.md
       - tasks/current/impact_analysis.md
+    triggers:
+      - coding agent needs bounded context
+      - task touches unfamiliar modules
+      - prior attempts failed from missing or noisy context
     quality_gates:
-      - impacted modules are listed
-      - constraints are explicit
-      - nearby boundaries are noted
+      - relevant files are listed
+      - irrelevant context is excluded
+      - constraints and allowed paths are explicit
+      - memory or history excerpts are cited by source
     templates:
-      - context_template.md
-      - impact_analysis_template.md
+      - context_pack_template.md
+      - context_selection_matrix.md
+    context_budget:
+      default: include only artifacts needed by the next agent stage
 
-  - id: prd_to_task_slices
-    stage: planning
+  - id: planning_and_task_breakdown
+    stage: plan
     priority: P0
-    source_inspiration: mattpocock/skills/to-issues
-    path: skills/20_planning/prd_to_task_slices
+    source_inspiration: addyosmani/agent-skills/planning-and-task-breakdown
+    path: skills/20_plan/planning_and_task_breakdown
+    replaces:
+      - prd_to_task_slices
     inputs:
       - prd.md
       - tech_spec.md
       - ui_spec.md
+      - eval.md
     outputs:
       - tasks/current/slices/*.yaml
-      - tasks/current/slices/*.md
+      - tasks/current/plan.md
+    triggers:
+      - feature is larger than one safe coding step
+      - work spans multiple modules
+      - user asks for implementation planning
     quality_gates:
-      - slices are vertical
-      - slices are demoable
-      - slices are testable
+      - tasks are vertical slices
+      - each slice is independently testable
+      - dependencies and stop conditions are explicit
+      - no slice requires unrelated refactors
     templates:
       - task_slice_template.yaml
-      - issue_body_template.md
+      - plan_template.md
+    context_budget:
+      default: read specs and output slice contracts, not full source files
 
-  - id: tech_spec_to_tdd
+  - id: incremental_implementation
+    stage: execution
+    priority: P0
+    source_inspiration: addyosmani/agent-skills/incremental-implementation
+    path: skills/40_execution/incremental_implementation
+    replaces: []
+    inputs:
+      - tasks/current/slices/*.yaml
+      - context_pack.md
+      - eval.md
+      - allowed paths
+    outputs:
+      - implementation_record.md
+      - changed files
+      - test evidence
+    triggers:
+      - coding agent is implementing a slice
+      - change touches multiple files
+      - rollback-friendly progress is required
+    quality_gates:
+      - one slice is completed before the next begins
+      - tests are run after each meaningful step
+      - unrelated changes are rejected
+      - diff remains reviewable
+    templates:
+      - slice_loop_template.md
+      - implementation_record_template.md
+    context_budget:
+      default: load one slice and its immediate context only
+
+  - id: test_driven_development
     stage: engineering
     priority: P0
-    source_inspiration: mattpocock/skills/tdd
-    path: skills/30_engineering/tech_spec_to_tdd
+    source_inspiration: addyosmani/agent-skills/test-driven-development
+    path: skills/30_engineering/test_driven_development
+    replaces:
+      - tech_spec_to_tdd
     inputs:
       - tech_spec.md
       - ui_spec.md
-      - data model
-      - design.md
+      - acceptance_criteria.md
+      - existing test patterns
     outputs:
-      - tasks/current/eval.md
       - tasks/current/tdd_cases.md
-      - tasks/current/review_checklist.md
+      - tasks/current/eval.md
+      - test commands
+    triggers:
+      - new behavior requires implementation
+      - bug fix needs regression coverage
+      - acceptance criteria need executable checks
     quality_gates:
       - tests cover public behavior
-      - red-green-refactor is explicit
-      - UI states are covered
+      - red failure is observed before green
+      - UI states cover loading empty error and success when relevant
+      - implementation details are not over-specified
     templates:
-      - backend_test_patterns.md
-      - frontend_test_patterns.md
-      - integration_test_patterns.md
+      - tdd_cases_template.md
       - eval_template.md
+    context_budget:
+      default: read nearby test files and public contracts only
 
-  - id: diagnose_failure
+  - id: debugging_and_error_recovery
     stage: execution
     priority: P0
-    source_inspiration: mattpocock/skills/diagnose
-    path: skills/40_execution/diagnose_failure
+    source_inspiration: addyosmani/agent-skills/debugging-and-error-recovery
+    path: skills/40_execution/debugging_and_error_recovery
+    replaces:
+      - diagnose_failure
     inputs:
-      - failing tests
+      - failing command
       - logs
-      - diff
       - run record
+      - diff
+      - relevant tests
     outputs:
       - fix_plan.md
-      - regression test suggestions
+      - failure category
+      - regression test proposal
+    triggers:
+      - tests fail
+      - review fails
+      - runtime errors appear
+      - provider or CLI errors block a run
     quality_gates:
+      - failure is reproduced or clearly bounded
       - failure category is explicit
-      - reproduction is noted
-      - regression coverage is proposed
+      - fix is minimal and verified
+      - regression coverage is added or justified
     templates:
       - failure_taxonomy.md
       - fix_plan_template.md
+    context_budget:
+      default: load failing logs and related files, not all run artifacts
+
+  - id: code_review_and_quality
+    stage: review
+    priority: P0
+    source_inspiration: addyosmani/agent-skills/code-review-and-quality
+    path: skills/50_review/code_review_and_quality
+    replaces: []
+    inputs:
+      - diff
+      - review checklist
+      - tests run
+      - risk events
+      - acceptance criteria
+    outputs:
+      - review_report.md
+      - severity-ranked findings
+      - merge or apply recommendation
+    triggers:
+      - worktree diff is ready for review
+      - before_publish gate is near
+      - user asks for review
+    quality_gates:
+      - findings lead with bugs and regressions
+      - safety boundaries remain intact
+      - tests and acceptance criteria are checked
+      - no unrelated refactors are accepted
+    templates:
+      - review_checklist.md
+      - review_report_template.md
+    context_budget:
+      default: read diff, tests, and acceptance criteria before broad source context
+
+memory_skills:
+  - id: run_retrospective
+    active: false
+    stage: memory
+    priority: P1
+    source_inspiration: project-run-retrospective
+    path: skills/90_memory/run_retrospective
+    inputs:
+      - runs/<run_id>/team_run_record.json
+      - runs/<run_id>/events.jsonl
+      - review_report.md
+      - test_report.md
+      - codex/implementation_trace.json
+      - acceptance/status.json
+    outputs:
+      - runs/<run_id>/retrospective.md
+      - runs/<run_id>/learning_summary.json
+    triggers:
+      - run reaches completed or failed terminal state
+      - user exports run memory to Obsidian
+      - user asks what should be reused next time
+    quality_gates:
+      - does not copy raw logs, prompts, full diff, or secrets
+      - recommended skills reference active registry ids
+      - context reuse and avoid lists are explicit
+    templates:
+      - retrospective_template.md
+      - learning_summary_schema.md
+    context_budget:
+      default: read run summaries and artifact headers, not raw execution payloads
+
+  - id: historical_task_recall
+    active: false
+    stage: memory
+    priority: P1
+    source_inspiration: project-learning-summary-recall
+    path: skills/90_memory/historical_task_recall
+    inputs:
+      - runs/*/learning_summary.json
+      - current brief or query
+      - optional domain_id
+      - optional task_type
+    outputs:
+      - runs/<run_id>/memory_recall.md
+      - runs/<run_id>/memory_recall.json
+      - recommended active Project Skills
+      - reusable and avoided context hints
+    triggers:
+      - a new run starts and needs auditable historical references
+      - user asks for similar historical tasks
+      - user asks which Project Skills should guide a similar task
+    quality_gates:
+      - reads only summary artifacts by default
+      - does not inject memory into Codex prompts
+      - recommended skills reference active registry ids
+      - raw logs, full diff, prompts, and secrets are excluded
+    templates:
+      - memory_recall_template.md
+      - recall_result_schema.md
+    context_budget:
+      default: load matching summaries and citations only, not raw run artifacts

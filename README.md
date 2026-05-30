@@ -31,6 +31,8 @@ python -m growth_dev code \
 python -m growth_dev team status --run-id <run-id> --summary
 python -m growth_dev team watch --run-id <run-id>
 python -m growth_dev team diff --run-id <run-id>
+python -m growth_dev team retrospective generate --run-id <run-id>
+python -m growth_dev team memory export --run-id <run-id> --vault-dir /path/to/ObsidianVault
 python -m growth_dev review --run-id <run-id>
 python -m growth_dev test --run-id <run-id>
 python -m growth_dev report --run-id <run-id>
@@ -59,15 +61,15 @@ Runs are written to `runs/<run_id>/`. Domain packs live under `domains/`; `xhs_b
 
 ## Project Skills
 
-The first project-level skills live under `skills/` and are indexed by `skills/registry.yaml`. They are the shared method layer for turning a brief into an AI-coding-ready task package, while `tasks/current/` and `runs/<run_id>/` remain the source of truth for each concrete run.
+The first project-level production skills live under `skills/` and are indexed by `skills/registry.yaml`. They are the shared method layer for turning a brief into an AI-coding-ready task package, while `tasks/current/` and `runs/<run_id>/` remain the source of truth for each concrete run.
 
 Current call order:
 
 ```text
-requirement_grilling -> requirement_to_prd -> repo_context_compiler -> prd_to_task_slices -> tech_spec_to_tdd -> diagnose_failure
+using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality
 ```
 
-This phase is documentation/registry only; the runtime does not auto-execute these skills yet.
+This phase is documentation/registry only; the runtime does not auto-execute these skills yet. Skills are not better because there are more of them: the active registry keeps only 8 P0 skills, defaults to one primary skill per phase, and allows at most one companion skill when a gate needs it.
 
 ## Codex executor
 
@@ -107,6 +109,77 @@ Project-level third-party provider config is read from `.env` only for the child
 
 Every team run also writes `events.jsonl` as a stage timeline and `process.json` for background process metadata.
 
+### Run retrospective
+
+Terminal team runs now write deterministic learning artifacts after completion or failure:
+
+- `retrospective.md`: business-friendly run review and next-time guidance.
+- `learning_summary.json`: structured outcome, failure modes, recommended Project Skills, reusable context, and context to avoid.
+
+You can regenerate them for historical runs:
+
+```bash
+python -m growth_dev.cli team retrospective generate --run-id <run-id>
+python -m growth_dev.cli team retrospective generate --all --limit 50
+```
+
+Retrospectives are observability and memory artifacts only. They do not change gate results or inject memory into future Codex prompts.
+
+### Historical task recall
+
+The lightweight recall layer searches local `runs/*/learning_summary.json` files and recommends similar historical runs, reusable context, context to avoid, and active Project Skills. It is deterministic and report-only: results are written to `memory_recall.md` / `memory_recall.json` for new runs and are not injected into Codex prompts.
+
+```bash
+python -m growth_dev.cli team memory search \
+  --query "Dashboard 交付验收状态" \
+  --limit 5
+
+python -m growth_dev.cli team memory search \
+  --query "Dashboard 交付验收状态" \
+  --domain-id web_monitoring \
+  --json
+```
+
+Use `--refresh-missing` only when you explicitly want to generate missing retrospective summaries for historical runs. Recall output excludes raw logs, full diffs, raw prompts, `.env`, and provider secrets.
+
+### Release readiness and PR draft
+
+After a run has been accepted and full local tests pass, generate a local release readiness report:
+
+```bash
+python -m growth_dev.cli team release readiness --run-id <run-id>
+python -m growth_dev.cli team release readiness --run-id <run-id> --json
+```
+
+This writes `release_readiness.json`, `release_readiness.md`, and `pr_draft.md` under `runs/<run_id>/`. The decision is one of `ready_for_pr_ci`, `ready_with_warnings`, or `blocked`, based on acceptance status, Review/Test reports, risk/blocker state, changed-file evidence, and current git status.
+
+When readiness is not blocked, you can explicitly push the current branch, create a GitHub Draft PR, and refresh CI check status:
+
+```bash
+python -m growth_dev.cli team pr draft --run-id <run-id> --base main --push
+python -m growth_dev.cli team pr status --run-id <run-id>
+python -m growth_dev.cli team pr status --run-id <run-id> --json
+```
+
+This writes `github_pr.json`, `github_pr.md`, `ci_status.json`, and `ci_status.md`. It uses the GitHub CLI (`gh`) and never merges, deploys, or auto-fixes CI. If `gh` is missing, not authenticated, or the repo/branch is not ready, the failure is recorded as a run artifact.
+
+### Obsidian project memory
+
+The first memory layer is a manual Markdown export for Obsidian. It reads existing `runs/<run_id>/` artifacts and writes business-friendly project evolution notes into the selected vault without changing runtime behavior or injecting memory into future Codex prompts.
+
+```bash
+python -m growth_dev.cli team memory export \
+  --run-id <run-id> \
+  --vault-dir /path/to/ObsidianVault
+
+python -m growth_dev.cli team memory export \
+  --all \
+  --limit 50 \
+  --vault-dir /path/to/ObsidianVault
+```
+
+Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, historical recall, release readiness, GitHub PR / CI status, retrospectives, recommended skills, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
+
 ### Local dashboard
 
 The browser UI lives in the top-level `dashboard/` directory, separate from the Python runtime. The backend only serves static assets and the local run API.
@@ -122,7 +195,7 @@ python -m growth_dev.cli team serve-dashboard \
   --open-browser
 ```
 
-Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next CLI actions. The dashboard can start and inspect runs, but applying a completed worktree diff remains a CLI action through `growth-dev team apply`.
+Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next actions. When a completed run passes the apply gate, the dashboard can trigger a human-confirmed acceptance flow: it applies the run with `python3 -m growth_dev.cli team apply --run-id <run-id>` and then runs `python3 -m unittest discover -s tests -v`, with progress and log tails written under `runs/<run_id>/acceptance/`. After acceptance passes, the dashboard can generate the local release readiness report and PR draft, then explicitly trigger “推送当前分支并创建 Draft PR” and refresh PR/CI status. The CLI `growth-dev team apply` path remains available for manual operation.
 
 ## Safety
 

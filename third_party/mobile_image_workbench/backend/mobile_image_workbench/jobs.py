@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .asset_library import AssetBlob, AssetLibrary
 from .collector_bridge import (
     run_config_file_collect,
     run_direct_items_collect,
@@ -20,6 +22,15 @@ from .inputs import (
     write_config_file_from_payload,
 )
 from .settings import JobSettings
+from .storage import FilesystemObjectStorageClient
+
+
+class FilesystemCancelToken:
+    def __init__(self, marker_path: Path) -> None:
+        self.marker_path = marker_path
+
+    def is_cancel_requested(self) -> bool:
+        return self.marker_path.exists()
 
 
 @dataclass(frozen=True)
@@ -49,10 +60,18 @@ class JobManager:
         self,
         root_dir: Path,
         base_collector_config: Path | None = None,
+        asset_library: AssetLibrary | None = None,
     ) -> None:
         self.root_dir = root_dir
         self.base_collector_config = base_collector_config
         self.root_dir.mkdir(parents=True, exist_ok=True)
+        self.asset_library = asset_library or AssetLibrary(
+            self.root_dir / "asset_center.sqlite3",
+            FilesystemObjectStorageClient(
+                self.root_dir / "object_storage",
+                bucket="mobile-image-assets",
+            ),
+        )
 
     def create_job(self, payload: dict[str, Any], *, start: bool = True) -> JobRecord:
         settings = JobSettings.from_payload(payload)
@@ -77,6 +96,13 @@ class JobManager:
 
     def run_job(self, job_id: str) -> JobRecord:
         record = self.get_job(job_id)
+        if self._cancel_requested(record.job_dir):
+            canceled = _replace_record(record, status="canceled", message="采集任务已停止")
+            self._write_record(canceled)
+            self._append_job_event(
+                record.job_dir, {"name": "job_canceled", "phase": "finish"}
+            )
+            return canceled
         payload = json.loads((record.job_dir / "request.json").read_text(encoding="utf-8"))
         record = _replace_record(record, status="running", message="采集任务运行中")
         self._write_record(record)
@@ -85,6 +111,7 @@ class JobManager:
         )
         try:
             collector_output_root = record.job_dir / "collector_runs"
+            cancel_token = FilesystemCancelToken(record.job_dir / "cancel_requested.json")
             config_path = write_collector_config(
                 record.settings,
                 collector_output_root,
@@ -102,7 +129,9 @@ class JobManager:
                 self._append_job_event(
                     record.job_dir, {"name": "collector_started", "phase": "prepare"}
                 )
-                manifest = run_config_file_collect(input_path, config_path, record.settings)
+                manifest = run_config_file_collect(
+                    input_path, config_path, record.settings, cancel_token=cancel_token
+                )
             else:
                 self._append_job_event(
                     record.job_dir,
@@ -135,21 +164,42 @@ class JobManager:
                     record.job_dir, {"name": "collector_started", "phase": "prepare"}
                 )
                 manifest = run_direct_items_collect(
-                    items, input_path, config_path, record.settings
+                    items,
+                    input_path,
+                    config_path,
+                    record.settings,
+                    cancel_token=cancel_token,
                 )
-            self._append_job_event(
-                record.job_dir, {"name": "collector_completed", "phase": "finish"}
-            )
-            write_result_exports(manifest.output_dir)
-            self._append_job_event(
-                record.job_dir, {"name": "result_exports_ready", "phase": "finish"}
-            )
+            if manifest.status == "canceled":
+                self._append_job_event(
+                    record.job_dir, {"name": "job_canceled", "phase": "finish"}
+                )
+            else:
+                self._append_job_event(
+                    record.job_dir, {"name": "collector_completed", "phase": "finish"}
+                )
+            if manifest.output_dir.exists():
+                write_result_exports(manifest.output_dir)
+                self._append_job_event(
+                    record.job_dir, {"name": "result_exports_ready", "phase": "finish"}
+                )
+                self.ingest_assets(
+                    manifest.output_dir,
+                    job_id=record.job_id,
+                    category=record.settings.target_category,
+                    scene="",
+                    input_mode=record.settings.mode,
+                )
+                self._append_job_event(
+                    record.job_dir, {"name": "asset_center_ready", "phase": "finish"}
+                )
             status = _job_status_from_manifest(manifest.status)
+            message = _job_message_for_status(status)
             updated = _replace_record(
                 record,
                 status=status,
                 collector_run_dir=manifest.output_dir,
-                message="采集完成" if status == "completed" else "采集部分完成",
+                message=message,
             )
             self._write_record(updated)
             return updated
@@ -172,6 +222,51 @@ class JobManager:
             raise FileNotFoundError(f"job not found: {job_id}")
         return _record_from_payload(json.loads(path.read_text(encoding="utf-8")))
 
+    def list_jobs(self, *, limit: int = 50) -> list[JobRecord]:
+        if not self.root_dir.exists():
+            return []
+        safe_limit = max(1, min(int(limit), 200))
+        records: list[JobRecord] = []
+        for child in self.root_dir.iterdir():
+            if not child.is_dir() or not (child / "job.json").exists():
+                continue
+            try:
+                records.append(self.get_job(child.name))
+            except Exception:
+                continue
+        records.sort(key=lambda record: record.job_id, reverse=True)
+        return records[:safe_limit]
+
+    def stop_job(self, job_id: str) -> JobRecord:
+        record = self.get_job(job_id)
+        if record.status not in {"queued", "running", "stopping"}:
+            raise ValueError(f"cannot stop job in status: {record.status}")
+        marker = record.job_dir / "cancel_requested.json"
+        marker.write_text(
+            json.dumps(
+                {"jobId": record.job_id, "requestedAt": dt.datetime.now(dt.UTC).isoformat()},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self._append_job_event(
+            record.job_dir, {"name": "stop_requested", "phase": "finish"}
+        )
+        next_status = "canceled" if record.status == "queued" else "stopping"
+        updated = _replace_record(
+            record,
+            status=next_status,
+            message="采集任务已停止" if next_status == "canceled" else "正在停止采集任务",
+        )
+        self._write_record(updated)
+        if next_status == "canceled":
+            self._append_job_event(
+                record.job_dir, {"name": "job_canceled", "phase": "finish"}
+            )
+        return updated
+
     def translated_events(self, job_id: str) -> list[dict[str, Any]]:
         record = self.get_job(job_id)
         events = _read_job_events(record.job_dir, phase="prepare")
@@ -190,6 +285,121 @@ class JobManager:
             "safety": "仅支持手动登录，不处理账号密码、验证码绕过或私有接口。",
         }
 
+    def ingest_assets(
+        self,
+        run_dir: Path,
+        *,
+        job_id: str = "",
+        category: str = "",
+        scene: str = "",
+        input_mode: str = "",
+        uploaded_by: str = "",
+    ) -> dict[str, int]:
+        return self.asset_library.ingest_run(
+            run_dir,
+            job_id=job_id,
+            category=category,
+            scene=scene,
+            input_mode=input_mode,
+            uploaded_by=uploaded_by,
+        )
+
+    def search_assets(self, filters: dict[str, Any]) -> dict[str, Any]:
+        return self.asset_library.search_payload(filters)
+
+    def asset_blob(self, asset_id: str) -> AssetBlob:
+        return self.asset_library.read_asset_blob(asset_id)
+
+    def object_blob(self, bucket: str, key: str) -> AssetBlob:
+        return self.asset_library.read_object_blob(bucket, key)
+
+    def sync_job_to_cloud(
+        self,
+        job_id: str,
+        *,
+        scene_tagger: Any | None = None,
+        cloud_sync: Any | None = None,
+    ) -> dict[str, Any]:
+        record = self.get_job(job_id)
+        if record.status not in {"completed", "partial"}:
+            raise ValueError("job must be completed or partial before cloud sync")
+        if record.collector_run_dir is None or not record.collector_run_dir.exists():
+            raise FileNotFoundError("collector run directory is not ready")
+        server_url = os.environ.get("MWB_CLOUD_SERVER_URL", "").strip()
+        token = os.environ.get("MWB_CLOUD_SYNC_TOKEN", "").strip()
+        collector_id = os.environ.get("MWB_COLLECTOR_ID", "").strip()
+        if not server_url:
+            raise ValueError("MWB_CLOUD_SERVER_URL is required")
+        if not token:
+            raise ValueError("MWB_CLOUD_SYNC_TOKEN is required")
+        if not collector_id:
+            raise ValueError("MWB_COLLECTOR_ID is required")
+
+        from .cloud_sync import sync_cloud_bundle
+        from .scene_tagger import (
+            build_scene_tagger,
+            default_vlm_model,
+            tag_missing_scene_assets,
+        )
+
+        category = record.settings.target_category
+        self._append_job_event(
+            record.job_dir, {"name": "cloud_sync_started", "phase": "finish"}
+        )
+        ingest_summary = self.ingest_assets(
+            record.collector_run_dir,
+            job_id=record.job_id,
+            category=category,
+            scene="",
+            input_mode=record.settings.mode,
+        )
+        tagger = scene_tagger or build_scene_tagger(
+            os.environ.get("MWB_SCENE_TAG_PROVIDER", "openai_compatible"),
+            model=os.environ.get("MWB_SCENE_TAG_MODEL") or default_vlm_model(),
+        )
+        tag_summary = tag_missing_scene_assets(
+            self.asset_library,
+            tagger,
+            category=category,
+            job_id=record.job_id,
+            limit=_env_int("MWB_SCENE_TAG_LIMIT", 200),
+        )
+        self._append_job_event(
+            record.job_dir,
+            {
+                "name": "scene_tagging_completed",
+                "phase": "finish",
+                "tagged": tag_summary.get("tagged", 0),
+                "failed": tag_summary.get("failed", 0),
+            },
+        )
+        sync_runner = cloud_sync or sync_cloud_bundle
+        cloud_summary = sync_runner(
+            runs_root=self.root_dir,
+            server_url=server_url,
+            token=token,
+            collector_id=collector_id,
+            category=category,
+            job_id=record.job_id,
+            batch_size=_env_int("MWB_SYNC_BATCH_SIZE", 100),
+        )
+        self._append_job_event(
+            record.job_dir,
+            {
+                "name": "cloud_sync_completed",
+                "phase": "finish",
+                "assets": cloud_summary.get("assets", 0),
+                "sourceImages": cloud_summary.get("sourceImages", 0),
+            },
+        )
+        return {
+            "status": "completed",
+            "jobId": record.job_id,
+            "ingest": ingest_summary,
+            "tagScenes": tag_summary,
+            "cloudSync": cloud_summary,
+        }
+
     def _write_record(self, record: JobRecord) -> None:
         record.job_dir.mkdir(parents=True, exist_ok=True)
         (record.job_dir / "job.json").write_text(
@@ -200,6 +410,9 @@ class JobManager:
     def _append_job_event(self, job_dir: Path, event: dict[str, Any]) -> None:
         with (job_dir / "job_events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _cancel_requested(self, job_dir: Path) -> bool:
+        return (job_dir / "cancel_requested.json").exists()
 
 
 def _read_job_events(job_dir: Path, phase: str | None = None) -> list[dict[str, Any]]:
@@ -260,7 +473,26 @@ def _job_status_from_manifest(status: str) -> str:
         return "completed"
     if status == "partial":
         return "partial"
+    if status == "canceled":
+        return "canceled"
     return "failed"
+
+
+def _job_message_for_status(status: str) -> str:
+    if status == "completed":
+        return "采集完成"
+    if status == "canceled":
+        return "采集任务已停止"
+    if status == "partial":
+        return "采集部分完成"
+    return "采集失败"
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return int(value)
 
 
 def _record_from_payload(payload: dict[str, Any]) -> JobRecord:

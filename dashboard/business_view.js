@@ -8,7 +8,7 @@
   const STAGE_GROUPS = [
     { id: "requirement", agents: ["orchestrator"], artifactPaths: ["task.yaml", "context.md"] },
     { id: "design", agents: ["product", "architect", "ux", "qa"], artifactPaths: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md"] },
-    { id: "implementation", agents: ["coder"], artifactPaths: ["coding_prompt.md", "codex/diff.patch"] },
+    { id: "implementation", agents: ["coder"], artifactPaths: ["coding_prompt.md", "codex/implementation_trace.json", "codex/diff.patch"] },
     { id: "quality", agents: ["reviewer", "verifier"], artifactPaths: ["review_report.md", "test_report.md"] },
     { id: "delivery", agents: ["publisher"], artifactPaths: ["final_report.md"] },
   ];
@@ -23,8 +23,17 @@
       statusLabel: statusLabel(i18n, status),
       headline: headline(run, i18n, status),
       stages,
+      health: buildHealth(run, i18n),
+      artifactQuality: buildArtifactQuality(run, i18n),
+      memoryRecall: buildMemoryRecall(run, i18n),
+      releaseReadiness: buildReleaseReadiness(run, i18n),
+      githubPr: buildGithubPr(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
+      recommendedArtifact: recommendedArtifact(run, i18n),
+      implementationFlow: run.implementation_trace || {},
+      acceptance: run.acceptance || { status: "not_started", steps: [], applied: false },
+      applyGate: run.apply_gate || {},
       nextActions: run.next_actions || [],
       risks: buildRisks(run, i18n),
       engineering: {
@@ -35,14 +44,104 @@
         logs: run.logs || [],
         events: run.events || [],
         diffSummary: run.diff_summary || {},
+        healthSummary: run.health_summary || {},
+        qualityReport: run.quality_report || {},
       },
+    };
+  }
+
+  function buildHealth(run, i18n) {
+    const health = run.health_summary || {};
+    return {
+      status: health.status || "unknown",
+      label: health.label || lookup(i18n, "health.unknownLabel", unknown(i18n)),
+      summary: health.summary || lookup(i18n, "health.unknownSummary", ""),
+      warnings: health.warnings || [],
+      warningGroups: health.warning_groups || health.warningGroups || [],
+      blockers: health.blockers || [],
+    };
+  }
+
+  function buildArtifactQuality(run, i18n) {
+    const quality = run.quality_report || {};
+    return {
+      status: quality.status || "unknown",
+      score: quality.score == null ? null : quality.score,
+      summary: quality.summary || lookup(i18n, "quality.unknownSummary", ""),
+      checks: quality.checks || [],
+    };
+  }
+
+  function buildMemoryRecall(run, i18n) {
+    const recall = run.memory_recall || {};
+    const matches = Array.isArray(recall.matches) ? recall.matches : [];
+    const recommendedSkills = Array.isArray(recall.recommended_skills) ? recall.recommended_skills : [];
+    const strategy = recall.context_strategy || {};
+    return {
+      summary: matches.length
+        ? lookup(i18n, "memoryRecall.summaryWithMatches", "").replace("{count}", String(matches.length))
+        : lookup(i18n, "memoryRecall.empty", ""),
+      matches,
+      recommendedSkills,
+      contextStrategy: {
+        reuse: strategy.reuse || [],
+        avoid: strategy.avoid || [],
+        checklist: strategy.checklist || [],
+      },
+    };
+  }
+
+  function buildReleaseReadiness(run, i18n) {
+    const readiness = run.release_readiness || {};
+    const gates = Array.isArray(readiness.gates) ? readiness.gates : [];
+    const prDraft = readiness.pr_draft || {};
+    const decision = readiness.release_decision || "not_generated";
+    return {
+      decision,
+      decisionLabel: lookup(i18n, `releaseReadiness.decisions.${decision}`, decision),
+      summary: readiness.summary || lookup(i18n, "releaseReadiness.empty", ""),
+      gates,
+      prDraft,
+      blockers: readiness.blockers || [],
+      warnings: readiness.warnings || [],
+      nextActions: readiness.next_actions || [],
+      generatedAt: readiness.generated_at || "",
+    };
+  }
+
+  function buildGithubPr(run, i18n) {
+    const githubPr = run.github_pr || {};
+    const ciStatus = run.ci_status || {};
+    const pr = githubPr.pr || {};
+    const prStatus = githubPr.status || "not_started";
+    const ciState = ciStatus.status || "not_started";
+    return {
+      status: prStatus,
+      statusLabel: lookup(i18n, `githubPr.status.${prStatus}`, prStatus),
+      pr,
+      ciStatus: ciState,
+      ciStatusLabel: lookup(i18n, `githubPr.ciStatus.${ciState}`, ciState),
+      checks: ciStatus.checks || [],
+      summary: ciStatus.summary || githubPr.next_action || lookup(i18n, "githubPr.noPr", ""),
+      warnings: [...(githubPr.warnings || []), ...(ciStatus.warnings || [])],
+      blockers: [...(githubPr.blockers || []), ...(ciStatus.blockers || [])],
+      nextAction: ciStatus.next_action || githubPr.next_action || "",
     };
   }
 
   function buildStage(run, i18n, group) {
     const status = stageStatus(run, group);
     const copy = lookup(i18n, `stages.${group.id}`, {});
-    const stageArtifacts = (run.artifacts || []).filter((artifact) => group.artifactPaths.includes(artifact.path) || group.artifactPaths.includes(artifact.label));
+    const stageArtifacts = (run.artifacts || [])
+      .filter((artifact) => group.artifactPaths.includes(artifact.path) || group.artifactPaths.includes(artifact.label))
+      .map((artifact) => {
+        const artifactText = artifactCopy(i18n, artifact);
+        return {
+          ...artifact,
+          title: artifactText.title || artifact.label || artifact.path || unknown(i18n),
+          description: artifactText.description || "",
+        };
+      });
     return {
       id: group.id,
       title: copy.title || unknown(i18n),
@@ -68,8 +167,11 @@
     }
     const agentMap = new Map((run.stages || []).map((stage) => [stage.id, stage]));
     const agents = group.agents.map((id) => agentMap.get(id)).filter(Boolean);
-    if (group.id === "delivery" && run.status === "completed" && (run.apply_gate || {}).status === "passed") {
-      return "waiting_confirmation";
+    if (group.id === "delivery") {
+      const deliveryStatus = acceptanceDeliveryStatus(run);
+      if (deliveryStatus) {
+        return deliveryStatus;
+      }
     }
     if (agents.some((agent) => isFailed(agent.status))) {
       return "needs_attention";
@@ -93,6 +195,16 @@
     if (run.status === "failed") {
       return "needs_attention";
     }
+    const acceptedStatus = acceptanceStatus(run);
+    if (acceptedStatus === "completed") {
+      return "completed";
+    }
+    if (acceptedStatus === "failed") {
+      return "needs_attention";
+    }
+    if (acceptedStatus === "queued" || acceptedStatus === "running") {
+      return "processing";
+    }
     if (run.status === "completed" && (run.apply_gate || {}).status === "passed") {
       return "waiting_confirmation";
     }
@@ -103,6 +215,21 @@
       return "processing";
     }
     return "not_started";
+  }
+
+  function acceptanceDeliveryStatus(run) {
+    const status = acceptanceStatus(run);
+    if (status === "completed") return "completed";
+    if (status === "failed") return "needs_attention";
+    if (status === "queued" || status === "running") return "processing";
+    if (run.status === "completed" && (run.apply_gate || {}).status === "passed") {
+      return "waiting_confirmation";
+    }
+    return "";
+  }
+
+  function acceptanceStatus(run) {
+    return ((run.acceptance || {}).status || "not_started");
   }
 
   function buildGates(run, i18n) {
@@ -131,6 +258,16 @@
     });
   }
 
+  function recommendedArtifact(run, i18n) {
+    const artifacts = buildArtifacts(run, i18n).filter((artifact) => artifact.exists);
+    const priority = ["github_pr.md", "ci_status.md", "pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
+    for (const path of priority) {
+      const found = artifacts.find((artifact) => artifact.path === path);
+      if (found) return found;
+    }
+    return artifacts[0] || null;
+  }
+
   function artifactCopy(i18n, artifact) {
     const artifacts = lookup(i18n, "artifacts", {});
     for (const key of [artifact.path, artifact.label]) {
@@ -152,7 +289,7 @@
   function stageActions(status, artifacts, run) {
     const actions = [];
     if (artifacts.some((artifact) => artifact.exists)) {
-      actions.push("viewArtifacts");
+      actions.push("viewDeliverables");
     }
     if (status === "needs_attention" || (run.risk_events || []).length) {
       actions.push("viewRisks");

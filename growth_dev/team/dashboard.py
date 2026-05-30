@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from dataclasses import dataclass
@@ -15,9 +16,14 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from ..utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
+from .models import TeamRunRecord
+from .quality import evaluate_run_quality, summarize_run_health, summarize_run_logs
+from .release import generate_release_readiness
+from .github_pr import create_draft_pr, refresh_ci_status
 
 
 _DASHBOARD_PROCESSES: list[subprocess.Popen] = []
+_ACCEPTANCE_THREADS: list[threading.Thread] = []
 
 
 STAGE_DEFINITIONS = [
@@ -102,7 +108,7 @@ def list_dashboard_runs(runs_dir: Path = Path("runs"), limit: int = 30) -> list[
 def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_root: Path = Path(".")) -> dict[str, Any]:
     runs_dir = Path(runs_dir).resolve()
     repo_root = Path(repo_root).resolve()
-    run_dir = runs_dir / run_id
+    run_dir = _safe_run_dir(runs_dir, run_id)
     if not run_dir.exists():
         raise FileNotFoundError(f"Run not found: {run_id}")
 
@@ -118,6 +124,9 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
 
     gates = _build_gate_view(record)
     apply_status, apply_reason = _apply_gate(record)
+    record_object = _team_record_from_dashboard_payload(record, run_id, run_dir, process, background_failure)
+    health_summary = summarize_run_health(record_object, run_dir).to_dict()
+    quality_report = evaluate_run_quality(record_object, run_dir).to_dict()
     gates.append({"id": "apply_gate", "label": "Apply Gate", "status": apply_status, "reason": apply_reason})
     gates.extend(
         [
@@ -141,6 +150,14 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "stages": _build_stage_view(agent_by_id, record),
         "gates": gates,
         "apply_gate": {"status": apply_status, "reason": apply_reason},
+        "health_summary": health_summary,
+        "quality_report": quality_report,
+        "implementation_trace": _read_implementation_trace(run_dir),
+        "memory_recall": _read_memory_recall(run_dir),
+        "release_readiness": _read_release_readiness(run_dir),
+        "github_pr": _read_github_pr(run_dir),
+        "ci_status": _read_ci_status(run_dir),
+        "acceptance": _read_acceptance_status(run_dir),
         "artifacts": _build_artifact_view(run_dir, repo_root, record),
         "events": events[-50:],
         "logs": _latest_log_lines(run_dir),
@@ -168,7 +185,7 @@ def read_dashboard_artifact(
         if target.parent != root:
             raise ValueError("Artifact path escapes repository root.")
     else:
-        run_dir = (runs_dir / run_id).resolve()
+        run_dir = _safe_run_dir(Path(runs_dir), run_id)
         target = _safe_child(run_dir, artifact_path)
 
     if not target.exists() or not target.is_file():
@@ -201,7 +218,7 @@ def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dic
     if not domains_dir.is_absolute():
         domains_dir = repo_root / domains_dir
     domains_dir = domains_dir.resolve()
-    run_dir = ensure_dir(runs_dir / run_id)
+    run_dir = ensure_dir(_safe_run_dir(runs_dir, run_id))
     command = [
         sys.executable,
         "-m",
@@ -287,6 +304,131 @@ def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dic
     )
 
 
+def start_dashboard_acceptance(run_id: str, *, runs_dir: Path = Path("runs"), repo_root: Path = Path(".")) -> dict[str, Any]:
+    runs_dir = Path(runs_dir).resolve()
+    repo_root = Path(repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+    record = _safe_read_json(run_dir / "team_run_record.json")
+    apply_status, apply_reason = _apply_gate(record)
+    if apply_status != "passed":
+        raise ValueError(apply_reason)
+
+    status = _read_acceptance_status(run_dir)
+    if status.get("status") in {"queued", "running", "completed", "failed"}:
+        return status
+
+    status = _initial_acceptance_status(run_id, runs_dir, repo_root)
+    _write_acceptance_status(run_dir, status)
+    thread = threading.Thread(
+        target=run_dashboard_acceptance_once,
+        kwargs={"run_id": run_id, "runs_dir": runs_dir, "repo_root": repo_root},
+        daemon=True,
+    )
+    thread.start()
+    _ACCEPTANCE_THREADS.append(thread)
+    return _redact(status)
+
+
+def run_dashboard_acceptance_once(
+    run_id: str,
+    *,
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+    command_runner: Any = subprocess.run,
+) -> dict[str, Any]:
+    runs_dir = Path(runs_dir).resolve()
+    repo_root = Path(repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+    record = _safe_read_json(run_dir / "team_run_record.json")
+    apply_status, apply_reason = _apply_gate(record)
+    if apply_status != "passed":
+        raise ValueError(apply_reason)
+
+    status = _initial_acceptance_status(run_id, runs_dir, repo_root)
+    status.update({"status": "running", "current_step": "apply", "started_at": now_iso(), "summary": "正在应用代码变更。"})
+    _mark_acceptance_step_running(status, "apply")
+    _write_acceptance_status(run_dir, status)
+
+    apply_command = [
+        "python3",
+        "-m",
+        "growth_dev.cli",
+        "team",
+        "apply",
+        "--run-id",
+        run_id,
+        "--runs-dir",
+        str(runs_dir),
+        "--repo-root",
+        str(repo_root),
+    ]
+    apply_result = _run_acceptance_command(
+        command_runner,
+        apply_command,
+        cwd=repo_root,
+        stdout_path=run_dir / "acceptance" / "apply_stdout.log",
+        stderr_path=run_dir / "acceptance" / "apply_stderr.log",
+    )
+    _update_acceptance_step(status, "apply", apply_result)
+    if apply_result.returncode != 0:
+        status.update(
+            {
+                "status": "failed",
+                "current_step": "apply",
+                "finished_at": now_iso(),
+                "applied": False,
+                "conclusion": "采纳失败，代码变更未完成应用。",
+                "next_action": "请查看 apply 日志，处理冲突或缺失后重新确认采纳。",
+                "summary": "采纳失败。",
+            }
+        )
+        _write_acceptance_status(run_dir, status)
+        return _redact(status)
+
+    status.update({"applied": True, "current_step": "tests", "summary": "代码已应用，正在运行全量测试。"})
+    _mark_acceptance_step_running(status, "tests")
+    _write_acceptance_status(run_dir, status)
+    tests_command = ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]
+    tests_result = _run_acceptance_command(
+        command_runner,
+        tests_command,
+        cwd=repo_root,
+        stdout_path=run_dir / "acceptance" / "tests_stdout.log",
+        stderr_path=run_dir / "acceptance" / "tests_stderr.log",
+    )
+    _update_acceptance_step(status, "tests", tests_result)
+    if tests_result.returncode != 0:
+        status.update(
+            {
+                "status": "failed",
+                "current_step": "tests",
+                "finished_at": now_iso(),
+                "conclusion": "已采纳但测试失败，需修复后再验证。",
+                "next_action": "变更已保留，不自动回滚。请修复失败用例后运行 python3 -m unittest discover -s tests -v。",
+                "summary": "代码已应用，但全量测试未通过。",
+            }
+        )
+        _write_acceptance_status(run_dir, status)
+        return _redact(status)
+
+    status.update(
+        {
+            "status": "completed",
+            "current_step": "completed",
+            "finished_at": now_iso(),
+            "conclusion": "已采纳且测试通过。",
+            "next_action": "可以继续人工检查、提交或进入后续发布流程。",
+            "summary": "代码已应用，全量测试通过。",
+        }
+    )
+    _write_acceptance_status(run_dir, status)
+    return _redact(status)
+
+
 def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHandler]:
     config.repo_root = Path(config.repo_root).resolve()
     config.runs_dir = _resolve_under(config.repo_root, config.runs_dir)
@@ -316,6 +458,59 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
             parsed = urlparse(self.path)
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "acceptance":
+                try:
+                    self._send_json(
+                        start_dashboard_acceptance(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
+                        status=HTTPStatus.ACCEPTED,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3:] == ["release", "readiness"]:
+                try:
+                    self._send_json(
+                        generate_release_readiness(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
+                        status=HTTPStatus.OK,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3:] == ["pr", "draft"]:
+                try:
+                    self._send_json(
+                        create_draft_pr(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root, base="main", push=True),
+                        status=HTTPStatus.ACCEPTED,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3:] == ["pr", "status"]:
+                try:
+                    self._send_json(
+                        refresh_ci_status(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
+                        status=HTTPStatus.OK,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
             if parsed.path != "/api/runs":
                 self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -350,7 +545,7 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 self._send_json(read_dashboard_artifact(run_id, artifact_path, runs_dir=config.runs_dir, repo_root=config.repo_root, scope=scope))
                 return
             if len(parts) == 4 and parts[3] == "diff":
-                self._send_text(_read_diff(config.runs_dir / run_id), content_type="text/plain; charset=utf-8")
+                self._send_text(_read_diff(_safe_run_dir(config.runs_dir, run_id)), content_type="text/plain; charset=utf-8")
                 return
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
@@ -478,10 +673,22 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("ui_spec.md", "UI Spec", "run"),
         ("eval.md", "Eval / TDD", "run"),
         ("coding_prompt.md", "Coding Prompt", "run"),
+        ("codex/implementation_trace.json", "Implementation Trace", "run"),
         ("codex/diff.patch", "Diff Evidence", "run"),
         ("review_report.md", "Review Report", "run"),
         ("test_report.md", "Test Report", "run"),
         ("final_report.md", "Final Report", "run"),
+        ("memory_recall.md", "Historical Task Recall", "run"),
+        ("memory_recall.json", "Memory Recall JSON", "run"),
+        ("retrospective.md", "Run Retrospective", "run"),
+        ("learning_summary.json", "Learning Summary", "run"),
+        ("release_readiness.md", "Release Readiness", "run"),
+        ("release_readiness.json", "Release Readiness JSON", "run"),
+        ("pr_draft.md", "PR Draft", "run"),
+        ("github_pr.md", "GitHub Draft PR", "run"),
+        ("github_pr.json", "GitHub Draft PR JSON", "run"),
+        ("ci_status.md", "CI Status", "run"),
+        ("ci_status.json", "CI Status JSON", "run"),
     ]
     seen: set[tuple[str, str]] = set()
     artifacts: list[dict[str, Any]] = []
@@ -543,27 +750,303 @@ def _failure_category(record: dict[str, Any]) -> str:
 
 
 def _latest_log_lines(run_dir: Path, max_lines: int = 12) -> list[str]:
-    paths = [
-        run_dir / "background_stdout.log",
-        run_dir / "background_stderr.log",
-        run_dir / "codex" / "stdout.jsonl",
-        run_dir / "codex" / "stderr.log",
-        run_dir / "codex" / "reviewer_stdout.log",
-        run_dir / "codex" / "reviewer_stderr.log",
-    ]
-    lines: list[str] = []
-    for path in paths:
-        if not path.exists():
+    return summarize_run_logs(run_dir, max_lines=max_lines)
+
+
+def _read_implementation_trace(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "codex" / "implementation_trace.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_memory_recall(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "memory_recall.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_release_readiness(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "release_readiness.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_github_pr(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "github_pr.json"
+    if not path.exists():
+        return {"schema_version": 1, "status": "not_started", "pr": {}, "warnings": [], "blockers": []}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "pr": {}, "warnings": [], "blockers": []}
+
+
+def _read_ci_status(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "ci_status.json"
+    if not path.exists():
+        return {"schema_version": 1, "status": "not_started", "checks": [], "warnings": [], "blockers": []}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "checks": [], "warnings": [], "blockers": []}
+
+
+def _read_acceptance_status(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "acceptance" / "status.json"
+    if not path.exists():
+        return {"schema_version": 1, "status": "not_started", "steps": [], "applied": False}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "steps": [], "applied": False}
+
+
+def _initial_acceptance_status(run_id: str, runs_dir: Path, repo_root: Path) -> dict[str, Any]:
+    apply_command = f"python3 -m growth_dev.cli team apply --run-id {run_id}"
+    tests_command = "python3 -m unittest discover -s tests -v"
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "status": "queued",
+        "current_step": "queued",
+        "started_at": "",
+        "finished_at": "",
+        "applied": False,
+        "summary": "等待确认采纳。",
+        "conclusion": "",
+        "next_action": "确认后会应用代码变更并运行全量测试。",
+        "commands": {
+            "apply": apply_command,
+            "tests": tests_command,
+        },
+        "steps": [
+            _acceptance_step("apply", "应用代码变更", apply_command, "acceptance/apply_stdout.log", "acceptance/apply_stderr.log"),
+            _acceptance_step("tests", "运行全量测试", tests_command, "acceptance/tests_stdout.log", "acceptance/tests_stderr.log"),
+        ],
+        "metadata": {
+            "runs_dir": str(runs_dir),
+            "repo_root": str(repo_root),
+            "rollback_policy": "not_automatic",
+        },
+    }
+
+
+def _acceptance_step(step_id: str, title: str, command: str, stdout_path: str, stderr_path: str) -> dict[str, Any]:
+    return {
+        "id": step_id,
+        "title": title,
+        "status": "queued",
+        "command": command,
+        "exit_code": None,
+        "started_at": "",
+        "finished_at": "",
+        "stdout_tail": [],
+        "stderr_tail": [],
+        "log_paths": {"stdout": stdout_path, "stderr": stderr_path},
+    }
+
+
+def _write_acceptance_status(run_dir: Path, status: dict[str, Any]) -> None:
+    acceptance_dir = ensure_dir(run_dir / "acceptance")
+    write_json(acceptance_dir / "status.json", _redact(status))
+
+
+def _run_acceptance_command(
+    command_runner: Any,
+    command: list[str],
+    *,
+    cwd: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> subprocess.CompletedProcess[str]:
+    ensure_dir(stdout_path.parent)
+    completed = command_runner(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    stdout_path.write_text(_redact_text(str(completed.stdout or "")), encoding="utf-8")
+    stderr_path.write_text(_redact_text(str(completed.stderr or "")), encoding="utf-8")
+    return completed
+
+
+def _update_acceptance_step(status: dict[str, Any], step_id: str, completed: subprocess.CompletedProcess[str]) -> None:
+    now = now_iso()
+    step = next((item for item in status.get("steps", []) if isinstance(item, dict) and item.get("id") == step_id), None)
+    if not step:
+        return
+    step["status"] = "completed" if completed.returncode == 0 else "failed"
+    step["exit_code"] = completed.returncode
+    step["finished_at"] = now
+    if not step.get("started_at"):
+        step["started_at"] = now
+    stdout_path = step.get("log_paths", {}).get("stdout", "") if isinstance(step.get("log_paths"), dict) else ""
+    stderr_path = step.get("log_paths", {}).get("stderr", "") if isinstance(step.get("log_paths"), dict) else ""
+    run_dir = Path(str(status.get("metadata", {}).get("runs_dir", ""))) / str(status.get("run_id", ""))
+    if stdout_path:
+        target = run_dir / stdout_path
+        if target.exists():
+            step["stdout_tail"] = _tail_lines(target, max_lines=12)
+    if stderr_path:
+        target = run_dir / stderr_path
+        if target.exists():
+            step["stderr_tail"] = _tail_lines(target, max_lines=12)
+
+
+def _mark_acceptance_step_running(status: dict[str, Any], step_id: str) -> None:
+    for step in status.get("steps", []):
+        if not isinstance(step, dict):
             continue
-        for line in _tail_lines(path, max_lines=3):
-            lines.append(f"{path.name}: {line}")
-    return [_redact_text(line) for line in lines[-max_lines:]]
+        if step.get("id") == step_id:
+            step["status"] = "running"
+            step["started_at"] = now_iso()
+        elif step.get("status") == "queued":
+            step["status"] = "pending"
+
+
+def _team_record_from_dashboard_payload(
+    record: dict[str, Any],
+    run_id: str,
+    run_dir: Path,
+    process: dict[str, Any],
+    background_failure: dict[str, str] | None,
+) -> TeamRunRecord:
+    if record:
+        payload = dict(record)
+    else:
+        payload = {
+            "run_id": run_id,
+            "domain_id": "",
+            "brief": "",
+            "status": str(process.get("status", "starting")),
+            "run_dir": str(run_dir),
+            "agent_runs": [],
+            "risk_events": [],
+        }
+    if background_failure:
+        payload["status"] = background_failure["status"]
+        risk_events = [str(item) for item in payload.get("risk_events", [])]
+        if background_failure["risk_event"] not in risk_events:
+            risk_events.append(background_failure["risk_event"])
+        payload["risk_events"] = risk_events
+    return TeamRunRecord.from_dict(payload)
 
 
 def _diff_summary(run_dir: Path) -> dict[str, Any]:
     diff = _read_diff(run_dir)
-    changed_files = re.findall(r"^diff --git a/(.*?) b/", diff, flags=re.MULTILINE)
-    return {"lines": len(diff.splitlines()), "changed_files": changed_files, "available": bool(diff.strip())}
+    return _parse_diff_summary(diff)
+
+
+def _parse_diff_summary(diff: str) -> dict[str, Any]:
+    lines = diff.splitlines()
+    files: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    in_hunk = False
+
+    def finish_current() -> None:
+        nonlocal current
+        if current is None:
+            return
+        files.append(
+            {
+                "path": str(current.get("path") or current.get("new_path") or current.get("old_path") or ""),
+                "status": str(current.get("status") or "modified"),
+                "additions": int(current.get("additions") or 0),
+                "deletions": int(current.get("deletions") or 0),
+            }
+        )
+        current = None
+
+    for line in lines:
+        if line.startswith("diff --git "):
+            finish_current()
+            old_path, new_path = _parse_diff_git_paths(line)
+            current = {
+                "path": new_path or old_path,
+                "old_path": old_path,
+                "new_path": new_path,
+                "status": "modified",
+                "additions": 0,
+                "deletions": 0,
+            }
+            in_hunk = False
+            continue
+
+        if current is None:
+            continue
+
+        if line.startswith("new file mode"):
+            current["status"] = "added"
+            continue
+        if line.startswith("deleted file mode"):
+            current["status"] = "deleted"
+            continue
+        if line.startswith("rename from "):
+            current["status"] = "renamed"
+            current["old_path"] = line.removeprefix("rename from ").strip()
+            continue
+        if line.startswith("rename to "):
+            current["status"] = "renamed"
+            renamed_path = line.removeprefix("rename to ").strip()
+            current["new_path"] = renamed_path
+            current["path"] = renamed_path
+            continue
+        if line.startswith("--- "):
+            old_path = _normalize_diff_path(line.removeprefix("--- "))
+            if old_path == "/dev/null":
+                current["status"] = "added"
+            elif old_path:
+                current["old_path"] = old_path
+            continue
+        if line.startswith("+++ "):
+            new_path = _normalize_diff_path(line.removeprefix("+++ "))
+            if new_path == "/dev/null":
+                current["status"] = "deleted"
+                current["path"] = current.get("old_path") or current.get("path") or ""
+            elif new_path:
+                current["new_path"] = new_path
+                current["path"] = new_path
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+
+        if in_hunk and line.startswith("+") and not line.startswith("+++"):
+            current["additions"] = int(current.get("additions") or 0) + 1
+        elif in_hunk and line.startswith("-") and not line.startswith("---"):
+            current["deletions"] = int(current.get("deletions") or 0) + 1
+
+    finish_current()
+    additions = sum(int(item.get("additions") or 0) for item in files)
+    deletions = sum(int(item.get("deletions") or 0) for item in files)
+    return {
+        "lines": len(lines),
+        "changed_files": [str(item.get("path", "")) for item in files],
+        "files_changed": len(files),
+        "additions": additions,
+        "deletions": deletions,
+        "files": files,
+        "available": bool(diff.strip()),
+    }
+
+
+def _parse_diff_git_paths(line: str) -> tuple[str, str]:
+    match = re.match(r"^diff --git a/(.*?) b/(.*)$", line)
+    if not match:
+        return "", ""
+    return _normalize_diff_path(match.group(1)), _normalize_diff_path(match.group(2))
+
+
+def _normalize_diff_path(value: str) -> str:
+    path = value.strip().strip('"')
+    if path in {"/dev/null", "dev/null"}:
+        return "/dev/null"
+    if path.startswith("a/") or path.startswith("b/"):
+        return path[2:]
+    return path
 
 
 def _read_diff(run_dir: Path) -> str:
@@ -623,6 +1106,15 @@ def _safe_child(root: Path, relative: str) -> Path:
     if target != root_resolved and root_resolved not in target.parents:
         raise ValueError("Artifact path escapes the allowed directory.")
     return target
+
+
+def _safe_run_dir(runs_dir: Path, run_id: str) -> Path:
+    candidate = Path(str(run_id))
+    if candidate.is_absolute() or len(candidate.parts) != 1 or not str(candidate):
+        raise ValueError("Run id must identify one directory inside runs.")
+    if candidate.name in {"", ".", ".."} or candidate.name != str(run_id):
+        raise ValueError("Run id must identify one directory inside runs.")
+    return _safe_child(Path(runs_dir).resolve(), candidate.name)
 
 
 def _resolve_under(repo_root: Path, value: Path | str) -> Path:

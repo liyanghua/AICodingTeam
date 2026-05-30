@@ -128,6 +128,7 @@ async def run_collect_async(
     keyword_top_n: int | None = None,
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
+    cancel_token=None,
 ) -> RunManifest:
     config = _config_with_overrides(
         load_config(config_path),
@@ -145,6 +146,7 @@ async def run_collect_async(
         input_path=input_path,
         config=config,
         output_dir=output_dir,
+        cancel_token=cancel_token,
     )
 
 
@@ -157,6 +159,7 @@ async def run_collect_items_async(
     keyword_top_n: int | None = None,
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
+    cancel_token=None,
 ) -> RunManifest:
     config = _config_with_overrides(
         load_config(config_path),
@@ -176,6 +179,7 @@ async def run_collect_items_async(
         input_path=input_path,
         config=config,
         output_dir=output_dir,
+        cancel_token=cancel_token,
     )
 
 
@@ -185,6 +189,7 @@ async def _run_loaded_items_async(
     input_path: Path,
     config: CollectorConfig,
     output_dir: Path,
+    cancel_token=None,
 ) -> RunManifest:
     manifest = RunManifest(
         run_id=output_dir.name,
@@ -219,8 +224,11 @@ async def _run_loaded_items_async(
             output_dir=output_dir,
             manifest=manifest,
             write_result=write_result,
+            cancel_token=cancel_token,
         )
-        manifest.status = "completed" if not manifest.risk_events else "partial"
+        manifest.status = _manifest_status_from_results(
+            manifest.results, manifest.risk_events
+        )
         write_manifest(manifest)
         return manifest
 
@@ -230,6 +238,14 @@ async def _run_loaded_items_async(
     media_store = MediaStore(device.adb_device)
 
     for item in items:
+        if _cancel_requested(cancel_token):
+            result = _canceled_result(item)
+            manifest.results.append(result)
+            manifest.risk_events.extend(result.risk_events)
+            append_jsonl(output_dir / "risk_events.jsonl", result.risk_events[0])
+            write_item_metadata(output_dir, item.item_id, result)
+            write_manifest(manifest)
+            break
         append_jsonl(
             output_dir / "events.jsonl",
             {"event": "item.started", "item_id": item.item_id, "keyword": item.keyword},
@@ -271,10 +287,47 @@ async def _run_loaded_items_async(
         manifest.results.append(result)
         write_item_metadata(output_dir, item.item_id, result)
         write_manifest(manifest)
+        if _cancel_requested(cancel_token):
+            break
 
-    manifest.status = "completed" if not manifest.risk_events else "partial"
+    manifest.status = _manifest_status_from_results(manifest.results, manifest.risk_events)
     write_manifest(manifest)
     return manifest
+
+
+def _manifest_status_from_results(
+    results: list[ItemResult], risk_events: list[dict] | None = None
+) -> str:
+    if not results:
+        return "failed" if risk_events else "completed"
+    if all(result.status == "canceled" for result in results):
+        if any(result.collected_count for result in results):
+            return "partial"
+        return "canceled"
+    if all(result.status == "failed" and result.collected_count == 0 for result in results):
+        return "failed"
+    if all(result.status == "completed" for result in results):
+        return "completed"
+    return "partial"
+
+
+def _cancel_requested(cancel_token) -> bool:
+    return bool(
+        cancel_token is not None and getattr(cancel_token, "is_cancel_requested")()
+    )
+
+
+def _canceled_result(item: InputItem) -> ItemResult:
+    event = {"event": "collection_canceled", "item_id": item.item_id}
+    return ItemResult(
+        item_id=item.item_id,
+        keyword=item.keyword,
+        status="canceled",
+        keyword_candidates=item.keyword_candidates,
+        collected_count=0,
+        message="canceled",
+        risk_events=[event],
+    )
 
 
 def run_collect(
@@ -285,6 +338,7 @@ def run_collect(
     keyword_top_n: int | None = None,
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
+    cancel_token=None,
 ) -> RunManifest:
     return asyncio.run(
         run_collect_async(
@@ -295,6 +349,7 @@ def run_collect(
             keyword_top_n=keyword_top_n,
             image_top_n=image_top_n,
             keyword_result_top_n=keyword_result_top_n,
+            cancel_token=cancel_token,
         )
     )
 
@@ -308,6 +363,7 @@ def run_collect_items(
     keyword_top_n: int | None = None,
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
+    cancel_token=None,
 ) -> RunManifest:
     return asyncio.run(
         run_collect_items_async(
@@ -319,6 +375,7 @@ def run_collect_items(
             keyword_top_n=keyword_top_n,
             image_top_n=image_top_n,
             keyword_result_top_n=keyword_result_top_n,
+            cancel_token=cancel_token,
         )
     )
 

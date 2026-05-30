@@ -11,6 +11,7 @@ DEFAULT_RISK_MESSAGES = {
     "captcha_required": "需要人工处理：手机上出现验证码或安全验证",
     "risk_control": "需要人工处理：平台提示账号或操作风险",
     "permission_prompt": "需要人工处理：请在手机上确认照片/相册权限",
+    "device_input_permission_required": "需要人工处理：新手机未允许自动点击，请开启 USB 调试相关安全权限后重试",
 }
 
 DEFAULT_STEP_MESSAGES = {
@@ -21,11 +22,26 @@ DEFAULT_STEP_MESSAGES = {
     "collector_started": "正在启动手机采集引擎",
     "collector_completed": "采集已完成，正在生成下载结果",
     "result_exports_ready": "结果文件已生成，可以下载查看",
+    "asset_center_ready": "采集图片已进入素材中心",
+    "stop_requested": "已请求停止，正在等待当前手机动作结束",
+    "job_canceled": "采集任务已停止",
+    "collection_canceled": "采集已停止，已保留当前结果",
+    "cloud_sync_started": "正在准备打标签并同步到云端素材中心",
+    "scene_tagging_completed": "场景标签已生成，正在上传素材",
+    "cloud_sync_completed": "云端素材中心同步完成",
     "start_app": "正在打开小红书",
     "wait_app_start_settle": "等待小红书首页加载完成",
     "push_reference": "正在把参考图发送到手机相册",
     "tap_search_box": "正在进入搜索",
+    "wait_search_page_after_search_box": "正在确认搜索页是否打开",
+    "search_box_click_not_on_search_page": "搜索入口没有打开搜索页，正在重试",
+    "back_after_search_box_miss": "已返回首页，准备重新进入搜索",
+    "search_page_not_reached_after_retries": "多次尝试后仍未进入搜索页，请检查搜索入口坐标或首页加载状态",
     "tap_image_search_button": "正在打开小红书图搜",
+    "wait_album_page_after_image_search_button": "正在确认图搜相册页是否打开",
+    "image_search_button_click_not_on_album_page": "图搜入口没有打开相册页，正在重试",
+    "back_after_image_search_button_miss": "已返回搜索页，准备重新打开图搜",
+    "image_search_album_not_reached_after_retries": "多次尝试后仍未进入图搜相册页，请检查图搜按钮坐标",
     "tap_album_entry": "正在打开手机相册",
     "tap_first_album_image": "正在选择参考图",
     "tap_album_confirm": "正在确认选择图片",
@@ -41,6 +57,7 @@ DEFAULT_STEP_MESSAGES = {
     "save_rank_failed": "当前笔记无法保存，继续下一张",
     "stage_scroll_limit_reached": "已达到翻页上限，本阶段部分完成",
     "stage_download_limit_reached": "本阶段采集数量已达目标",
+    "keyword_search_plan": "正在确认是否需要关键词筛选",
     "keyword_search_results_reached": "关键词结果页已打开",
     "back_to_results": "正在返回笔记列表",
     "item.started": "开始处理原图",
@@ -70,7 +87,7 @@ def translate_event(raw: dict[str, Any]) -> dict[str, Any]:
     event_name = str(raw.get("name") or raw.get("event") or "event")
     source = str(raw.get("source") or "collector")
     level = "info"
-    if _is_attention_event(event_name):
+    if _is_attention_event(event_name, raw):
         level = "needs_attention"
     elif event_name in {
         "save_rank_failed",
@@ -81,8 +98,11 @@ def translate_event(raw: dict[str, Any]) -> dict[str, Any]:
         "album_thumbnail_not_found",
         "album_image_not_selected",
         "album_confirm_failed",
+        "image_search_button_click_not_on_album_page",
+        "image_search_album_not_reached_after_retries",
         "skip_result_card_category_mismatch",
         "job_failed",
+        "collection_canceled",
     }:
         level = "warning"
     message = _message_for(event_name, raw)
@@ -138,6 +158,8 @@ def event_key_for(raw: dict[str, Any]) -> str:
 def _message_for(event_name: str, raw: dict[str, Any]) -> str:
     if event_name in RISK_MESSAGES:
         return RISK_MESSAGES[event_name]
+    if _is_input_injection_permission_failure(raw):
+        return RISK_MESSAGES["device_input_permission_required"]
     dynamic_message = _dynamic_message_for(event_name, raw)
     if dynamic_message is not None:
         return dynamic_message
@@ -208,5 +230,14 @@ def _stage_label(stage: str) -> str:
     return "图搜" if stage == "image_search" else "关键词"
 
 
-def _is_attention_event(event_name: str) -> bool:
-    return event_name in RISK_MESSAGES or event_name.endswith("_required")
+def _is_attention_event(event_name: str, raw: dict[str, Any]) -> bool:
+    return (
+        event_name in RISK_MESSAGES
+        or event_name.endswith("_required")
+        or _is_input_injection_permission_failure(raw)
+    )
+
+
+def _is_input_injection_permission_failure(raw: dict[str, Any]) -> bool:
+    text = f"{raw.get('reason') or ''} {raw.get('message') or ''}"
+    return "INJECT_EVENTS" in text or "Injecting input events" in text

@@ -5,13 +5,31 @@
         <h1>移动端图片采集工作台</h1>
         <p>用已登录的小红书 App 做低频、可观察的买家秀图片采集。</p>
       </div>
-      <button class="ghost-button" type="button" @click="checkDoctor">
-        <Activity :size="18" />
-        检查环境
-      </button>
+      <div class="topbar-actions">
+        <div class="view-switch" aria-label="工作台视图">
+          <button
+            :class="{ active: activeView === 'workbench' }"
+            type="button"
+            @click="setActiveView('workbench')"
+          >
+            采集工作台
+          </button>
+          <button
+            :class="{ active: activeView === 'admin' }"
+            type="button"
+            @click="setActiveView('admin')"
+          >
+            后台管理
+          </button>
+        </div>
+        <button class="ghost-button" type="button" @click="checkDoctor">
+          <Activity :size="18" />
+          检查环境
+        </button>
+      </div>
     </header>
 
-    <section class="workspace">
+    <section v-if="activeView === 'workbench'" class="workspace">
       <div class="composer">
         <div class="segmented" role="tablist" aria-label="输入模式">
           <button
@@ -74,6 +92,7 @@
             </button>
           </div>
         </div>
+        <span v-if="pasteMessage" class="inline-status">{{ pasteMessage }}</span>
 
         <div v-if="configFile" class="file-row">
           <FileSpreadsheet :size="18" />
@@ -190,8 +209,48 @@
             <span class="eyebrow">采集过程</span>
             <h2>{{ jobTitle }}</h2>
           </div>
-          <span class="status-pill" :class="jobStatus">{{ statusLabel }}</span>
+          <div class="observer-controls">
+            <button
+              v-if="canStopJob"
+              class="stop-button"
+              :disabled="isStoppingJob || jobStatus === 'stopping'"
+              type="button"
+              @click="stopCurrentJob"
+            >
+              {{ isStoppingJob || jobStatus === 'stopping' ? '正在停止' : '停止采集' }}
+            </button>
+            <span class="status-pill" :class="jobStatus">{{ statusLabel }}</span>
+          </div>
         </div>
+
+        <section class="history-panel">
+          <div class="history-panel-header">
+            <div>
+              <span class="eyebrow">历史任务</span>
+              <strong>{{ jobHistory.length ? `最近 ${jobHistory.length} 个任务` : '暂无历史任务' }}</strong>
+            </div>
+            <button class="text-button" type="button" @click="loadJobHistory">
+              {{ isLoadingJobHistory ? '刷新中' : '刷新' }}
+            </button>
+          </div>
+          <div v-if="jobHistory.length" class="history-list">
+            <button
+              v-for="job in jobHistory"
+              :key="job.jobId"
+              :class="{ active: job.jobId === jobId }"
+              type="button"
+              @click="selectJobHistoryItem(job)"
+            >
+              <span>{{ historyModeLabel(job.settings?.mode) }} · {{ historyStatusLabel(job.status) }}</span>
+              <strong>{{ job.jobId }}</strong>
+              <small>{{ job.message || historyHint(job) }}</small>
+            </button>
+          </div>
+          <p v-else class="history-empty">
+            完成或失败的采集任务会保存在 runs 目录，刷新页面后可从这里继续查看。
+          </p>
+          <span v-if="jobHistoryMessage" class="inline-status">{{ jobHistoryMessage }}</span>
+        </section>
 
         <ol ref="timelineRef" class="timeline" aria-live="polite" @scroll="handleTimelineScroll">
           <li v-for="event in events" :key="event.id" :class="event.level">
@@ -229,14 +288,208 @@
             <a :href="`/api/jobs/${jobId}/results.csv`">CSV</a>
             <a :href="`/api/jobs/${jobId}/results_images.zip`">ZIP</a>
           </div>
+          <div class="cloud-sync-actions">
+            <button
+              class="secondary-button"
+              :disabled="!canSyncToCloud || isSyncingCloud"
+              type="button"
+              @click="syncJobToCloud"
+            >
+              <UploadCloud :size="17" />
+              {{ isSyncingCloud ? '正在同步' : '打标签并同步云端' }}
+            </button>
+            <span v-if="cloudSyncMessage">{{ cloudSyncMessage }}</span>
+          </div>
         </div>
       </aside>
+    </section>
+
+    <section v-if="activeView === 'workbench'" class="asset-center">
+      <div class="asset-header">
+        <div>
+          <span class="eyebrow">素材中心</span>
+          <h2>按品类、场景和关键词查找已采集图片</h2>
+        </div>
+        <button class="ghost-button" type="button" @click="loadAssets">
+          查询素材
+        </button>
+      </div>
+
+      <div class="asset-filters">
+        <label>
+          品类
+          <input v-model="assetFilters.category" placeholder="例如：桌垫" type="text" />
+        </label>
+        <label>
+          场景
+          <input v-model="assetFilters.scene" placeholder="例如：餐桌布置" type="text" />
+        </label>
+        <label>
+          关键词
+          <input v-model="assetFilters.query" placeholder="红格、买家秀、白底" type="text" />
+        </label>
+        <label>
+          来源
+          <select v-model="assetFilters.stage">
+            <option value="">全部来源</option>
+            <option value="image_search">图搜结果</option>
+            <option value="keyword_search">关键词结果</option>
+          </select>
+        </label>
+        <label>
+          状态
+          <select v-model="assetFilters.status">
+            <option value="available">可用素材</option>
+            <option value="duplicate">重复图片</option>
+            <option value="">全部状态</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="asset-summary">
+        <span>{{ isLoadingAssets ? '正在查询素材' : `共 ${assetTotal} 张匹配素材` }}</span>
+        <span v-if="assetMessage">{{ assetMessage }}</span>
+      </div>
+
+      <div v-if="assetResults.length" class="asset-grid">
+        <article v-for="asset in assetResults" :key="asset.assetId" class="asset-card">
+          <a :href="asset.imageUrl" target="_blank">
+            <img :src="asset.imageUrl" :alt="asset.query || asset.category || '采集素材'" />
+          </a>
+          <div class="asset-card-body">
+            <strong>{{ asset.category || '未分类' }} · {{ asset.scene || '未标注场景' }}</strong>
+            <span>{{ stageLabel(asset.stage) }} · Rank {{ asset.rank || '-' }}</span>
+            <span v-if="asset.query">关键词：{{ asset.query }}</span>
+            <a :href="asset.downloadUrl" download>下载单图</a>
+          </div>
+        </article>
+      </div>
+      <div v-else class="asset-empty">
+        暂无匹配素材。完成一次采集后，素材会自动进入这里。
+      </div>
+    </section>
+
+    <section v-else class="admin-page">
+      <div class="admin-header">
+        <div>
+          <span class="eyebrow">后台管理</span>
+          <h2>数据同步和一键部署</h2>
+          <p>执行类操作需要 MWB_ADMIN_TOKEN；SSH 密钥和云端密钥只从服务端环境变量读取。</p>
+        </div>
+        <button class="ghost-button" type="button" @click="loadAdminStatus">
+          <Activity :size="18" />
+          刷新状态
+        </button>
+      </div>
+
+      <div class="admin-grid">
+        <section class="admin-card">
+          <span class="eyebrow">操作令牌</span>
+          <h3>后台执行权限</h3>
+          <label>
+            MWB_ADMIN_TOKEN
+            <input v-model="adminToken" placeholder="输入本次会话令牌" type="password" />
+          </label>
+          <button class="secondary-button" type="button" @click="saveAdminToken">
+            保存到本次会话
+          </button>
+          <span v-if="adminMessage" class="inline-status">{{ adminMessage }}</span>
+        </section>
+
+        <section class="admin-card">
+          <span class="eyebrow">配置健康</span>
+          <h3>同步和部署配置</h3>
+          <div v-if="adminStatus" class="admin-checks">
+            <span :class="['validation-pill', adminStatus.adminTokenConfigured ? 'ok' : 'warning']">
+              Admin {{ adminStatus.adminTokenConfigured ? '已配置' : '缺失' }}
+            </span>
+            <span :class="['validation-pill', adminStatus.cloudSync.configured ? 'ok' : 'warning']">
+              云同步 {{ adminStatus.cloudSync.configured ? '已配置' : missingLabel(adminStatus.cloudSync.missing) }}
+            </span>
+            <span :class="['validation-pill', adminStatus.vlm.configured ? 'ok' : 'warning']">
+              VLM {{ adminStatus.vlm.configured ? '已配置' : missingLabel(adminStatus.vlm.missing) }}
+            </span>
+            <span :class="['validation-pill', adminStatus.deploy.mac.scriptExists ? 'ok' : 'warning']">
+              Mac 部署脚本 {{ adminStatus.deploy.mac.scriptExists ? '存在' : '缺失' }}
+            </span>
+            <span :class="['validation-pill', adminStatus.deploy.macMiniRemote.configured ? 'ok' : 'warning']">
+              远程 Mac mini {{ adminStatus.deploy.macMiniRemote.configured ? `已配置 · ${adminStatus.deploy.macMiniRemote.auth}` : missingLabel(adminStatus.deploy.macMiniRemote.missing) }}
+            </span>
+            <span :class="['validation-pill', adminStatus.deploy.cloud.configured ? 'ok' : 'warning']">
+              云端 SSH {{ adminStatus.deploy.cloud.configured ? '已配置' : missingLabel(adminStatus.deploy.cloud.missing) }}
+            </span>
+          </div>
+          <p v-if="adminStatus?.latestSyncableJob">
+            最新可同步任务：{{ adminStatus.latestSyncableJob.jobId }}（{{ adminStatus.latestSyncableJob.status }}）
+          </p>
+          <p v-else>暂无 completed/partial 任务可同步。</p>
+        </section>
+
+        <section class="admin-card">
+          <span class="eyebrow">数据同步</span>
+          <h3>同步最新采集任务</h3>
+          <p>自动选择最新完成或部分完成的任务，先执行本机场景打标，再同步到云端素材中心。</p>
+          <button
+            class="primary-button"
+            :disabled="isAdminActionRunning"
+            type="button"
+            @click="startAdminAction('/api/admin/sync/latest')"
+          >
+            <UploadCloud :size="17" />
+            一键同步最新任务
+          </button>
+        </section>
+
+        <section class="admin-card">
+          <span class="eyebrow">一键部署</span>
+          <h3>Mac mini 和云端服务</h3>
+          <div class="admin-actions">
+            <button
+              class="secondary-button"
+              :disabled="isAdminActionRunning"
+              type="button"
+              @click="startAdminAction('/api/admin/deploy/mac')"
+            >
+              部署 Mac 工作台
+            </button>
+            <button
+              class="secondary-button"
+              :disabled="isAdminActionRunning"
+              type="button"
+              @click="startAdminAction('/api/admin/deploy/mac-mini')"
+            >
+              远程部署 Mac mini
+            </button>
+            <button
+              class="secondary-button"
+              :disabled="isAdminActionRunning"
+              type="button"
+              @click="startAdminAction('/api/admin/deploy/cloud')"
+            >
+              部署云端素材中心
+            </button>
+          </div>
+          <p>远程 Mac mini 部署读取 .env.remote；云端部署读取工作台环境变量。页面不接收任意命令。</p>
+        </section>
+      </div>
+
+      <section class="admin-task-panel">
+        <div class="observer-header">
+          <div>
+            <span class="eyebrow">后台任务</span>
+            <h2>{{ adminTask?.taskId || '暂无后台任务' }}</h2>
+          </div>
+          <span v-if="adminTask" class="status-pill" :class="adminTask.status">{{ adminTask.status }}</span>
+        </div>
+        <p v-if="adminTask?.message">{{ adminTask.message }}</p>
+        <pre class="admin-log">{{ adminTask?.logs?.join('\n') || '执行同步或部署后，这里会显示任务日志。' }}</pre>
+      </section>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 import {
   Activity,
   Download,
@@ -281,12 +534,72 @@ type RemoteBusinessEvent = {
   raw?: Record<string, unknown>;
 };
 
+type JobHistoryItem = {
+  jobId: string;
+  status: string;
+  message?: string;
+  collectorRunDir?: string | null;
+  settings?: {
+    mode?: string;
+  };
+};
+
+type AssetItem = {
+  assetId: string;
+  imageUrl: string;
+  downloadUrl: string;
+  category: string;
+  scene: string;
+  query: string;
+  stage: string;
+  rank?: number;
+  status: string;
+  objectKey: string;
+};
+
+type AppView = 'workbench' | 'admin';
+
+type AdminStatus = {
+  adminTokenConfigured: boolean;
+  cloudSync: { configured: boolean; missing: string[] };
+  vlm: { configured: boolean; missing: string[] };
+  deploy: {
+    mac: { scriptExists: boolean; script: string };
+    macMiniRemote: {
+      configured: boolean;
+      missing: string[];
+      envFile: string;
+      envFileExists: boolean;
+      target: string;
+      remoteRoot: string;
+      port: string;
+      auth: string;
+    };
+    cloud: { configured: boolean; missing: string[] };
+  };
+  latestSyncableJob?: {
+    jobId: string;
+    status: string;
+  } | null;
+};
+
+type AdminTask = {
+  taskId: string;
+  kind: string;
+  status: string;
+  message: string;
+  logs: string[];
+  summary: Record<string, unknown>;
+  exitCode?: number;
+};
+
 const modeOptions = [
   { value: 'single_image' as const, label: '单图片', icon: FileImage },
   { value: 'batch_images' as const, label: '批量图片', icon: Images },
   { value: 'config_file' as const, label: '配置文件', icon: FileSpreadsheet },
 ];
 
+const activeView = ref<AppView>('workbench');
 const mode = ref<JobMode>('single_image');
 const imageFiles = ref<LocalFile[]>([]);
 const configFile = ref<File | null>(null);
@@ -297,15 +610,39 @@ const folderInput = ref<HTMLInputElement | null>(null);
 const isDragging = ref(false);
 const isSubmitting = ref(false);
 const doctorMessage = ref('');
+const pasteMessage = ref('');
 const jobId = ref('');
 const jobStatus = ref('idle');
+const jobHistory = ref<JobHistoryItem[]>([]);
+const isLoadingJobHistory = ref(false);
+const jobHistoryMessage = ref('');
 const events = ref<BusinessEvent[]>([]);
 const eventCounter = ref(0);
 const seenEventKeys = ref<Set<string>>(new Set());
+const eventStream = ref<EventSource | null>(null);
 const timelineRef = ref<HTMLElement | null>(null);
 const autoFollowTimeline = ref(true);
 const hasUnreadTimelineEvents = ref(false);
 const TIMELINE_BOTTOM_THRESHOLD = 32;
+const assetResults = ref<AssetItem[]>([]);
+const assetTotal = ref(0);
+const isLoadingAssets = ref(false);
+const assetMessage = ref('');
+const isSyncingCloud = ref(false);
+const cloudSyncMessage = ref('');
+const isStoppingJob = ref(false);
+const adminToken = ref(sessionStorage.getItem('MWB_ADMIN_TOKEN') || '');
+const adminMessage = ref('');
+const adminStatus = ref<AdminStatus | null>(null);
+const adminTask = ref<AdminTask | null>(null);
+const isAdminActionRunning = ref(false);
+const assetFilters = reactive({
+  category: '',
+  scene: '',
+  query: '',
+  stage: '',
+  status: 'available',
+});
 
 const settings = reactive({
   imageTopN: 10,
@@ -365,6 +702,14 @@ const canStart = computed(() =>
 
 const jobTitle = computed(() => (jobId.value ? `任务 ${jobId.value}` : '暂无运行任务'));
 
+const canSyncToCloud = computed(() =>
+  Boolean(jobId.value) && ['completed', 'partial'].includes(jobStatus.value),
+);
+
+const canStopJob = computed(() =>
+  Boolean(jobId.value) && ['queued', 'running', 'stopping'].includes(jobStatus.value),
+);
+
 const configFolderSummary = computed(() => {
   if (mode.value !== 'config_file') {
     return null;
@@ -406,6 +751,8 @@ const statusLabel = computed(() => {
     idle: '未开始',
     queued: '排队中',
     running: '运行中',
+    stopping: '正在停止',
+    canceled: '已停止',
     needs_attention: '需人工处理',
     partial: '部分完成',
     completed: '完成',
@@ -414,12 +761,29 @@ const statusLabel = computed(() => {
   return labels[jobStatus.value] || jobStatus.value;
 });
 
+onMounted(() => {
+  loadAssets();
+  loadJobHistory();
+});
+
+onUnmounted(() => {
+  closeEventStream();
+});
+
+function setActiveView(nextView: AppView) {
+  activeView.value = nextView;
+  if (nextView === 'admin') {
+    loadAdminStatus();
+  }
+}
+
 function setMode(nextMode: JobMode) {
   mode.value = nextMode;
   imageFiles.value = [];
   configFile.value = null;
   configSidecarFiles.value = [];
   configProjectFiles.value = [];
+  pasteMessage.value = '';
   if (nextMode === 'config_file') {
     settings.imageTopN = 10;
     settings.keywordTopN = 4;
@@ -433,27 +797,64 @@ function setMode(nextMode: JobMode) {
 
 function handleDrop(event: DragEvent) {
   isDragging.value = false;
+  pasteMessage.value = '';
   const files = Array.from(event.dataTransfer?.files || []);
   addFiles(files);
 }
 
 function handleFilePick(event: Event) {
   const input = event.target as HTMLInputElement;
+  pasteMessage.value = '';
   addFiles(Array.from(input.files || []));
   input.value = '';
 }
 
 function handleFolderPick(event: Event) {
   const input = event.target as HTMLInputElement;
+  pasteMessage.value = '';
   addProjectFolder(Array.from(input.files || []));
   input.value = '';
 }
 
 function handlePaste(event: ClipboardEvent) {
-  const files = Array.from(event.clipboardData?.files || []);
-  if (files.length) {
-    addFiles(files);
+  const files = clipboardFilesFromPaste(event);
+  const imageCount = files.filter((file) => file.type.startsWith('image/')).length;
+  if (!imageCount) {
+    pasteMessage.value = '没有识别到图片，请从 Finder 多选图片后复制，或使用选择文件';
+    return;
   }
+  event.preventDefault();
+  addFiles(files);
+  pasteMessage.value = `已粘贴 ${mode.value === 'single_image' ? 1 : imageCount} 张图片`;
+}
+
+function clipboardFilesFromPaste(event: ClipboardEvent) {
+  const directFiles = Array.from(event.clipboardData?.files || []);
+  const itemFiles = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+  return dedupeFiles(directFiles.concat(itemFiles));
+}
+
+function dedupeFiles(files: File[]) {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    const key = fileSignature(file);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function fileSignature(file: File) {
+  return [file.name, file.size, file.lastModified, file.type].join('|');
+}
+
+function makeLocalId() {
+  return globalThis.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function addFiles(files: File[]) {
@@ -466,7 +867,7 @@ function addFiles(files: File[]) {
     const sidecars = files
       .filter((file) => file.type.startsWith('image/'))
       .map((file) => ({
-        id: crypto.randomUUID(),
+        id: makeLocalId(),
         name: file.name,
         file,
         previewUrl: URL.createObjectURL(file),
@@ -476,7 +877,7 @@ function addFiles(files: File[]) {
   }
   const images = files.filter((file) => file.type.startsWith('image/'));
   const next = images.map((file) => ({
-    id: crypto.randomUUID(),
+    id: makeLocalId(),
     name: file.name,
     file,
     previewUrl: URL.createObjectURL(file),
@@ -488,7 +889,7 @@ function addProjectFolder(files: File[]) {
   const workbook = findProjectWorkbook(files);
   configFile.value = workbook || null;
   configProjectFiles.value = files.map((file) => ({
-    id: crypto.randomUUID(),
+    id: makeLocalId(),
     name: file.name,
     file,
     previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : '',
@@ -543,11 +944,9 @@ async function checkDoctor() {
 
 async function startJob() {
   isSubmitting.value = true;
-  events.value = [];
-  eventCounter.value = 0;
-  seenEventKeys.value = new Set();
-  autoFollowTimeline.value = true;
-  hasUnreadTimelineEvents.value = false;
+  cloudSyncMessage.value = '';
+  closeEventStream();
+  resetTimeline();
   try {
     const payload = await buildPayload();
     const response = await fetch('/api/jobs', {
@@ -561,6 +960,7 @@ async function startJob() {
     const job = await response.json();
     jobId.value = job.jobId;
     jobStatus.value = job.status;
+    loadJobHistory(false);
     subscribeEvents(job.jobId);
     refreshEvents(job.jobId);
     pollJob(job.jobId);
@@ -632,13 +1032,28 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function resetTimeline() {
+  events.value = [];
+  eventCounter.value = 0;
+  seenEventKeys.value = new Set();
+  autoFollowTimeline.value = true;
+  hasUnreadTimelineEvents.value = false;
+}
+
 function subscribeEvents(id: string) {
+  closeEventStream();
   const stream = new EventSource(`/api/jobs/${id}/events`);
   stream.onmessage = (message) => {
     const event = JSON.parse(message.data);
     appendBusinessEvent(event);
   };
   stream.onerror = () => stream.close();
+  eventStream.value = stream;
+}
+
+function closeEventStream() {
+  eventStream.value?.close();
+  eventStream.value = null;
 }
 
 function appendBusinessEvent(event: RemoteBusinessEvent) {
@@ -730,15 +1145,260 @@ function scrollTimelineToLatest() {
 
 async function pollJob(id: string) {
   while (true) {
+    if (jobId.value !== id) {
+      return;
+    }
     await refreshEvents(id);
     const response = await fetch(`/api/jobs/${id}`);
     const payload = await response.json();
+    if (jobId.value !== id) {
+      return;
+    }
     jobStatus.value = payload.status;
-    if (!['queued', 'running'].includes(payload.status)) {
+    if (!['queued', 'running', 'stopping'].includes(payload.status)) {
       await refreshEvents(id);
+      await loadAssets();
+      await loadJobHistory(false);
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
+async function loadJobHistory(autoSelectLatest = true) {
+  isLoadingJobHistory.value = true;
+  jobHistoryMessage.value = '';
+  try {
+    const response = await fetch('/api/jobs?limit=20');
+    if (!response.ok) {
+      throw new Error('历史任务加载失败');
+    }
+    const payload = await response.json();
+    jobHistory.value = payload.jobs || [];
+    if (autoSelectLatest && !jobId.value && jobHistory.value.length) {
+      await selectJobHistoryItem(jobHistory.value[0]);
+    }
+  } catch (error) {
+    jobHistoryMessage.value = error instanceof Error ? error.message : '历史任务加载失败';
+  } finally {
+    isLoadingJobHistory.value = false;
+  }
+}
+
+async function selectJobHistoryItem(job: JobHistoryItem) {
+  closeEventStream();
+  cloudSyncMessage.value = '';
+  jobId.value = job.jobId;
+  jobStatus.value = job.status;
+  resetTimeline();
+  await refreshEvents(job.jobId);
+  if (['queued', 'running', 'stopping'].includes(job.status)) {
+    subscribeEvents(job.jobId);
+    pollJob(job.jobId);
+  }
+}
+
+function historyModeLabel(rawMode?: string) {
+  const labels: Record<string, string> = {
+    single_image: '单图',
+    batch_images: '批量',
+    config_file: '配置',
+  };
+  return labels[rawMode || ''] || '任务';
+}
+
+function historyStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    queued: '排队',
+    running: '运行',
+    stopping: '停止中',
+    canceled: '已停止',
+    partial: '部分完成',
+    completed: '完成',
+    failed: '失败',
+  };
+  return labels[status] || status || '未知';
+}
+
+function historyHint(job: JobHistoryItem) {
+  if (['completed', 'partial', 'canceled'].includes(job.status)) {
+    return '可查看过程和结果下载';
+  }
+  if (job.status === 'failed') {
+    return '可查看失败前的采集过程';
+  }
+  return '可继续观察实时进度';
+}
+
+async function stopCurrentJob() {
+  if (!jobId.value || isStoppingJob.value) {
+    return;
+  }
+  isStoppingJob.value = true;
+  try {
+    const response = await fetch(`/api/jobs/${jobId.value}/stop`, {
+      method: 'POST',
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || '停止采集失败');
+    }
+    jobStatus.value = payload.status || 'stopping';
+    appendBusinessEvent({
+      source: 'job',
+      name: 'stop_requested',
+      message: '已请求停止，正在等待当前手机动作结束',
+    });
+    await refreshEvents(jobId.value);
+    await loadJobHistory(false);
+  } catch (error) {
+    events.value.push({
+      id: `local-stop-${Date.now()}`,
+      level: 'warning',
+      message: error instanceof Error ? error.message : '停止采集失败',
+    });
+    scrollTimelineToLatestIfNeeded();
+  } finally {
+    isStoppingJob.value = false;
+  }
+}
+
+async function syncJobToCloud() {
+  if (!jobId.value) {
+    return;
+  }
+  isSyncingCloud.value = true;
+  cloudSyncMessage.value = '';
+  try {
+    const response = await fetch(`/api/jobs/${jobId.value}/sync-cloud`, {
+      method: 'POST',
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || '云端同步失败');
+    }
+    const tagged = Number(payload.tagScenes?.tagged || 0);
+    const failed = Number(payload.tagScenes?.failed || 0);
+    const synced = Number(payload.cloudSync?.assets || 0);
+    cloudSyncMessage.value = failed
+      ? `已打标 ${tagged} 张，${failed} 张失败；已同步 ${synced} 张素材`
+      : `已打标 ${tagged} 张，已同步 ${synced} 张素材`;
+    await refreshEvents(jobId.value);
+    await loadAssets();
+  } catch (error) {
+    cloudSyncMessage.value = error instanceof Error ? error.message : '云端同步失败';
+  } finally {
+    isSyncingCloud.value = false;
+  }
+}
+
+async function loadAssets() {
+  isLoadingAssets.value = true;
+  assetMessage.value = '';
+  try {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(assetFilters)) {
+      if (value) {
+        params.set(key, value);
+      }
+    }
+    const response = await fetch(`/api/library/assets?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error('素材查询失败');
+    }
+    const payload = await response.json();
+    assetResults.value = payload.assets || [];
+    assetTotal.value = payload.total || assetResults.value.length;
+  } catch (error) {
+    assetMessage.value = error instanceof Error ? error.message : '素材查询失败';
+  } finally {
+    isLoadingAssets.value = false;
+  }
+}
+
+function stageLabel(stage: string) {
+  if (stage === 'keyword_search') {
+    return '关键词结果';
+  }
+  if (stage === 'image_search') {
+    return '图搜结果';
+  }
+  return stage || '未知来源';
+}
+
+function saveAdminToken() {
+  sessionStorage.setItem('MWB_ADMIN_TOKEN', adminToken.value);
+  adminMessage.value = adminToken.value ? '令牌已保存到本次浏览器会话' : '已清空本次会话令牌';
+}
+
+async function loadAdminStatus() {
+  adminMessage.value = '';
+  try {
+    const response = await fetch('/api/admin/status');
+    if (!response.ok) {
+      throw new Error('后台状态加载失败');
+    }
+    adminStatus.value = await response.json();
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '后台状态加载失败';
+  }
+}
+
+function missingLabel(names: string[]) {
+  return names.length ? `缺 ${names.length} 项` : '缺失';
+}
+
+async function startAdminAction(endpoint: string) {
+  if (!adminToken.value) {
+    adminMessage.value = '请先输入 MWB_ADMIN_TOKEN';
+    return;
+  }
+  saveAdminToken();
+  isAdminActionRunning.value = true;
+  adminMessage.value = '';
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken.value}`,
+      },
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || '后台任务启动失败');
+    }
+    adminTask.value = payload;
+    pollAdminTask(payload.taskId);
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '后台任务启动失败';
+    isAdminActionRunning.value = false;
+  }
+}
+
+async function pollAdminTask(taskId: string) {
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    try {
+      const response = await fetch(`/api/admin/tasks/${taskId}`, {
+        headers: {
+          Authorization: `Bearer ${adminToken.value}`,
+        },
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || '后台任务查询失败');
+      }
+      adminTask.value = payload;
+      if (!['queued', 'running'].includes(payload.status)) {
+        isAdminActionRunning.value = false;
+        await loadAdminStatus();
+        return;
+      }
+    } catch (error) {
+      adminMessage.value = error instanceof Error ? error.message : '后台任务查询失败';
+      isAdminActionRunning.value = false;
+      return;
+    }
   }
 }
 </script>

@@ -1,0 +1,9 @@
+# Acceptance Criteria Template
+
+- Given ..., when ..., then ...
+- Given ..., when ..., then ...
+- Must not ...
+- Evidence required:
+  - Tests:
+  - Review:
+  - User-facing artifact:

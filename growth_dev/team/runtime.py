@@ -8,7 +8,9 @@ from ..utils import ensure_dir, now_iso, timestamp_slug, write_json
 from .agents import AgentContext, run_deterministic_agent
 from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
 from .domain import load_domain_spec, load_team_spec
+from .memory_recall import generate_memory_recall
 from .models import AgentRun, AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
+from .retrospective import generate_run_retrospective
 
 
 class GateFailure(RuntimeError):
@@ -200,6 +202,7 @@ class TeamRuntime:
         )
         write_json(run_dir / "team_spec.json", self.team.to_dict())
         write_json(run_dir / "domain_spec.json", self.domain.to_dict())
+        self._write_memory_recall(record)
 
         for agent in self.team.agents:
             gate_failed = self._run_gates_before(agent.id, record)
@@ -208,6 +211,7 @@ class TeamRuntime:
                 record.finished_at = now_iso()
                 self._write_record(record)
                 self._write_event(record, "run_failed", reason="gate_failed")
+                self._write_retrospective(record)
                 return record
 
             agent_context = AgentContext(
@@ -259,12 +263,14 @@ class TeamRuntime:
                 record.finished_at = now_iso()
                 self._write_record(record)
                 self._write_event(record, "run_failed", reason=f"agent_failed:{agent.id}")
+                self._write_retrospective(record)
                 return record
 
         record.status = "completed"
         record.finished_at = now_iso()
         self._write_record(record)
         self._write_event(record, "run_completed")
+        self._write_retrospective(record)
         return record
 
     def check_gate(self, run_dir: Path, gate_id: str) -> GateResult:
@@ -309,6 +315,42 @@ class TeamRuntime:
         }
         with (record.run_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event_payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+    def _write_retrospective(self, record: TeamRunRecord) -> None:
+        try:
+            result = generate_run_retrospective(record.run_id, runs_dir=record.run_dir.parent)
+        except Exception as exc:  # noqa: BLE001 - retrospective must not change run outcome.
+            self._write_event(record, "retrospective_failed", error=str(exc))
+            return
+        record.artifacts["retrospective.md"] = "retrospective.md"
+        record.artifacts["learning_summary.json"] = "learning_summary.json"
+        for output_path in ("retrospective.md", "learning_summary.json"):
+            if output_path not in record.output_paths:
+                record.output_paths.append(output_path)
+        self._write_record(record)
+
+    def _write_memory_recall(self, record: TeamRunRecord) -> None:
+        try:
+            result = generate_memory_recall(
+                record.brief,
+                run_id=record.run_id,
+                runs_dir=record.run_dir.parent,
+                domain_id=record.domain_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - recall must not change run outcome.
+            self._write_event(record, "memory_recall_failed", error=str(exc))
+            return
+        record.artifacts["memory_recall.md"] = "memory_recall.md"
+        record.artifacts["memory_recall.json"] = "memory_recall.json"
+        for output_path in ("memory_recall.md", "memory_recall.json"):
+            if output_path not in record.output_paths:
+                record.output_paths.append(output_path)
+        self._write_record(record)
+        self._write_event(
+            record,
+            "memory_recall_generated",
+            match_count=len(result.get("memory_recall", {}).get("matches", [])),
+        )
 
     @staticmethod
     def load_record(run_id: str, runs_dir: Path = Path("runs")) -> TeamRunRecord:

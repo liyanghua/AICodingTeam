@@ -6,7 +6,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from .artifacts import append_jsonl
 from .deterministic_device import CoordinateProfile, DOWNLOAD_POINTS, DeterministicDevice
@@ -21,7 +21,49 @@ RISK_TEXTS = {
     "permission_prompt": ["允许访问", "照片和视频", "权限"],
 }
 ALBUM_GRID_MARKERS = ("全部照片", "收起", "RecyclerView", "GridView")
+IMAGE_SEARCH_ALBUM_PAGE_MARKERS = (
+    "相册",
+    "拍照",
+    "全部照片",
+    "最近项目",
+    "允许访问",
+    "RecyclerView",
+    "GridView",
+)
 HOME_PAGE_MARKERS = ("首页", "发现", "关注", "推荐")
+NON_HOME_PAGE_MARKERS = (
+    "取消",
+    "搜索历史",
+    "综合",
+    "用户",
+    "商品",
+    "search_edit",
+    "searchEdit",
+    "android.widget.EditText",
+    "EditText",
+    "相册",
+    "拍照",
+    "全部照片",
+    "最近项目",
+    "允许访问",
+    "RecyclerView",
+    "GridView",
+    "输入关于图片的问题",
+    "图片分析中",
+    "试试单击图片任意位置搜索",
+    "图搜",
+    "结果",
+    "相关",
+    "相似",
+    "搜索结果",
+    "AI回答",
+    "AI 回答",
+    "评论",
+    "说点什么",
+    "点赞",
+    "收藏",
+    "分享",
+)
 SEARCH_PAGE_MARKERS = (
     "取消",
     "搜索历史",
@@ -68,6 +110,23 @@ class DeterministicRiskError(RuntimeError):
         self.item_id = item_id
 
 
+class CancelToken(Protocol):
+    def is_cancel_requested(self) -> bool: ...
+
+
+class CollectionCanceled(RuntimeError):
+    pass
+
+
+def _cancel_requested(cancel_token: CancelToken | None) -> bool:
+    return bool(cancel_token and cancel_token.is_cancel_requested())
+
+
+def _raise_if_cancel_requested(cancel_token: CancelToken | None) -> None:
+    if _cancel_requested(cancel_token):
+        raise CollectionCanceled("canceled")
+
+
 def detect_risk_text(ui_text: str) -> str | None:
     if _download_permission_hint(ui_text):
         return None
@@ -100,6 +159,7 @@ def run_deterministic_item(
     target_category: str = "",
     target_category_keywords: list[str] | tuple[str, ...] | None = None,
     sleep_func: Callable[[float], None] = time.sleep,
+    cancel_token: CancelToken | None = None,
 ) -> ItemResult:
     step_count = 0
     template_hits: list[dict] = []
@@ -112,6 +172,7 @@ def run_deterministic_item(
 
     def step(name: str, payload: dict | None = None) -> None:
         nonlocal step_count
+        _raise_if_cancel_requested(cancel_token)
         step_count += 1
         append_jsonl(
             output_dir / "step_events.jsonl",
@@ -122,6 +183,7 @@ def run_deterministic_item(
             save_debug(output_dir, f"{item.item_id}_{step_count:03d}_{name}")
 
     def tap_profile(point_name: str, event_name: str, payload: dict | None = None) -> None:
+        _raise_if_cancel_requested(cancel_token)
         try:
             device.click_ratio(*profile.point(point_name))
             step(event_name, payload)
@@ -141,402 +203,652 @@ def run_deterministic_item(
             template_hits.append(hit)
             step(event_name, {**(payload or {}), "template_hit": hit})
 
-    device.start_app(xhs_package)
-    step("start_app", {"package": xhs_package})
-    start_settle_seconds = (
-        throttle_seconds
-        if app_start_wait_seconds is None
-        else max(throttle_seconds, app_start_wait_seconds)
-    )
-    if start_settle_seconds:
-        sleep_func(start_settle_seconds)
-        step("wait_app_start_settle", {"seconds": start_settle_seconds})
-    risk = detect_risk_text(device.dump_hierarchy())
-    if risk:
+    try:
+        start_settle_seconds = (
+            throttle_seconds
+            if app_start_wait_seconds is None
+            else max(throttle_seconds, app_start_wait_seconds)
+        )
+        xhs_ready = ensure_xhs_ready_for_search(
+            device=device,
+            xhs_package=xhs_package,
+            settle_seconds=start_settle_seconds,
+            timeout_seconds=save_poll_seconds,
+            sleep_func=sleep_func,
+            item_id=item.item_id,
+            step=step,
+            cancel_token=cancel_token,
+        )
+        if not xhs_ready:
+            return _failed_item(
+                item=item,
+                message="xhs_home_not_ready_before_search",
+                event="xhs_home_not_ready_before_search",
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+    except DeterministicRiskError as exc:
         return ItemResult(
             item_id=item.item_id,
             keyword=item.keyword,
             status="failed",
             keyword_candidates=item.keyword_candidates,
-            message=risk,
-            risk_events=[{"event": risk, "item_id": item.item_id}],
-            step_count=step_count,
-        )
-
-    remote_reference = device.push_reference_image(
-        item.reference_image, item.item_id, remote_image_dir
-    )
-    step("push_reference", {"remote_reference": remote_reference})
-    media_scan_wait_seconds = min(1.0, save_poll_seconds) if save_poll_seconds else 0
-    if media_scan_wait_seconds:
-        sleep_func(media_scan_wait_seconds)
-    step("wait_reference_media_scanned", {"seconds": media_scan_wait_seconds})
-
-    if not _tap_search_box_until_search_page(
-        device=device,
-        profile=profile,
-        xhs_package=xhs_package,
-        timeout_seconds=save_poll_seconds,
-        sleep_func=sleep_func,
-        item_id=item.item_id,
-        tap_profile=tap_profile,
-        step=step,
-    ):
-        return _failed_item(
-            item=item,
-            message="search_page_not_reached_after_retries",
-            event="search_page_not_reached_after_retries",
+            message=exc.event,
+            risk_events=[{"event": exc.event, "item_id": exc.item_id}],
             step_count=step_count,
             template_hits=template_hits,
         )
-
-    for point_name in ("image_search_button", "album_entry"):
-        tap_profile(point_name, f"tap_{point_name}")
-
-    album_image_targets = _wait_for_album_thumbnail_targets(
-        device=device,
-        profile=profile,
-        timeout_seconds=save_poll_seconds,
-        sleep_func=sleep_func,
-        item_id=item.item_id,
-        limit=3,
-    )
-    if not album_image_targets:
-        hierarchy = device.dump_hierarchy()
-        has_album_grid = _hierarchy_has_marker_group(
-            "album_grid", ALBUM_GRID_MARKERS, hierarchy
-        )
-        event_name = "album_thumbnail_not_found" if has_album_grid else "album_grid_not_ready"
-        step(
-            event_name,
-            {
-                "expected_markers": list(ALBUM_GRID_MARKERS),
-                "message": (
-                    "album thumbnail candidate not found"
-                    if has_album_grid
-                    else "album grid not ready"
-                ),
-            },
-        )
-        return _failed_item(
+    except CollectionCanceled:
+        return _canceled_item(
             item=item,
-            message=event_name,
-            event=event_name,
             step_count=step_count,
             template_hits=template_hits,
+            output_dir=output_dir,
+            images=images,
+            risk_events=rank_failures,
         )
+    try:
+        risk = detect_risk_text(device.dump_hierarchy())
+        if risk:
+            return ItemResult(
+                item_id=item.item_id,
+                keyword=item.keyword,
+                status="failed",
+                keyword_candidates=item.keyword_candidates,
+                message=risk,
+                risk_events=[{"event": risk, "item_id": item.item_id}],
+                step_count=step_count,
+            )
 
-    image_state = None
-    attempted_album_targets: list[dict] = []
-    attempted_signatures: set[str] = set()
-    for attempt_index, album_image_target in enumerate(album_image_targets, start=1):
-        if attempt_index > 3:
-            break
-        _click_target(device, album_image_target)
-        attempt_payload = {
-            "attempt": attempt_index,
-            "click_source": album_image_target["click_source"],
-            "point": album_image_target["point"],
-            "click_point": album_image_target.get("click_point"),
-            "album_image_bounds": album_image_target.get("bounds"),
-        }
-        attempted_album_targets.append(
-            {
-                "attempt": attempt_index,
-                "click_source": album_image_target["click_source"],
-                "point": album_image_target["point"],
-                "click_point": album_image_target.get("click_point"),
-                "bounds": album_image_target.get("bounds"),
-            }
+        _raise_if_cancel_requested(cancel_token)
+        remote_reference = device.push_reference_image(
+            item.reference_image, item.item_id, remote_image_dir
         )
-        attempted_signatures.add(_album_target_signature(album_image_target))
-        step("tap_first_album_image", attempt_payload)
-        image_state = _wait_for_first_match(
+        step("push_reference", {"remote_reference": remote_reference})
+        media_scan_wait_seconds = min(1.0, save_poll_seconds) if save_poll_seconds else 0
+        if media_scan_wait_seconds:
+            sleep_func(media_scan_wait_seconds)
+            _raise_if_cancel_requested(cancel_token)
+        step("wait_reference_media_scanned", {"seconds": media_scan_wait_seconds})
+        if not _tap_search_box_until_search_page(
             device=device,
-            marker_groups={
-                "image_analysis": IMAGE_ANALYSIS_MARKERS,
-                "album_confirm": ALBUM_CONFIRM_MARKERS,
-            },
+            profile=profile,
+            xhs_package=xhs_package,
             timeout_seconds=save_poll_seconds,
             sleep_func=sleep_func,
             item_id=item.item_id,
-        )
-        if image_state in {"image_analysis", "album_confirm"}:
-            break
-        hierarchy = device.dump_hierarchy()
-        state = (
-            "album_grid"
-            if _hierarchy_has_marker_group("album_grid", ALBUM_GRID_MARKERS, hierarchy)
-            else image_state or "timeout"
-        )
-        step(
-            "album_thumbnail_candidate_not_selected",
-            {
-                **attempt_payload,
-                "state": state,
-                "message": "album thumbnail candidate click did not select reference image",
-            },
-        )
-        if attempt_index < len(album_image_targets):
-            continue
-        refreshed_targets = _wait_for_album_thumbnail_targets(
+            tap_profile=tap_profile,
+            step=step,
+            cancel_token=cancel_token,
+        ):
+            return _failed_item(
+                item=item,
+                message="search_page_not_reached_after_retries",
+                event="search_page_not_reached_after_retries",
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+        _raise_if_cancel_requested(cancel_token)
+
+        if not _tap_image_search_button_until_album_page(
+            device=device,
+            profile=profile,
+            xhs_package=xhs_package,
+            timeout_seconds=save_poll_seconds,
+            sleep_func=sleep_func,
+            item_id=item.item_id,
+            tap_profile=tap_profile,
+            step=step,
+            cancel_token=cancel_token,
+        ):
+            return _failed_item(
+                item=item,
+                message="image_search_album_not_reached_after_retries",
+                event="image_search_album_not_reached_after_retries",
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+
+        tap_profile("album_entry", "tap_album_entry")
+
+        album_image_targets = _wait_for_album_thumbnail_targets(
             device=device,
             profile=profile,
             timeout_seconds=save_poll_seconds,
             sleep_func=sleep_func,
             item_id=item.item_id,
             limit=3,
+            cancel_token=cancel_token,
         )
-        for refreshed_target in refreshed_targets:
-            signature = _album_target_signature(refreshed_target)
-            if signature in attempted_signatures:
+        if not album_image_targets:
+            hierarchy = device.dump_hierarchy()
+            has_album_grid = _hierarchy_has_marker_group(
+                "album_grid", ALBUM_GRID_MARKERS, hierarchy
+            )
+            event_name = "album_thumbnail_not_found" if has_album_grid else "album_grid_not_ready"
+            step(
+                event_name,
+                {
+                    "expected_markers": list(ALBUM_GRID_MARKERS),
+                    "message": (
+                        "album thumbnail candidate not found"
+                        if has_album_grid
+                        else "album grid not ready"
+                    ),
+                },
+            )
+            return _failed_item(
+                item=item,
+                message=event_name,
+                event=event_name,
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+
+        image_state = None
+        attempted_album_targets: list[dict] = []
+        attempted_signatures: set[str] = set()
+        for attempt_index, album_image_target in enumerate(album_image_targets, start=1):
+            if attempt_index > 3:
+                break
+            _click_target(device, album_image_target)
+            attempt_payload = {
+                "attempt": attempt_index,
+                "click_source": album_image_target["click_source"],
+                "point": album_image_target["point"],
+                "click_point": album_image_target.get("click_point"),
+                "album_image_bounds": album_image_target.get("bounds"),
+            }
+            attempted_album_targets.append(
+                {
+                    "attempt": attempt_index,
+                    "click_source": album_image_target["click_source"],
+                    "point": album_image_target["point"],
+                    "click_point": album_image_target.get("click_point"),
+                    "bounds": album_image_target.get("bounds"),
+                }
+            )
+            attempted_signatures.add(_album_target_signature(album_image_target))
+            step("tap_first_album_image", attempt_payload)
+            image_state = _wait_for_first_match(
+                device=device,
+                marker_groups={
+                    "image_analysis": IMAGE_ANALYSIS_MARKERS,
+                    "album_confirm": ALBUM_CONFIRM_MARKERS,
+                },
+                timeout_seconds=save_poll_seconds,
+                sleep_func=sleep_func,
+                item_id=item.item_id,
+                cancel_token=cancel_token,
+            )
+            if image_state in {"image_analysis", "album_confirm"}:
+                break
+            hierarchy = device.dump_hierarchy()
+            state = (
+                "album_grid"
+                if _hierarchy_has_marker_group("album_grid", ALBUM_GRID_MARKERS, hierarchy)
+                else image_state or "timeout"
+            )
+            step(
+                "album_thumbnail_candidate_not_selected",
+                {
+                    **attempt_payload,
+                    "state": state,
+                    "message": "album thumbnail candidate click did not select reference image",
+                },
+            )
+            if attempt_index < len(album_image_targets):
                 continue
-            album_image_targets.append(refreshed_target)
-            break
-    if image_state == "album_confirm":
-        tap_profile("album_confirm", "tap_album_confirm")
+            refreshed_targets = _wait_for_album_thumbnail_targets(
+                device=device,
+                profile=profile,
+                timeout_seconds=save_poll_seconds,
+                sleep_func=sleep_func,
+                item_id=item.item_id,
+                limit=3,
+                cancel_token=cancel_token,
+            )
+            for refreshed_target in refreshed_targets:
+                signature = _album_target_signature(refreshed_target)
+                if signature in attempted_signatures:
+                    continue
+                album_image_targets.append(refreshed_target)
+                break
+        if image_state == "album_confirm":
+            tap_profile("album_confirm", "tap_album_confirm")
+            if not _wait_for_markers(
+                device=device,
+                markers=IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS,
+                timeout_seconds=save_poll_seconds,
+                sleep_func=sleep_func,
+                item_id=item.item_id,
+                cancel_token=cancel_token,
+            ):
+                step(
+                    "album_confirm_failed",
+                    {
+                        "expected_markers": list(
+                            IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS
+                        )
+                    },
+                )
+                return _failed_item(
+                    item=item,
+                    message="album_confirm_failed",
+                    event="album_confirm_failed",
+                    step_count=step_count,
+                    template_hits=template_hits,
+                )
+        elif image_state != "image_analysis":
+            hierarchy = device.dump_hierarchy()
+            state = (
+                "album_grid"
+                if _hierarchy_has_marker_group("album_grid", ALBUM_GRID_MARKERS, hierarchy)
+                else image_state or "timeout"
+            )
+            step(
+                "album_thumbnail_candidates_exhausted",
+                {
+                    "state": state,
+                    "attempted_candidates": attempted_album_targets,
+                    "candidate_count": len(attempted_album_targets),
+                    "message": "all album thumbnail candidates failed to select reference image",
+                },
+            )
+            return _failed_item(
+                item=item,
+                message="album_thumbnail_candidates_exhausted",
+                event="album_thumbnail_candidates_exhausted",
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+
+        if throttle_seconds:
+            sleep_func(throttle_seconds)
+        step("wait_image_search_results", {"mode": "wait_only"})
         if not _wait_for_markers(
             device=device,
             markers=IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS,
             timeout_seconds=save_poll_seconds,
             sleep_func=sleep_func,
             item_id=item.item_id,
+            cancel_token=cancel_token,
         ):
             step(
-                "album_confirm_failed",
-                {
-                    "expected_markers": list(
-                        IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS
-                    )
-                },
+                "image_search_results_not_reached",
+                {"expected_markers": list(IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS)},
             )
             return _failed_item(
                 item=item,
-                message="album_confirm_failed",
-                event="album_confirm_failed",
+                message="image_search_results_not_reached",
+                event="image_search_results_not_reached",
                 step_count=step_count,
                 template_hits=template_hits,
             )
-    elif image_state != "image_analysis":
-        hierarchy = device.dump_hierarchy()
-        state = (
-            "album_grid"
-            if _hierarchy_has_marker_group("album_grid", ALBUM_GRID_MARKERS, hierarchy)
-            else image_state or "timeout"
+
+        if media_store is None:
+            return ItemResult(
+                item_id=item.item_id,
+                keyword=item.keyword,
+                status="completed",
+                keyword_candidates=item.keyword_candidates,
+                collected_count=0,
+                images=images,
+                message="image search results reached",
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+
+        profile.require_points(DOWNLOAD_POINTS)
+        _check_risk_or_raise(device, item.item_id)
+        step("wait_subject_recognition", {"seconds": subject_recognition_wait_seconds})
+        if subject_recognition_wait_seconds:
+            sleep_func(subject_recognition_wait_seconds)
+        _check_risk_or_raise(device, item.item_id)
+
+        seen_image_hashes: set[str] = set()
+        image_results, image_failures = _download_visible_note_results(
+            stage="image_search",
+            query="",
+            filename_prefix="rank",
+            target_count=image_target_count,
+            item=item,
+            device=device,
+            media_store=media_store,
+            profile=profile,
+            output_item_dir=output_item_dir,
+            save_poll_seconds=save_poll_seconds,
+            sleep_func=sleep_func,
+            on_after_save=on_after_save,
+            max_result_scrolls=max_result_scrolls,
+            seen_image_hashes=seen_image_hashes,
+            target_category=target_category,
+            target_category_keywords=target_category_keywords,
+            step=step,
+            cancel_token=cancel_token,
         )
+        images.extend(image_results)
+        rank_failures.extend(image_failures)
+
+        keyword_queries = _keyword_queries(item, keyword_top_n)
         step(
-            "album_thumbnail_candidates_exhausted",
+            "keyword_search_plan",
             {
-                "state": state,
-                "attempted_candidates": attempted_album_targets,
-                "candidate_count": len(attempted_album_targets),
-                "message": "all album thumbnail candidates failed to select reference image",
+                "keyword_top_n": keyword_top_n,
+                "keyword_result_top_n": keyword_target_count,
+                "keyword_query_count": len(keyword_queries),
+                "queries": keyword_queries,
             },
         )
-        return _failed_item(
-            item=item,
-            message="album_thumbnail_candidates_exhausted",
-            event="album_thumbnail_candidates_exhausted",
-            step_count=step_count,
-            template_hits=template_hits,
+        image_stage_blocked = any(
+            failure.get("event") == "result_list_not_restored_after_back"
+            for failure in image_failures
         )
+        if keyword_queries:
+            if not image_stage_blocked:
+                if image_failures:
+                    step(
+                        "continue_keyword_search_after_image_download_failures",
+                        {
+                            "event": "continue_keyword_search_after_image_download_failures",
+                            "item_id": item.item_id,
+                            "query": keyword_queries[0],
+                            "image_downloaded_count": len(image_results),
+                            "image_failure_count": len(image_failures),
+                        },
+                    )
+                total_keyword_queries = len(keyword_queries)
+                for keyword_index, keyword_query in enumerate(keyword_queries, start=1):
+                    filename_prefix = (
+                        "keyword_rank"
+                        if total_keyword_queries == 1
+                        else f"keyword_{keyword_index:03d}_rank"
+                    )
+                    step(
+                        "start_keyword_search_query",
+                        {
+                            "keyword_index": keyword_index,
+                            "query": keyword_query,
+                            "filename_prefix": filename_prefix,
+                        },
+                    )
+                    keyword_started = _perform_keyword_search(
+                        query=keyword_query,
+                        item=item,
+                        device=device,
+                        profile=profile,
+                        save_poll_seconds=save_poll_seconds,
+                        sleep_func=sleep_func,
+                        step=step,
+                        cancel_token=cancel_token,
+                    )
+                    if not keyword_started:
+                        failure = {
+                            "event": "keyword_search_failed",
+                            "item_id": item.item_id,
+                            "query": keyword_query,
+                            "keyword_index": keyword_index,
+                        }
+                        rank_failures.append(failure)
+                        step("skip_keyword_query_due_to_blocked_state", failure)
+                        break
+                    keyword_results, keyword_failures = _download_visible_note_results(
+                        stage="keyword_search",
+                        query=keyword_query,
+                        filename_prefix=filename_prefix,
+                        target_count=keyword_target_count,
+                        item=item,
+                        device=device,
+                        media_store=media_store,
+                        profile=profile,
+                        output_item_dir=output_item_dir,
+                        save_poll_seconds=save_poll_seconds,
+                        sleep_func=sleep_func,
+                        on_after_save=on_after_save,
+                        max_result_scrolls=max_result_scrolls,
+                        seen_image_hashes=seen_image_hashes,
+                        keyword_index=keyword_index,
+                        target_category=target_category,
+                        target_category_keywords=target_category_keywords,
+                        step=step,
+                        cancel_token=cancel_token,
+                    )
+                    images.extend(keyword_results)
+                    rank_failures.extend(keyword_failures)
+                    keyword_stage_blocked = any(
+                        failure.get("event") == "result_list_not_restored_after_back"
+                        for failure in keyword_failures
+                    )
+                    step(
+                        "finish_keyword_search_query",
+                        {
+                            "keyword_index": keyword_index,
+                            "query": keyword_query,
+                            "filename_prefix": filename_prefix,
+                            "downloaded_count": len(keyword_results),
+                            "failure_count": len(keyword_failures),
+                            "blocked": keyword_stage_blocked,
+                        }
+                    )
+                    if keyword_stage_blocked:
+                        if keyword_index < total_keyword_queries:
+                            step(
+                                "skip_keyword_query_due_to_blocked_state",
+                                {
+                                    "event": "skip_keyword_query_due_to_blocked_state",
+                                    "item_id": item.item_id,
+                                    "keyword_index": keyword_index + 1,
+                                    "query": keyword_queries[keyword_index],
+                                    "blocked_by_keyword_index": keyword_index,
+                                },
+                            )
+                        break
+            elif image_stage_blocked:
+                skip_event = {
+                    "event": "skip_keyword_search_due_to_result_list_not_restored",
+                    "item_id": item.item_id,
+                    "query": keyword_queries[0],
+                }
+                step("skip_keyword_search_due_to_result_list_not_restored", skip_event)
+                rank_failures.append(skip_event)
 
-    if throttle_seconds:
-        sleep_func(throttle_seconds)
-    step("wait_image_search_results", {"mode": "wait_only"})
-    if not _wait_for_markers(
-        device=device,
-        markers=IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS,
-        timeout_seconds=save_poll_seconds,
-        sleep_func=sleep_func,
-        item_id=item.item_id,
-    ):
-        step(
-            "image_search_results_not_reached",
-            {"expected_markers": list(IMAGE_ANALYSIS_MARKERS + RESULT_PAGE_MARKERS)},
-        )
-        return _failed_item(
-            item=item,
-            message="image_search_results_not_reached",
-            event="image_search_results_not_reached",
-            step_count=step_count,
-            template_hits=template_hits,
-        )
-
-    if media_store is None:
-        return ItemResult(
+        expected_count = image_target_count + keyword_target_count * len(keyword_queries)
+        status = "completed" if len(images) >= expected_count else "partial"
+        if expected_count:
+            result_label = (
+                "image search and keyword results"
+                if keyword_queries
+                else "image search results"
+            )
+            message = f"downloaded {len(images)} of {expected_count} {result_label}"
+        else:
+            message = "image search results reached"
+        result = ItemResult(
             item_id=item.item_id,
             keyword=item.keyword,
-            status="completed",
+            status=status,
             keyword_candidates=item.keyword_candidates,
-            collected_count=0,
+            collected_count=len(images),
             images=images,
-            message="image search results reached",
+            message=message,
+            risk_events=rank_failures,
             step_count=step_count,
             template_hits=template_hits,
         )
+        return result
+    except CollectionCanceled:
+        return _canceled_item(
+            item=item,
+            step_count=step_count,
+            template_hits=template_hits,
+            output_dir=output_dir,
+            images=images,
+            risk_events=rank_failures,
+        )
 
-    profile.require_points(DOWNLOAD_POINTS)
-    _check_risk_or_raise(device, item.item_id)
-    step("wait_subject_recognition", {"seconds": subject_recognition_wait_seconds})
-    if subject_recognition_wait_seconds:
-        sleep_func(subject_recognition_wait_seconds)
-    _check_risk_or_raise(device, item.item_id)
 
-    seen_image_hashes: set[str] = set()
-    image_results, image_failures = _download_visible_note_results(
-        stage="image_search",
-        query="",
-        filename_prefix="rank",
-        target_count=image_target_count,
-        item=item,
+def ensure_xhs_ready_for_search(
+    *,
+    device,
+    xhs_package: str,
+    settle_seconds: float,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+    step: Callable[[str, dict | None], None],
+    cancel_token: CancelToken | None = None,
+) -> bool:
+    _raise_if_cancel_requested(cancel_token)
+    current_package = _current_device_package(device)
+    package_status_known = _device_package_status_known(device)
+    if current_package != xhs_package:
+        device.start_app(xhs_package)
+        step(
+            "start_app",
+            {
+                "package": xhs_package,
+                "reason": "not_foreground",
+                "current_package": current_package,
+            },
+        )
+        if settle_seconds:
+            sleep_func(settle_seconds)
+            _raise_if_cancel_requested(cancel_token)
+            step("wait_app_start_settle", {"seconds": settle_seconds})
+        home_reached = _wait_for_home_page(
+            device=device,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            cancel_token=cancel_token,
+        )
+        if home_reached:
+            step("xhs_home_ready", {"source": "start_app", "home_reached": True})
+            return True
+        if not package_status_known:
+            step(
+                "xhs_home_ready",
+                {
+                    "source": "start_app_unverified",
+                    "home_reached": False,
+                    "verification": "package_status_unavailable",
+                },
+            )
+            return True
+        recover_event = _recover_home_after_search_box_miss(
+            device=device,
+            xhs_package=xhs_package,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            cancel_token=cancel_token,
+        )
+        step(
+            "recover_xhs_home_before_search",
+            {"reason": "start_app_home_not_reached", **recover_event},
+        )
+        if recover_event["home_reached"]:
+            step(
+                "xhs_home_ready",
+                {"source": recover_event["back_source"], "home_reached": True},
+            )
+            return True
+        step("xhs_home_ready", {"source": "start_app", "home_reached": False})
+        return False
+
+    hierarchy = device.dump_hierarchy()
+    if _hierarchy_has_marker_group("home_page", HOME_PAGE_MARKERS, hierarchy):
+        step("xhs_home_ready", {"source": "foreground", "home_reached": True})
+        return True
+
+    press_back = getattr(device, "press_back", None)
+    back_source = "unavailable"
+    home_reached = False
+    if press_back is not None:
+        press_back()
+        back_source = "press_back"
+        home_reached = _wait_for_home_page(
+            device=device,
+            timeout_seconds=min(1.0, timeout_seconds) if timeout_seconds else 0,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            cancel_token=cancel_token,
+        )
+        step(
+            "recover_xhs_home_before_search",
+            {"source": back_source, "home_reached": home_reached},
+        )
+    if home_reached:
+        step("xhs_home_ready", {"source": back_source, "home_reached": True})
+        return True
+
+    device.start_app(xhs_package)
+    step(
+        "start_app",
+        {
+            "package": xhs_package,
+            "reason": "home_not_reached",
+            "current_package": current_package,
+        },
+    )
+    if settle_seconds:
+        sleep_func(settle_seconds)
+        _raise_if_cancel_requested(cancel_token)
+        step("wait_app_start_settle", {"seconds": settle_seconds})
+    home_reached = _wait_for_home_page(
         device=device,
-        media_store=media_store,
-        profile=profile,
-        output_item_dir=output_item_dir,
-        save_poll_seconds=save_poll_seconds,
+        timeout_seconds=timeout_seconds,
         sleep_func=sleep_func,
-        on_after_save=on_after_save,
-        max_result_scrolls=max_result_scrolls,
-        seen_image_hashes=seen_image_hashes,
-        target_category=target_category,
-        target_category_keywords=target_category_keywords,
-        step=step,
+        item_id=item_id,
+        cancel_token=cancel_token,
     )
-    images.extend(image_results)
-    rank_failures.extend(image_failures)
+    if not home_reached:
+        recover_event = _recover_home_after_search_box_miss(
+            device=device,
+            xhs_package=xhs_package,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            cancel_token=cancel_token,
+        )
+        step(
+            "recover_xhs_home_before_search",
+            {"reason": "restart_app_home_not_reached", **recover_event},
+        )
+        home_reached = bool(recover_event["home_reached"])
+        if home_reached:
+            step(
+                "xhs_home_ready",
+                {"source": recover_event["back_source"], "home_reached": True},
+            )
+            return True
+    step("xhs_home_ready", {"source": "restart_app", "home_reached": home_reached})
+    return home_reached
 
-    keyword_queries = _keyword_queries(item, keyword_top_n)
-    image_stage_blocked = any(
-        failure.get("event") == "result_list_not_restored_after_back"
-        for failure in image_failures
-    )
-    if keyword_queries:
-        if not image_stage_blocked:
-            if image_failures:
-                step(
-                    "continue_keyword_search_after_image_download_failures",
-                    {
-                        "event": "continue_keyword_search_after_image_download_failures",
-                        "item_id": item.item_id,
-                        "query": keyword_queries[0],
-                        "image_downloaded_count": len(image_results),
-                        "image_failure_count": len(image_failures),
-                    },
-                )
-            total_keyword_queries = len(keyword_queries)
-            for keyword_index, keyword_query in enumerate(keyword_queries, start=1):
-                filename_prefix = (
-                    "keyword_rank"
-                    if total_keyword_queries == 1
-                    else f"keyword_{keyword_index:03d}_rank"
-                )
-                step(
-                    "start_keyword_search_query",
-                    {
-                        "keyword_index": keyword_index,
-                        "query": keyword_query,
-                        "filename_prefix": filename_prefix,
-                    },
-                )
-                keyword_started = _perform_keyword_search(
-                    query=keyword_query,
-                    item=item,
-                    device=device,
-                    profile=profile,
-                    save_poll_seconds=save_poll_seconds,
-                    sleep_func=sleep_func,
-                    step=step,
-                )
-                if not keyword_started:
-                    failure = {
-                        "event": "keyword_search_failed",
-                        "item_id": item.item_id,
-                        "query": keyword_query,
-                        "keyword_index": keyword_index,
-                    }
-                    rank_failures.append(failure)
-                    step("skip_keyword_query_due_to_blocked_state", failure)
-                    break
-                keyword_results, keyword_failures = _download_visible_note_results(
-                    stage="keyword_search",
-                    query=keyword_query,
-                    filename_prefix=filename_prefix,
-                    target_count=keyword_target_count,
-                    item=item,
-                    device=device,
-                    media_store=media_store,
-                    profile=profile,
-                    output_item_dir=output_item_dir,
-                    save_poll_seconds=save_poll_seconds,
-                    sleep_func=sleep_func,
-                    on_after_save=on_after_save,
-                    max_result_scrolls=max_result_scrolls,
-                    seen_image_hashes=seen_image_hashes,
-                    keyword_index=keyword_index,
-                    target_category=target_category,
-                    target_category_keywords=target_category_keywords,
-                    step=step,
-                )
-                images.extend(keyword_results)
-                rank_failures.extend(keyword_failures)
-                keyword_stage_blocked = any(
-                    failure.get("event") == "result_list_not_restored_after_back"
-                    for failure in keyword_failures
-                )
-                step(
-                    "finish_keyword_search_query",
-                    {
-                        "keyword_index": keyword_index,
-                        "query": keyword_query,
-                        "filename_prefix": filename_prefix,
-                        "downloaded_count": len(keyword_results),
-                        "failure_count": len(keyword_failures),
-                        "blocked": keyword_stage_blocked,
-                    }
-                )
-                if keyword_stage_blocked:
-                    if keyword_index < total_keyword_queries:
-                        step(
-                            "skip_keyword_query_due_to_blocked_state",
-                            {
-                                "event": "skip_keyword_query_due_to_blocked_state",
-                                "item_id": item.item_id,
-                                "keyword_index": keyword_index + 1,
-                                "query": keyword_queries[keyword_index],
-                                "blocked_by_keyword_index": keyword_index,
-                            },
-                        )
-                    break
-        elif image_stage_blocked:
-            skip_event = {
-                "event": "skip_keyword_search_due_to_result_list_not_restored",
-                "item_id": item.item_id,
-                "query": keyword_queries[0],
-            }
-            step("skip_keyword_search_due_to_result_list_not_restored", skip_event)
-            rank_failures.append(skip_event)
 
-    expected_count = image_target_count + keyword_target_count * len(keyword_queries)
-    status = "completed" if len(images) >= expected_count else "partial"
-    message = (
-        f"downloaded {len(images)} of {expected_count} image search and keyword results"
-        if expected_count
-        else "image search results reached"
-    )
-    result = ItemResult(
-        item_id=item.item_id,
-        keyword=item.keyword,
-        status=status,
-        keyword_candidates=item.keyword_candidates,
-        collected_count=len(images),
-        images=images,
-        message=message,
-        risk_events=rank_failures,
-        step_count=step_count,
-        template_hits=template_hits,
-    )
-    return result
+def _current_device_package(device) -> str:
+    current_package = getattr(device, "current_package", None)
+    if current_package is not None:
+        try:
+            return str(current_package() or "")
+        except Exception:
+            return ""
+    app_current = getattr(device, "app_current", None)
+    if app_current is None:
+        return ""
+    try:
+        current = app_current()
+    except Exception:
+        return ""
+    if isinstance(current, dict):
+        return str(current.get("package") or "")
+    return str(current or "")
+
+
+def _device_package_status_known(device) -> bool:
+    return getattr(device, "current_package", None) is not None or getattr(
+        device, "app_current", None
+    ) is not None
 
 
 def run_deterministic_collect(
@@ -546,6 +858,7 @@ def run_deterministic_collect(
     output_dir: Path,
     manifest,
     write_result: Callable[[ItemResult], None],
+    cancel_token: CancelToken | None = None,
 ) -> None:
     profile = CoordinateProfile.load(config.deterministic.coordinate_profile)
     device = DeterministicDevice.connect(config.device_serial)
@@ -577,6 +890,7 @@ def run_deterministic_collect(
                 keyword_result_top_n=config.keyword_result_top_n,
                 target_category=config.target_category,
                 target_category_keywords=config.target_category_keywords,
+                cancel_token=cancel_token,
             )
         except DeterministicRiskError as exc:
             result = ItemResult(
@@ -594,9 +908,16 @@ def run_deterministic_collect(
                 status="failed",
                 keyword_candidates=item.keyword_candidates,
                 message=str(exc),
-                risk_events=[{"event": "deterministic_failed", "reason": str(exc)}],
+                risk_events=[_deterministic_failure_event(exc)],
             )
         write_result(result)
+
+
+def _deterministic_failure_event(exc: Exception) -> dict:
+    reason = str(exc)
+    if "INJECT_EVENTS" in reason or "Injecting input events" in reason:
+        return {"event": "device_input_permission_required", "reason": reason}
+    return {"event": "deterministic_failed", "reason": reason}
 
 
 def _best_keyword_hit(candidates: list[str], ui_text: str) -> str:
@@ -643,6 +964,36 @@ def _failed_item(
     )
 
 
+def _canceled_item(
+    *,
+    item: InputItem,
+    step_count: int,
+    template_hits: list[dict],
+    output_dir: Path,
+    images: list[CollectedImage] | None = None,
+    risk_events: list[dict] | None = None,
+) -> ItemResult:
+    collected_images = list(images or [])
+    events = list(risk_events or [])
+    events.append({"event": "collection_canceled", "item_id": item.item_id})
+    append_jsonl(
+        output_dir / "step_events.jsonl",
+        {"step": step_count + 1, "name": "collection_canceled", "item_id": item.item_id},
+    )
+    return ItemResult(
+        item_id=item.item_id,
+        keyword=item.keyword,
+        status="canceled",
+        keyword_candidates=item.keyword_candidates,
+        collected_count=len(collected_images),
+        images=collected_images,
+        message="canceled",
+        risk_events=events,
+        step_count=step_count + 1,
+        template_hits=template_hits,
+    )
+
+
 def _tap_search_box_until_search_page(
     *,
     device,
@@ -654,14 +1005,17 @@ def _tap_search_box_until_search_page(
     tap_profile: Callable[[str, str, dict | None], None],
     step: Callable[[str, dict | None], None],
     max_attempts: int = 3,
+    cancel_token: CancelToken | None = None,
 ) -> bool:
     for attempt in range(1, max_attempts + 1):
+        _raise_if_cancel_requested(cancel_token)
         tap_profile("search_box", "tap_search_box", {"attempt": attempt})
         reached = _wait_for_search_page(
             device=device,
             timeout_seconds=timeout_seconds,
             sleep_func=sleep_func,
             item_id=item_id,
+            cancel_token=cancel_token,
         )
         step(
             "wait_search_page_after_search_box",
@@ -689,6 +1043,7 @@ def _tap_search_box_until_search_page(
             timeout_seconds=timeout_seconds,
             sleep_func=sleep_func,
             item_id=item_id,
+            cancel_token=cancel_token,
         )
         step(
             "back_after_search_box_miss",
@@ -713,6 +1068,7 @@ def _wait_for_search_page(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> bool:
     return _wait_for_markers(
         device=device,
@@ -720,6 +1076,7 @@ def _wait_for_search_page(
         timeout_seconds=timeout_seconds,
         sleep_func=sleep_func,
         item_id=item_id,
+        cancel_token=cancel_token,
     )
 
 
@@ -730,6 +1087,7 @@ def _recover_home_after_search_box_miss(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> dict:
     press_back = getattr(device, "press_back", None)
     if press_back is not None:
@@ -746,11 +1104,152 @@ def _recover_home_after_search_box_miss(
             timeout_seconds=wait_seconds,
             sleep_func=sleep_func,
             item_id=item_id,
+            cancel_token=cancel_token,
         )
     return {
         "back_source": back_source,
         "wait_seconds": wait_seconds,
         "home_reached": home_reached,
+    }
+
+
+def _tap_image_search_button_until_album_page(
+    *,
+    device,
+    profile: CoordinateProfile,
+    xhs_package: str,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+    tap_profile: Callable[[str, str, dict | None], None],
+    step: Callable[[str, dict | None], None],
+    max_attempts: int = 3,
+    cancel_token: CancelToken | None = None,
+) -> bool:
+    for attempt in range(1, max_attempts + 1):
+        _raise_if_cancel_requested(cancel_token)
+        tap_profile("image_search_button", "tap_image_search_button", {"attempt": attempt})
+        reached = _wait_for_image_search_album_page(
+            device=device,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            cancel_token=cancel_token,
+        )
+        step(
+            "wait_album_page_after_image_search_button",
+            {
+                "attempt": attempt,
+                "reached": reached,
+                "expected_markers": list(IMAGE_SEARCH_ALBUM_PAGE_MARKERS),
+            },
+        )
+        if reached:
+            return True
+        step(
+            "image_search_button_click_not_on_album_page",
+            {
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "expected_markers": list(IMAGE_SEARCH_ALBUM_PAGE_MARKERS),
+            },
+        )
+        if attempt >= max_attempts:
+            break
+        recover_event = _recover_search_page_after_image_search_button_miss(
+            device=device,
+            profile=profile,
+            xhs_package=xhs_package,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            tap_profile=tap_profile,
+            step=step,
+            cancel_token=cancel_token,
+        )
+        step(
+            "back_after_image_search_button_miss",
+            {
+                "attempt": attempt,
+                **recover_event,
+            },
+        )
+    step(
+        "image_search_album_not_reached_after_retries",
+        {
+            "attempts": max_attempts,
+            "expected_markers": list(IMAGE_SEARCH_ALBUM_PAGE_MARKERS),
+        },
+    )
+    return False
+
+
+def _wait_for_image_search_album_page(
+    *,
+    device,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+    cancel_token: CancelToken | None = None,
+) -> bool:
+    return _wait_for_markers(
+        device=device,
+        markers=IMAGE_SEARCH_ALBUM_PAGE_MARKERS,
+        timeout_seconds=timeout_seconds,
+        sleep_func=sleep_func,
+        item_id=item_id,
+        cancel_token=cancel_token,
+    )
+
+
+def _recover_search_page_after_image_search_button_miss(
+    *,
+    device,
+    profile: CoordinateProfile,
+    xhs_package: str,
+    timeout_seconds: float,
+    sleep_func: Callable[[float], None],
+    item_id: str,
+    tap_profile: Callable[[str, str, dict | None], None],
+    step: Callable[[str, dict | None], None],
+    cancel_token: CancelToken | None = None,
+) -> dict:
+    _raise_if_cancel_requested(cancel_token)
+    press_back = getattr(device, "press_back", None)
+    if press_back is not None:
+        press_back()
+        back_source = "press_back"
+    else:
+        device.start_app(xhs_package)
+        back_source = "start_app"
+    wait_seconds = min(1.0, timeout_seconds) if timeout_seconds else 0
+    if wait_seconds:
+        sleep_func(wait_seconds)
+        _raise_if_cancel_requested(cancel_token)
+    search_reached = _wait_for_search_page(
+        device=device,
+        timeout_seconds=timeout_seconds,
+        sleep_func=sleep_func,
+        item_id=item_id,
+        cancel_token=cancel_token,
+    )
+    if not search_reached and back_source == "start_app":
+        search_reached = _tap_search_box_until_search_page(
+            device=device,
+            profile=profile,
+            xhs_package=xhs_package,
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            tap_profile=tap_profile,
+            step=step,
+            max_attempts=1,
+            cancel_token=cancel_token,
+        )
+    return {
+        "back_source": back_source,
+        "wait_seconds": wait_seconds,
+        "search_reached": search_reached,
     }
 
 
@@ -760,13 +1259,18 @@ def _wait_for_home_page(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> bool:
-    return _wait_for_markers(
-        device=device,
-        markers=HOME_PAGE_MARKERS,
-        timeout_seconds=timeout_seconds,
-        sleep_func=sleep_func,
-        item_id=item_id,
+    return (
+        _wait_for_first_match(
+            device=device,
+            marker_groups={"home_page": HOME_PAGE_MARKERS},
+            timeout_seconds=timeout_seconds,
+            sleep_func=sleep_func,
+            item_id=item_id,
+            cancel_token=cancel_token,
+        )
+        == "home_page"
     )
 
 
@@ -777,6 +1281,7 @@ def _wait_for_markers(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> bool:
     return (
         _wait_for_first_match(
@@ -785,6 +1290,7 @@ def _wait_for_markers(
             timeout_seconds=timeout_seconds,
             sleep_func=sleep_func,
             item_id=item_id,
+            cancel_token=cancel_token,
         )
         == "target"
     )
@@ -797,9 +1303,11 @@ def _wait_for_first_match(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> str | None:
     deadline = time.monotonic() + timeout_seconds
     while True:
+        _raise_if_cancel_requested(cancel_token)
         hierarchy = device.dump_hierarchy()
         for name, markers in marker_groups.items():
             if _hierarchy_has_marker_group(name, markers, hierarchy):
@@ -810,14 +1318,28 @@ def _wait_for_first_match(
         if timeout_seconds <= 0 or time.monotonic() >= deadline:
             return None
         sleep_func(min(0.5, timeout_seconds))
+        _raise_if_cancel_requested(cancel_token)
 
 
 def _hierarchy_has_marker_group(
     group_name: str, markers: tuple[str, ...], hierarchy: str
 ) -> bool:
+    if group_name == "home_page":
+        return _is_xhs_home_page(hierarchy)
     if group_name == "album_confirm":
         return _hierarchy_has_album_confirm_marker(hierarchy)
     return any(marker in hierarchy for marker in markers)
+
+
+def _is_xhs_home_page(hierarchy: str) -> bool:
+    if not hierarchy:
+        return False
+    if any(marker in hierarchy for marker in NON_HOME_PAGE_MARKERS):
+        return False
+    if "首页" in hierarchy:
+        return True
+    home_marker_count = sum(1 for marker in HOME_PAGE_MARKERS if marker in hierarchy)
+    return home_marker_count >= 2
 
 
 def _hierarchy_has_album_confirm_marker(hierarchy: str) -> bool:
@@ -861,6 +1383,7 @@ def _wait_for_album_thumbnail_target(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> dict | None:
     targets = _wait_for_album_thumbnail_targets(
         device=device,
@@ -869,6 +1392,7 @@ def _wait_for_album_thumbnail_target(
         sleep_func=sleep_func,
         item_id=item_id,
         limit=1,
+        cancel_token=cancel_token,
     )
     return targets[0] if targets else None
 
@@ -881,11 +1405,13 @@ def _wait_for_album_thumbnail_targets(
     sleep_func: Callable[[float], None],
     item_id: str,
     limit: int = 3,
+    cancel_token: CancelToken | None = None,
 ) -> list[dict]:
     deadline = time.monotonic() + timeout_seconds
     window_size = getattr(device, "window_size", None)
     saw_album_grid = False
     while True:
+        _raise_if_cancel_requested(cancel_token)
         hierarchy = device.dump_hierarchy()
         has_album_grid = _hierarchy_has_marker_group(
             "album_grid", ALBUM_GRID_MARKERS, hierarchy
@@ -905,6 +1431,7 @@ def _wait_for_album_thumbnail_targets(
                 return [_coordinate_profile_album_thumbnail_target(profile)]
             return []
         sleep_func(min(0.5, timeout_seconds))
+        _raise_if_cancel_requested(cancel_token)
 
 
 def _album_target_signature(target: dict) -> str:
@@ -994,7 +1521,9 @@ def _download_visible_note_results(
     keyword_index: int | None = None,
     target_category: str = "",
     target_category_keywords: list[str] | tuple[str, ...] | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> tuple[list[CollectedImage], list[dict]]:
+    _raise_if_cancel_requested(cancel_token)
     _check_risk_or_raise(device, item.item_id)
     swipe_start = profile.point("results_panel_swipe_start")
     swipe_end = profile.point("results_panel_swipe_end")
@@ -1012,6 +1541,7 @@ def _download_visible_note_results(
     )
     if save_poll_seconds:
         sleep_func(min(1.0, save_poll_seconds))
+        _raise_if_cancel_requested(cancel_token)
     candidate_count = _note_card_candidate_count(device)
     step(
         f"wait_{stage}_result_list_stable",
@@ -1027,6 +1557,7 @@ def _download_visible_note_results(
     scroll_count = 0
     fallback_rank = 1
     while len(images) < target_count:
+        _raise_if_cancel_requested(cancel_token)
         _check_risk_or_raise(device, item.item_id)
         candidates = _note_card_candidates(device)
         next_candidate = _next_unseen_note_card(
@@ -1083,6 +1614,7 @@ def _download_visible_note_results(
                 )
                 if save_poll_seconds:
                     sleep_func(min(1.0, save_poll_seconds))
+                    _raise_if_cancel_requested(cancel_token)
                 continue
         else:
             card_target = next_candidate
@@ -1105,6 +1637,7 @@ def _download_visible_note_results(
             on_after_save=on_after_save,
             keyword_index=keyword_index,
             step=step,
+            cancel_token=cancel_token,
         )
         if isinstance(result, CollectedImage):
             image_hash = _file_sha256(result.local_path)
@@ -1149,6 +1682,7 @@ def _download_visible_note_results(
                 timeout_seconds=save_poll_seconds,
                 sleep_func=sleep_func,
                 item_id=item.item_id,
+                cancel_token=cancel_token,
             )
             step(
                 f"wait_back_to_{stage}_result_list_rank_{output_rank}",
@@ -1203,10 +1737,12 @@ def _wait_for_result_list_stable(
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
     item_id: str,
+    cancel_token: CancelToken | None = None,
 ) -> dict:
     deadline = time.monotonic() + timeout_seconds
     has_window_size = getattr(device, "window_size", None) is not None
     while True:
+        _raise_if_cancel_requested(cancel_token)
         hierarchy = device.dump_hierarchy()
         risk = detect_risk_text(hierarchy)
         if risk:
@@ -1219,6 +1755,7 @@ def _wait_for_result_list_stable(
         if timeout_seconds <= 0 or time.monotonic() >= deadline:
             return {"restored": False, "candidate_count": candidate_count}
         sleep_func(min(0.5, timeout_seconds))
+        _raise_if_cancel_requested(cancel_token)
 
 
 def _note_card_candidate_count(device) -> int:
@@ -1544,10 +2081,12 @@ def _return_to_result_list(
     item_id: str,
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
+    cancel_token: CancelToken | None = None,
 ) -> dict:
     target = _back_button_click_target(device, profile)
     attempts: list[dict] = []
     if target is not None:
+        _raise_if_cancel_requested(cancel_token)
         _click_target(device, target)
         attempts.append(
             {
@@ -1563,6 +2102,7 @@ def _return_to_result_list(
             timeout_seconds=min(0.8, timeout_seconds),
             sleep_func=sleep_func,
             item_id=item_id,
+            cancel_token=cancel_token,
         )["restored"]:
             return {
                 "back_source": target["click_source"],
@@ -1777,7 +2317,9 @@ def _download_ranked_result(
     on_after_save: Callable[[], None] | None,
     keyword_index: int | None = None,
     step: Callable[[str, dict | None], None],
+    cancel_token: CancelToken | None = None,
 ) -> CollectedImage | dict:
+    _raise_if_cancel_requested(cancel_token)
     click_target = _note_card_click_target(
         device=device,
         profile=profile,
@@ -1787,6 +2329,7 @@ def _download_ranked_result(
     retry_count = 0
     opened = False
     for attempt in range(2):
+        _raise_if_cancel_requested(cancel_token)
         _click_note_card_target(device, click_target)
         step(
             f"open_{stage}_result_card_rank_{rank}",
@@ -1813,6 +2356,7 @@ def _download_ranked_result(
             timeout_seconds=save_poll_seconds,
             sleep_func=sleep_func,
             item_id=item.item_id,
+            cancel_token=cancel_token,
         )
         if opened:
             break
@@ -1869,12 +2413,14 @@ def _download_ranked_result(
             save_attempt=1,
             on_after_save=on_after_save,
             step=step,
+            cancel_token=cancel_token,
         )
         remote_path = _wait_for_new_media(
             media_store=media_store,
             before=before,
             timeout_seconds=save_poll_seconds,
             sleep_func=sleep_func,
+            cancel_token=cancel_token,
         )
         if remote_path is None and _download_permission_hint(device.dump_hierarchy()) is None:
             step(
@@ -1892,12 +2438,14 @@ def _download_ranked_result(
                 save_attempt=2,
                 on_after_save=on_after_save,
                 step=step,
+                cancel_token=cancel_token,
             )
             remote_path = _wait_for_new_media(
                 media_store=media_store,
                 before=before,
                 timeout_seconds=save_poll_seconds,
                 sleep_func=sleep_func,
+                cancel_token=cancel_token,
             )
         if remote_path is None:
             failure = _save_rank_failure(
@@ -1941,6 +2489,7 @@ def _download_ranked_result(
             item_id=item.item_id,
             timeout_seconds=save_poll_seconds,
             sleep_func=sleep_func,
+            cancel_token=cancel_token,
         )
         step(
             "back_to_results",
@@ -1966,7 +2515,9 @@ def _attempt_note_image_save(
     save_attempt: int,
     on_after_save: Callable[[], None] | None,
     step: Callable[[str, dict | None], None],
+    cancel_token: CancelToken | None = None,
 ) -> None:
+    _raise_if_cancel_requested(cancel_token)
     main_image = profile.point("note_main_image")
     device.long_press_ratio(*main_image, duration=1.0)
     step(
@@ -1981,6 +2532,7 @@ def _attempt_note_image_save(
         },
     )
     _check_risk_or_raise(device, item.item_id)
+    _raise_if_cancel_requested(cancel_token)
     save_target = _save_menu_click_target(device, profile)
     _click_target(device, save_target)
     if on_after_save is not None:
@@ -2011,9 +2563,11 @@ def _perform_keyword_search(
     save_poll_seconds: float,
     sleep_func: Callable[[float], None],
     step: Callable[[str, dict | None], None],
+    cancel_token: CancelToken | None = None,
 ) -> bool:
     if not query:
         return False
+    _raise_if_cancel_requested(cancel_token)
     search_box_target = _keyword_search_box_click_target(device, profile)
     if search_box_target is None:
         step("keyword_search_box_not_found", {"query": query})
@@ -2033,12 +2587,14 @@ def _perform_keyword_search(
     if set_text is None:
         step("keyword_search_text_input_unavailable", {"query": query})
         return False
+    _raise_if_cancel_requested(cancel_token)
     set_text(query)
     step("set_keyword_search_text", {"query": query})
     submit_target = _keyword_search_submit_click_target(device, profile)
     if submit_target is None:
         step("keyword_search_submit_not_found", {"query": query})
         return False
+    _raise_if_cancel_requested(cancel_token)
     _click_target(device, submit_target)
     step(
         "tap_keyword_search_submit",
@@ -2057,6 +2613,7 @@ def _perform_keyword_search(
         timeout_seconds=save_poll_seconds,
         sleep_func=sleep_func,
         item_id=item.item_id,
+        cancel_token=cancel_token,
     ):
         step(
             "keyword_search_results_not_reached",
@@ -2216,15 +2773,18 @@ def _wait_for_new_media(
     before: list[str],
     timeout_seconds: float,
     sleep_func: Callable[[float], None],
+    cancel_token: CancelToken | None = None,
 ) -> str | None:
     deadline = time.monotonic() + timeout_seconds
     while True:
+        _raise_if_cancel_requested(cancel_token)
         new_media = diff_new_media(before, media_store.snapshot())
         if new_media:
             return new_media[-1]
         if timeout_seconds <= 0 or time.monotonic() >= deadline:
             break
         sleep_func(min(0.5, timeout_seconds))
+        _raise_if_cancel_requested(cancel_token)
     refresh = getattr(media_store, "refresh", None)
     if refresh is None:
         return None
@@ -2236,9 +2796,11 @@ def _wait_for_new_media(
         return None
     grace_deadline = time.monotonic() + min(5.0, max(2.0, timeout_seconds * 0.5))
     while True:
+        _raise_if_cancel_requested(cancel_token)
         if time.monotonic() >= grace_deadline:
             return None
         sleep_func(min(0.5, timeout_seconds))
+        _raise_if_cancel_requested(cancel_token)
         new_media = diff_new_media(before, media_store.snapshot())
         if new_media:
             return new_media[-1]

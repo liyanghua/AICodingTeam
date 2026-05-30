@@ -132,15 +132,34 @@ class DeterministicDevice:
     def start_app(self, package: str) -> None:
         self._device.app_start(package)
 
+    def current_package(self) -> str:
+        app_current = getattr(self._device, "app_current", None)
+        if app_current is None:
+            return ""
+        current = app_current()
+        if isinstance(current, dict):
+            return str(current.get("package") or "")
+        return str(current or "")
+
     def window_size(self) -> tuple[int, int]:
         return tuple(self._device.window_size())
 
     def click_ratio(self, x_ratio: float, y_ratio: float) -> None:
         x, y = self._to_screen_point(x_ratio, y_ratio)
-        self._device.click(x, y)
+        try:
+            self._device.click(x, y)
+        except Exception as exc:
+            if not _is_input_injection_error(exc):
+                raise
+            self.adb_device.shell(f"input tap {x} {y}")
 
     def click_point(self, x: int, y: int) -> None:
-        self._device.click(x, y)
+        try:
+            self._device.click(x, y)
+        except Exception as exc:
+            if not _is_input_injection_error(exc):
+                raise
+            self.adb_device.shell(f"input tap {x} {y}")
 
     def set_text(self, text: str) -> None:
         send_keys = getattr(self._device, "send_keys", None)
@@ -164,15 +183,24 @@ class DeterministicDevice:
     def press_back(self) -> None:
         press = getattr(self._device, "press", None)
         if press is not None:
-            press("back")
-            return
+            try:
+                press("back")
+                return
+            except Exception as exc:
+                if not _is_input_injection_error(exc):
+                    raise
         self.adb_device.shell("input keyevent BACK")
 
     def long_press_ratio(
         self, x_ratio: float, y_ratio: float, duration: float = 1.0
     ) -> None:
         x, y = self._to_screen_point(x_ratio, y_ratio)
-        self._device.long_click(x, y, duration)
+        try:
+            self._device.long_click(x, y, duration)
+        except Exception as exc:
+            if not _is_input_injection_error(exc):
+                raise
+            self.adb_device.shell(f"input swipe {x} {y} {x} {y} {round(duration * 1000)}")
 
     def swipe_ratio(
         self,
@@ -184,7 +212,14 @@ class DeterministicDevice:
     ) -> None:
         x1, y1 = self._to_screen_point(x1_ratio, y1_ratio)
         x2, y2 = self._to_screen_point(x2_ratio, y2_ratio)
-        self._device.swipe(x1, y1, x2, y2, duration)
+        try:
+            self._device.swipe(x1, y1, x2, y2, duration)
+        except Exception as exc:
+            if not _is_input_injection_error(exc):
+                raise
+            self.adb_device.shell(
+                f"input swipe {x1} {y1} {x2} {y2} {round(duration * 1000)}"
+            )
 
     def dump_hierarchy(self) -> str:
         return self._device.dump_hierarchy()
@@ -265,3 +300,8 @@ class DeterministicAdbDevice:
 def _validate_ratio(value: float) -> None:
     if not 0 <= value <= 1:
         raise ValueError("ratio must be between 0 and 1")
+
+
+def _is_input_injection_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "INJECT_EVENTS" in text or "Injecting input events" in text

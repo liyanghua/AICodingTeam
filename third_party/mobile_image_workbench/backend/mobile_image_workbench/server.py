@@ -6,14 +6,16 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
+from .admin import AdminTaskManager, require_admin_token
 from .events import event_key_for
 from .jobs import JobManager
 
 
 class WorkbenchRequestHandler(BaseHTTPRequestHandler):
     manager: JobManager
+    admin_manager: AdminTaskManager
     static_root: Path
 
     def do_GET(self) -> None:  # noqa: N802
@@ -23,10 +25,33 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/doctor":
                 self._send_json(self.manager.doctor())
                 return
+            if path == "/api/admin/status":
+                self._send_json(self.admin_manager.status(self.manager))
+                return
+            if path == "/api/jobs":
+                query = parse_qs(parsed.query, keep_blank_values=False)
+                limit = _query_int(query, "limit", 50)
+                self._send_json(
+                    {"jobs": [record.to_dict() for record in self.manager.list_jobs(limit=limit)]}
+                )
+                return
+            if path.startswith("/api/admin/tasks/"):
+                require_admin_token(self.headers.get("Authorization", ""))
+                parts = [unquote(part) for part in path.strip("/").split("/")]
+                if len(parts) == 4:
+                    self._send_json(self.admin_manager.get_task(parts[3]))
+                    return
+                self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                return
+            if path.startswith("/api/library/"):
+                self._handle_library_get(parsed)
+                return
             if path.startswith("/api/jobs/"):
                 self._handle_job_get(path)
                 return
             self._serve_static(path)
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except Exception as exc:
             self._send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -38,9 +63,77 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
                 record = self.manager.create_job(payload, start=True)
                 self._send_json(record.to_dict(), HTTPStatus.CREATED)
                 return
+            if parsed.path == "/api/library/ingest":
+                payload = self._read_json()
+                summary = self.manager.ingest_assets(
+                    Path(str(payload.get("runDir") or payload.get("run_dir") or "")),
+                    job_id=str(payload.get("jobId") or payload.get("job_id") or ""),
+                    category=str(payload.get("category") or ""),
+                    scene=str(payload.get("scene") or ""),
+                    input_mode=str(payload.get("inputMode") or payload.get("input_mode") or ""),
+                    uploaded_by=str(payload.get("uploadedBy") or payload.get("uploaded_by") or ""),
+                )
+                self._send_json(summary, HTTPStatus.CREATED)
+                return
+            if parsed.path.startswith("/api/jobs/"):
+                parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
+                if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
+                    self._send_json(self.manager.stop_job(parts[2]).to_dict())
+                    return
+                if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "sync-cloud":
+                    self._send_json(self.manager.sync_job_to_cloud(parts[2]))
+                    return
+            if parsed.path.startswith("/api/admin/"):
+                require_admin_token(self.headers.get("Authorization", ""))
+                if parsed.path == "/api/admin/sync/latest":
+                    self._send_json(self.admin_manager.start_sync_latest(self.manager))
+                    return
+                if parsed.path == "/api/admin/deploy/mac":
+                    self._send_json(self.admin_manager.start_mac_deploy())
+                    return
+                if parsed.path == "/api/admin/deploy/mac-mini":
+                    self._send_json(self.admin_manager.start_mac_mini_remote_deploy())
+                    return
+                if parsed.path == "/api/admin/deploy/cloud":
+                    self._send_json(self.admin_manager.start_cloud_deploy())
+                    return
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, HTTPStatus.FORBIDDEN)
         except Exception as exc:
             self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _handle_library_get(self, parsed) -> None:
+        path = parsed.path
+        parts = [unquote(part) for part in path.strip("/").split("/")]
+        if parts[:3] == ["api", "library", "assets"] and len(parts) == 3:
+            filters = {
+                key: values[0]
+                for key, values in parse_qs(parsed.query, keep_blank_values=False).items()
+                if values
+            }
+            self._send_json(self.manager.search_assets(filters))
+            return
+        if parts[:3] == ["api", "library", "assets"] and len(parts) == 5:
+            asset_id = parts[3]
+            action = parts[4]
+            if action not in {"image", "download"}:
+                self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                return
+            blob = self.manager.asset_blob(asset_id)
+            self._send_bytes(
+                blob.payload,
+                blob.content_type,
+                download_name=blob.filename if action == "download" else None,
+            )
+            return
+        if parts[:3] == ["api", "library", "objects"] and len(parts) >= 5:
+            bucket = parts[3]
+            key = "/".join(parts[4:])
+            blob = self.manager.object_blob(bucket, key)
+            self._send_bytes(blob.payload, blob.content_type)
+            return
+        self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
     def _handle_job_get(self, path: str) -> None:
         parts = [unquote(part) for part in path.strip("/").split("/")]
@@ -132,10 +225,21 @@ class WorkbenchRequestHandler(BaseHTTPRequestHandler):
         if not path.exists() or not path.is_file():
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             return
-        payload = path.read_bytes()
+        self._send_bytes(path.read_bytes(), content_type)
+
+    def _send_bytes(
+        self,
+        payload: bytes,
+        content_type: str,
+        *,
+        download_name: str | None = None,
+    ) -> None:
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        if download_name:
+            safe_name = download_name.replace('"', "")
+            self.send_header("Content-Disposition", f'attachment; filename="{safe_name}"')
         self.end_headers()
         self.wfile.write(payload)
 
@@ -168,6 +272,16 @@ def _server_event_key(event: dict) -> str:
     return event_key_for(event)
 
 
+def _query_int(query: dict[str, list[str]], name: str, default: int) -> int:
+    values = query.get(name) or []
+    if not values:
+        return default
+    try:
+        return int(values[0])
+    except ValueError:
+        return default
+
+
 def serve(
     *,
     host: str,
@@ -177,11 +291,13 @@ def serve(
     base_collector_config: Path | None = None,
 ) -> ThreadingHTTPServer:
     manager = JobManager(runs_root, base_collector_config=base_collector_config)
+    admin_manager = AdminTaskManager()
 
     class Handler(WorkbenchRequestHandler):
         pass
 
     Handler.manager = manager
+    Handler.admin_manager = admin_manager
     Handler.static_root = static_root
     server = ThreadingHTTPServer((host, port), Handler)
     return server

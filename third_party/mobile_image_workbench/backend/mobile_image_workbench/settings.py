@@ -52,20 +52,27 @@ class JobSettings:
         if not mode:
             mode = "config_file" if payload.get("configFile") else "single_image"
         defaults = cls.for_mode(mode)
+        keyword_top_n = _int_value(
+            settings_payload, "keywordTopN", "keyword_top_n", defaults.keyword_top_n
+        )
+        keyword_result_top_n = _int_value(
+            settings_payload,
+            "keywordResultTopN",
+            "keyword_result_top_n",
+            defaults.keyword_result_top_n,
+        )
+        if mode in {"single_image", "batch_images"} and not _has_direct_image_keywords(
+            payload
+        ):
+            keyword_top_n = 0
+            keyword_result_top_n = 0
         settings = cls(
             mode=mode,
             image_top_n=_int_value(
                 settings_payload, "imageTopN", "image_top_n", defaults.image_top_n
             ),
-            keyword_top_n=_int_value(
-                settings_payload, "keywordTopN", "keyword_top_n", defaults.keyword_top_n
-            ),
-            keyword_result_top_n=_int_value(
-                settings_payload,
-                "keywordResultTopN",
-                "keyword_result_top_n",
-                defaults.keyword_result_top_n,
-            ),
+            keyword_top_n=keyword_top_n,
+            keyword_result_top_n=keyword_result_top_n,
             device_serial=_optional_str(
                 settings_payload.get("deviceSerial")
                 if "deviceSerial" in settings_payload
@@ -222,6 +229,19 @@ def _string_list(value: Any) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _has_direct_image_keywords(payload: dict[str, Any]) -> bool:
+    raw_images = payload.get("images")
+    if raw_images is None and payload.get("image") is not None:
+        raw_images = [payload["image"]]
+    for image in raw_images or []:
+        if not isinstance(image, dict):
+            continue
+        candidates = image.get("keywordCandidates") or image.get("keyword_candidates")
+        if _string_list(candidates):
+            return True
+    return False
 
 
 def _split_keyword_text(value: str) -> list[str]:

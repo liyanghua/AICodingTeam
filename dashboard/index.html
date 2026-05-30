@@ -75,53 +75,144 @@
               <span id="brief-label"></span>
             </div>
             <div id="business-stages" class="business-stage-list"></div>
+            <div id="stage-detail-panel" class="stage-detail-panel" hidden></div>
           </section>
 
           <section class="panel two-column">
+            <div>
+              <div class="panel-header">
+                <h2 data-i18n="app.observabilityHealth">可观测健康</h2>
+              </div>
+              <p id="health-summary" class="summary-text"></p>
+              <div id="health-details" class="quality-list"></div>
+            </div>
+            <div>
+              <div class="panel-header">
+                <h2 data-i18n="app.fileQuality">文件质量</h2>
+              </div>
+              <p id="artifact-quality-summary" class="summary-text"></p>
+              <div id="artifact-quality-checks" class="quality-list"></div>
+            </div>
+          </section>
+
+          <section id="memory-recall-panel" class="panel memory-recall-panel">
+            <div class="panel-header">
+              <h2 data-i18n="memoryRecall.title">历史参考 / Skill 推荐</h2>
+            </div>
+            <p id="memory-recall-summary" class="summary-text" data-i18n="memoryRecall.empty">暂无历史任务召回。</p>
+            <div class="two-column compact-panel-grid">
+              <div>
+                <h3 data-i18n="memoryRecall.skills">推荐 Project Skills</h3>
+                <div id="memory-recall-skills" class="quality-list"></div>
+              </div>
+              <div>
+                <h3 data-i18n="memoryRecall.matches">相似历史任务</h3>
+                <div id="memory-recall-matches" class="quality-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
             <div>
               <div class="panel-header">
                 <h2 data-i18n="app.qualityChecks">质量关卡</h2>
               </div>
               <div id="quality-gates" class="gate-list"></div>
             </div>
-            <div>
-              <div class="panel-header">
-                <h2 data-i18n="app.deliverables">产物与验收</h2>
+          </section>
+
+          <section id="acceptance-panel" class="panel acceptance-panel">
+            <div class="panel-header">
+              <h2 data-i18n="acceptance.title">采纳验收</h2>
+              <button id="acceptance-action" type="button" data-i18n="acceptance.confirmButton">确认采纳并运行验收</button>
+            </div>
+            <p id="acceptance-summary" class="summary-text" data-i18n="acceptance.notStarted">确认后会应用本次代码变更，并自动运行全量测试</p>
+            <div id="acceptance-steps" class="acceptance-steps"></div>
+            <div id="acceptance-next-action" class="action-row meta"></div>
+          </section>
+
+          <section id="release-readiness-panel" class="panel release-readiness-panel">
+            <div class="panel-header">
+              <h2 data-i18n="releaseReadiness.title">发布准备</h2>
+              <button id="release-readiness-action" type="button" data-i18n="releaseReadiness.generateButton">生成发布准备报告</button>
+            </div>
+            <p id="release-readiness-summary" class="summary-text" data-i18n="releaseReadiness.empty">采纳验收通过后，可生成本地发布准备报告和 PR draft。</p>
+            <div class="two-column compact-panel-grid">
+              <div>
+                <h3 data-i18n="releaseReadiness.gates">发布关卡</h3>
+                <div id="release-readiness-gates" class="quality-list"></div>
               </div>
-              <div id="deliverables" class="deliverable-list"></div>
+              <div>
+                <h3 data-i18n="releaseReadiness.prDraft">PR Draft 摘要</h3>
+                <div id="release-readiness-pr" class="quality-list"></div>
+              </div>
             </div>
           </section>
 
-          <details class="engineering-panel">
-            <summary data-i18n="app.engineeringDetails">工程详情</summary>
-            <div class="engineering-grid">
-              <section>
-                <h3 data-i18n="app.engineeringRun">运行标识</h3>
-                <pre id="engineering-run" class="detail-box"></pre>
-              </section>
-              <section>
-                <h3 data-i18n="app.engineeringEvents">过程事件</h3>
-                <pre id="engineering-events" class="detail-box"></pre>
-              </section>
-              <section>
-                <h3 data-i18n="app.engineeringLog">运行日志</h3>
-                <pre id="engineering-logs" class="detail-box"></pre>
-              </section>
-              <section>
-                <h3 data-i18n="app.engineeringDiff">代码差异</h3>
-                <pre id="engineering-diff" class="detail-box"></pre>
-              </section>
+          <section id="github-pr-panel" class="panel github-pr-panel">
+            <div class="panel-header">
+              <h2 data-i18n="githubPr.title">GitHub PR / CI</h2>
+              <div class="button-group">
+                <button id="github-pr-action" type="button" data-i18n="githubPr.createDraftButton">推送当前分支并创建 Draft PR</button>
+                <button id="github-ci-action" type="button" class="ghost" data-i18n="githubPr.refreshCiButton">刷新 PR/CI 状态</button>
+              </div>
             </div>
-          </details>
+            <p id="github-pr-summary" class="summary-text" data-i18n="githubPr.notReady">先生成发布准备报告，且不能存在硬阻塞。</p>
+            <div class="two-column compact-panel-grid">
+              <div>
+                <h3 data-i18n="githubPr.prInfo">Draft PR</h3>
+                <div id="github-pr-info" class="quality-list"></div>
+              </div>
+              <div>
+                <h3 data-i18n="githubPr.ciInfo">CI Checks</h3>
+                <div id="github-ci-info" class="quality-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="deliverables-panel" class="panel deliverables-panel">
+            <div class="panel-header">
+              <h2 data-i18n="app.deliverables">产物与验收</h2>
+            </div>
+            <div class="deliverables-grid">
+              <div class="deliverables-list-pane">
+                <div id="artifact-actions" class="artifact-list"></div>
+                <div id="next-actions" class="action-list"></div>
+              </div>
+              <div class="deliverables-preview-pane">
+                <div class="selected-artifact">
+                  <div>
+                    <h3 id="selected-artifact-title" data-i18n="actions.noDeliverables">暂无可查看产物</h3>
+                    <p id="selected-artifact-description" class="meta"></p>
+                  </div>
+                  <span id="selected-artifact-status" class="mini-status status-muted" data-i18n="actions.artifactPending">未生成</span>
+                </div>
+                <div id="artifact-preview" class="artifact-preview"></div>
+              </div>
+            </div>
+          </section>
         </section>
 
-        <aside class="artifact-panel">
+        <aside class="engineering-rail" tabindex="-1">
           <div class="panel-header">
-            <h2 data-i18n="app.deliverables">产物与验收</h2>
+            <h2 data-i18n="app.engineeringDetails">工程详情</h2>
           </div>
-          <div id="artifact-actions" class="artifact-list"></div>
-          <pre id="artifact-preview" class="artifact-preview"></pre>
-          <div id="next-actions" class="action-list"></div>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringRun">运行标识</h3>
+            <pre id="engineering-run" class="detail-box"></pre>
+          </section>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringEvents">过程事件</h3>
+            <pre id="engineering-events" class="detail-box"></pre>
+          </section>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringLog">运行日志</h3>
+            <pre id="engineering-logs" class="detail-box"></pre>
+          </section>
+          <section class="engineering-card">
+            <h3 data-i18n="app.engineeringDiff">代码差异</h3>
+            <pre id="engineering-diff" class="detail-box"></pre>
+          </section>
         </aside>
       </section>
     </main>

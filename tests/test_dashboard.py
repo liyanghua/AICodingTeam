@@ -5,7 +5,9 @@ import subprocess
 import tempfile
 import time
 import unittest
+from http import HTTPStatus
 from pathlib import Path
+from unittest import mock
 
 from tests.test_team_models import TEAM_YAML
 
@@ -22,6 +24,20 @@ risk_rules:
 
 
 class DashboardTests(unittest.TestCase):
+    def _business_view_model(self, run: dict[str, object]) -> dict[str, object]:
+        root = Path(__file__).resolve().parents[1]
+        i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"
+        module_path = root / "dashboard" / "business_view.js"
+        script = f"""
+const fs = require('fs');
+const {{ toBusinessViewModel }} = require({json.dumps(str(module_path))});
+const i18n = JSON.parse(fs.readFileSync({json.dumps(str(i18n_path))}, 'utf8'));
+const vm = toBusinessViewModel({json.dumps(run)}, i18n);
+console.log(JSON.stringify(vm));
+"""
+        completed = subprocess.run(["node", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return json.loads(completed.stdout)
+
     def _write_completed_run(self, runs_dir: Path, run_id: str = "dashboard-run-1") -> Path:
         run_dir = runs_dir / run_id
         codex_dir = run_dir / "codex"
@@ -93,9 +109,170 @@ class DashboardTests(unittest.TestCase):
         (run_dir / "prd.md").write_text("# PRD\n", encoding="utf-8")
         (run_dir / "tech_spec.md").write_text("# Tech Spec\n", encoding="utf-8")
         (run_dir / "ui_spec.md").write_text("# UI Spec\n", encoding="utf-8")
+        (run_dir / "eval.md").write_text("# Eval\n", encoding="utf-8")
+        (run_dir / "final_report.md").write_text("# Final Report\n", encoding="utf-8")
+        (run_dir / "memory_recall.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "query": "给 dashboard 增加可视化闭环",
+                    "run_id": run_id,
+                    "domain_id": "web_monitoring",
+                    "generated_at": "2026-05-23T00:00:05+00:00",
+                    "matches": [
+                        {
+                            "run_id": "historical-dashboard-run",
+                            "domain_id": "web_monitoring",
+                            "task_type": "dashboard_ui_change",
+                            "status": "completed",
+                            "outcome": "accepted_and_verified",
+                            "score": 0.91,
+                            "reasons": ["same_domain", "matched_reusable_context"],
+                            "recommended_skills": ["context_engineering"],
+                            "reusable_context": ["dashboard/index.html"],
+                            "avoid_context": ["raw stdout/stderr"],
+                            "failure_modes": [],
+                            "source_artifacts": ["learning_summary.json"],
+                        }
+                    ],
+                    "recommended_skills": [
+                        {
+                            "id": "context_engineering",
+                            "confidence": 0.91,
+                            "source_run_ids": ["historical-dashboard-run"],
+                            "why": "历史相似任务需要收窄 Dashboard 上下文。",
+                        }
+                    ],
+                    "context_strategy": {
+                        "reuse": ["dashboard/index.html"],
+                        "avoid": ["raw stdout/stderr"],
+                        "checklist": ["复用历史 Dashboard 验收经验。"],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "memory_recall.md").write_text("# Historical Task Recall\n", encoding="utf-8")
+        (codex_dir / "implementation_trace.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "stage": "coder",
+                    "status": "completed",
+                    "current_step": "finalize_result",
+                    "updated_at": "2026-05-23T00:00:30+00:00",
+                    "inputs": [{"title": "PRD", "path": "prd.md", "scope": "run", "exists": True}],
+                    "steps": [
+                        {"id": "prepare_context", "title": "准备上下文", "status": "completed", "summary": "已生成上下文。"},
+                        {"id": "codex_running", "title": "启动 AI coding", "status": "completed", "summary": "AI coding 已完成。"},
+                    ],
+                    "evidence": {
+                        "changed_files": ["dashboard/app.js"],
+                        "tests_run": ["python3 -m unittest tests.test_dashboard -v"],
+                        "verification_commands": ["python3 -m unittest tests.test_dashboard -v"],
+                        "diff_path": "codex/diff.patch",
+                        "exit_code": 0,
+                    },
+                    "risk_events": [],
+                    "blockers": [],
+                    "next_action": "review",
+                }
+            ),
+            encoding="utf-8",
+        )
         (codex_dir / "stdout.jsonl").write_text("coding started\ncoding finished\n", encoding="utf-8")
         (codex_dir / "stderr.log").write_text("provider warning\n", encoding="utf-8")
-        (codex_dir / "diff.patch").write_text("diff --git a/a b/a\n+dashboard\n", encoding="utf-8")
+        (codex_dir / "diff.patch").write_text(
+            "\n".join(
+                [
+                    "diff --git a/dashboard/app.js b/dashboard/app.js",
+                    "index 1111111..2222222 100644",
+                    "--- a/dashboard/app.js",
+                    "+++ b/dashboard/app.js",
+                    "@@ -1,3 +1,4 @@",
+                    " const state = {};",
+                    "-oldLine();",
+                    "+newLine();",
+                    "+extraLine();",
+                    " keepLine();",
+                    "diff --git a/tests/test_dashboard.py b/tests/test_dashboard.py",
+                    "new file mode 100644",
+                    "index 0000000..3333333",
+                    "--- /dev/null",
+                    "+++ b/tests/test_dashboard.py",
+                    "@@ -0,0 +1,2 @@",
+                    "+def test_diff_view():",
+                    "+    assert True",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "release_readiness.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "generated_at": "2026-05-23T00:02:00+00:00",
+                    "release_decision": "ready_for_pr_ci",
+                    "summary": "采纳验收、Review/Test 和变更边界均通过，值得进入 PR/CI。",
+                    "gates": [{"id": "acceptance_tests", "status": "passed", "reason": "全量测试通过。", "evidence": ["tests.exit_code=0"]}],
+                    "evidence": {"changed_files": ["dashboard/app.js"], "tests_run": ["python3 -m unittest discover -s tests -v"]},
+                    "pr_draft": {"title": "web_monitoring: Dashboard 状态修复", "body": "## Why This Should Enter PR/CI\n\n本地验收通过。"},
+                    "blockers": [],
+                    "warnings": [],
+                    "next_actions": ["python3 -m unittest discover -s tests -v"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "release_readiness.md").write_text("# Release Readiness\n", encoding="utf-8")
+        (run_dir / "pr_draft.md").write_text("# PR Title\n\nweb_monitoring: Dashboard 状态修复\n", encoding="utf-8")
+        (run_dir / "github_pr.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "created",
+                    "generated_at": "2026-05-23T00:03:00+00:00",
+                    "pr": {
+                        "number": 42,
+                        "url": "https://github.com/example/project/pull/42",
+                        "title": "web_monitoring: Dashboard 状态修复",
+                        "state": "OPEN",
+                        "is_draft": True,
+                        "base": "main",
+                        "head": "feature/demo",
+                    },
+                    "release_decision": "ready_for_pr_ci",
+                    "warnings": [],
+                    "blockers": [],
+                    "commands": [],
+                    "next_action": "刷新 PR/CI 状态。",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "ci_status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "passed",
+                    "generated_at": "2026-05-23T00:04:00+00:00",
+                    "pr_url": "https://github.com/example/project/pull/42",
+                    "checks": [{"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS", "url": ""}],
+                    "summary": "1 个 CI check 已通过。",
+                    "warnings": [],
+                    "blockers": [],
+                    "next_action": "可以进行人工 Review。",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "github_pr.md").write_text("# GitHub Draft PR\n", encoding="utf-8")
+        (run_dir / "ci_status.md").write_text("# CI Status\n", encoding="utf-8")
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -117,10 +294,175 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("before_coding", gate_ids)
         self.assertIn("ci_gate", gate_ids)
         self.assertIn("coding finished", "\n".join(state["logs"]))
-        self.assertEqual(state["diff_summary"]["lines"], 2)
+        self.assertIn("health_summary", state)
+        self.assertIn("quality_report", state)
+        self.assertEqual(state["implementation_trace"]["status"], "completed")
+        self.assertEqual(state["memory_recall"]["matches"][0]["run_id"], "historical-dashboard-run")
+        self.assertEqual(state["release_readiness"]["release_decision"], "ready_for_pr_ci")
+        self.assertEqual(state["github_pr"]["status"], "created")
+        self.assertEqual(state["ci_status"]["status"], "passed")
+        self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "memory_recall.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "retrospective.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "learning_summary.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "release_readiness.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "release_readiness.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "pr_draft.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "github_pr.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "github_pr.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "ci_status.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "ci_status.json" for item in state["artifacts"]))
+        self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
+        self.assertTrue(state["quality_report"]["checks"])
+        self.assertEqual(state["diff_summary"]["files_changed"], 2)
+        self.assertEqual(state["diff_summary"]["additions"], 4)
+        self.assertEqual(state["diff_summary"]["deletions"], 1)
+        self.assertEqual(state["diff_summary"]["files"][0]["path"], "dashboard/app.js")
+        self.assertEqual(state["diff_summary"]["files"][0]["status"], "modified")
+        self.assertEqual(state["diff_summary"]["files"][0]["additions"], 2)
+        self.assertEqual(state["diff_summary"]["files"][0]["deletions"], 1)
+        self.assertEqual(state["diff_summary"]["files"][1]["status"], "added")
         self.assertEqual(state["apply_gate"]["status"], "passed")
         self.assertNotIn("sk-should-not-leak", payload)
         self.assertNotIn(".env", payload)
+
+    def test_dashboard_acceptance_runner_records_successful_apply_and_tests(self) -> None:
+        from growth_dev.team.dashboard import run_dashboard_acceptance_once
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                if command[:5] == ["python3", "-m", "growth_dev.cli", "team", "apply"]:
+                    return subprocess.CompletedProcess(command, 0, "applied from .env with sk-should-not-leak\n", "")
+                return subprocess.CompletedProcess(command, 0, "Ran 23 tests\nOK\n", "checked .env and sk-should-not-leak\n")
+
+            result = run_dashboard_acceptance_once("dashboard-run-1", runs_dir=runs_dir, repo_root=root, command_runner=fake_run)
+            payload = json.dumps(result, ensure_ascii=False)
+
+            self.assertEqual(result["status"], "completed")
+            self.assertTrue(result["applied"])
+            self.assertEqual(result["steps"][0]["id"], "apply")
+            self.assertEqual(result["steps"][0]["exit_code"], 0)
+            self.assertEqual(result["steps"][1]["id"], "tests")
+            self.assertEqual(result["steps"][1]["exit_code"], 0)
+            self.assertIn("已采纳且测试通过", result["conclusion"])
+            self.assertEqual(calls[0][:5], ["python3", "-m", "growth_dev.cli", "team", "apply"])
+            self.assertEqual(calls[1], ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"])
+            self.assertNotIn(".env", payload)
+            self.assertNotIn("sk-should-not-leak", payload)
+            status_path = runs_dir / "dashboard-run-1" / "acceptance" / "status.json"
+            self.assertTrue(status_path.exists())
+            apply_log = (runs_dir / "dashboard-run-1" / "acceptance" / "apply_stdout.log").read_text(encoding="utf-8")
+            tests_log = (runs_dir / "dashboard-run-1" / "acceptance" / "tests_stderr.log").read_text(encoding="utf-8")
+            self.assertNotIn(".env", apply_log)
+            self.assertNotIn("sk-should-not-leak", apply_log)
+            self.assertNotIn(".env", tests_log)
+            self.assertNotIn("sk-should-not-leak", tests_log)
+
+    def test_dashboard_acceptance_runner_keeps_applied_changes_when_tests_fail(self) -> None:
+        from growth_dev.team.dashboard import run_dashboard_acceptance_once
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                if command[:5] == ["python3", "-m", "growth_dev.cli", "team", "apply"]:
+                    return subprocess.CompletedProcess(command, 0, "applied\n", "")
+                return subprocess.CompletedProcess(command, 1, "FAILED tests\n", "failure detail\n")
+
+            result = run_dashboard_acceptance_once("dashboard-run-1", runs_dir=runs_dir, repo_root=root, command_runner=fake_run)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["steps"][1]["exit_code"], 1)
+        self.assertIn("已采纳但测试失败", result["conclusion"])
+        self.assertIn("不自动回滚", result["next_action"])
+
+    def test_dashboard_acceptance_runner_stops_when_apply_fails(self) -> None:
+        from growth_dev.team.dashboard import run_dashboard_acceptance_once
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 1, "", "git apply failed\n")
+
+            result = run_dashboard_acceptance_once("dashboard-run-1", runs_dir=runs_dir, repo_root=root, command_runner=fake_run)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["current_step"], "apply")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("采纳失败", result["conclusion"])
+
+    def test_dashboard_acceptance_post_requires_passed_apply_gate(self) -> None:
+        from growth_dev.team.dashboard import start_dashboard_acceptance
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_completed_run(runs_dir)
+            record = json.loads((run_dir / "team_run_record.json").read_text(encoding="utf-8"))
+            record["status"] = "failed"
+            (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                start_dashboard_acceptance("dashboard-run-1", runs_dir=runs_dir, repo_root=root)
+
+        self.assertFalse((runs_dir / "dashboard-run-1" / "acceptance" / "status.json").exists())
+
+    def test_dashboard_pr_endpoints_delegate_to_github_pr_layer(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, create_dashboard_handler
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+            handler = create_dashboard_handler(DashboardConfig(runs_dir=runs_dir, repo_root=root, dashboard_dir=Path("dashboard")))
+
+            with mock.patch("growth_dev.team.dashboard.create_draft_pr") as create_mock:
+                create_mock.return_value = {"status": "created"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/pr/draft"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                draft_payload = request._send_json.call_args.args[0]
+
+            with mock.patch("growth_dev.team.dashboard.refresh_ci_status") as status_mock:
+                status_mock.return_value = {"status": "passed"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/pr/status"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                status_payload = request._send_json.call_args.args[0]
+
+        self.assertEqual(draft_payload["status"], "created")
+        self.assertEqual(status_payload["status"], "passed")
+
+    def test_dashboard_acceptance_rejects_run_id_path_escape(self) -> None:
+        from growth_dev.team.dashboard import start_dashboard_acceptance
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+
+            with self.assertRaises(ValueError):
+                start_dashboard_acceptance("../dashboard-run-1", runs_dir=runs_dir, repo_root=root)
+
+        self.assertFalse((root / "dashboard-run-1" / "acceptance" / "status.json").exists())
 
     def test_dashboard_artifact_reader_is_confined_to_allowed_paths(self) -> None:
         from growth_dev.team.dashboard import read_dashboard_artifact
@@ -158,7 +500,7 @@ class DashboardTests(unittest.TestCase):
 
         payload = json.loads(i18n_path.read_text(encoding="utf-8"))
 
-        for section in ("app", "status", "stages", "agents", "gates", "artifacts", "events", "actions"):
+        for section in ("app", "status", "stages", "agents", "gates", "artifacts", "events", "actions", "memoryRecall", "releaseReadiness"):
             self.assertIn(section, payload)
         for status in ("not_started", "processing", "completed", "needs_attention", "waiting_confirmation", "planned"):
             self.assertIn(status, payload["status"])
@@ -169,9 +511,47 @@ class DashboardTests(unittest.TestCase):
             self.assertIn(app_key, payload["app"])
         for action_key in ("artifactPending", "readyForConfirmation", "noNextAction"):
             self.assertIn(action_key, payload["actions"])
+        self.assertIn("acceptance", payload)
+        for acceptance_key in ("title", "confirmButton", "running", "completed", "failed", "notStarted"):
+            self.assertIn(acceptance_key, payload["acceptance"])
+        for readiness_key in ("title", "generateButton", "empty", "decision", "gates", "prDraft", "nextActions"):
+            self.assertIn(readiness_key, payload["releaseReadiness"])
         for stage in ("requirement", "design", "implementation", "quality", "delivery"):
             self.assertIn(stage, payload["stages"])
             self.assertIn("title", payload["stages"][stage])
+
+    def test_dashboard_acceptance_empty_state_explains_confirmed_apply_and_full_tests(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        expected = "确认后会应用本次代码变更，并自动运行全量测试"
+
+        self.assertEqual(i18n["acceptance"]["notStarted"], expected)
+        self.assertIn(expected, html)
+
+    def test_dashboard_html_contains_memory_recall_panel_before_quality_gates(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="memory-recall-panel"', html)
+        self.assertIn('id="memory-recall-summary"', html)
+        self.assertIn('id="memory-recall-skills"', html)
+        self.assertIn('id="memory-recall-matches"', html)
+        self.assertLess(html.index('id="artifact-quality-checks"'), html.index('id="memory-recall-panel"'))
+        self.assertLess(html.index('id="memory-recall-panel"'), html.index('id="quality-gates"'))
+
+    def test_dashboard_html_contains_release_readiness_panel_after_acceptance(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="release-readiness-panel"', html)
+        self.assertIn('id="release-readiness-action"', html)
+        self.assertIn('id="release-readiness-summary"', html)
+        self.assertIn('id="release-readiness-gates"', html)
+        self.assertIn('id="release-readiness-pr"', html)
+        self.assertLess(html.index('id="acceptance-panel"'), html.index('id="release-readiness-panel"'))
+        self.assertLess(html.index('id="release-readiness-panel"'), html.index('id="deliverables-panel"'))
 
     def test_dashboard_html_defaults_to_business_copy_and_hides_engineering_controls(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -179,8 +559,112 @@ class DashboardTests(unittest.TestCase):
 
         self.assertIn("data-i18n", html)
         self.assertIn("advanced-settings", html)
+        self.assertIn('id="deliverables-panel"', html)
+        self.assertIn('id="acceptance-panel"', html)
+        self.assertIn('id="acceptance-action"', html)
+        self.assertIn('id="acceptance-steps"', html)
+        self.assertIn('id="stage-detail-panel"', html)
+        self.assertIn('class="panel deliverables-panel"', html)
+        self.assertIn('class="deliverables-grid"', html)
+        self.assertIn('class="engineering-rail"', html)
+        self.assertNotIn('app.acceptanceSummary', html)
+        self.assertNotIn('app.acceptanceSummaryHint', html)
+        self.assertNotIn("engineering-panel", html)
+        self.assertLess(html.index('id="artifact-actions"'), html.index('id="artifact-preview"'))
+        self.assertEqual(html.count('id="deliverables"'), 0)
+        self.assertLess(html.index('id="business-stages"'), html.index('id="stage-detail-panel"'))
+        self.assertLess(html.index('id="stage-detail-panel"'), html.index('id="health-summary"'))
         for engineering_copy in ("Pipeline", "Gates", "Logs", "Artifacts", "Executor", "Provider", "Model"):
             self.assertNotIn(engineering_copy, html)
+
+    def test_dashboard_engineering_details_are_third_column_cards(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        rail_start = html.index('class="engineering-rail"')
+        for engineering_id in ("engineering-run", "engineering-events", "engineering-logs", "engineering-diff"):
+            self.assertGreater(html.index(f'id="{engineering_id}"'), rail_start)
+        self.assertEqual(html.count('class="engineering-card"'), 4)
+
+    def test_dashboard_deliverables_panel_uses_list_and_preview_columns(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        panel_start = html.index('id="deliverables-panel"')
+        list_start = html.index('class="deliverables-list-pane"', panel_start)
+        preview_start = html.index('class="deliverables-preview-pane"', panel_start)
+        self.assertLess(list_start, preview_start)
+        self.assertGreater(html.index('id="artifact-actions"', list_start), list_start)
+        self.assertGreater(html.index('id="next-actions"', list_start), list_start)
+        self.assertGreater(html.index('id="artifact-preview"', preview_start), preview_start)
+
+    def test_dashboard_quality_gates_use_compact_two_column_grid(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".gate-list", css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", css)
+        self.assertIn(".gate-card p {\n  grid-column: 1 / -1;", css)
+
+    def test_dashboard_stage_detail_has_i18n_and_render_helpers(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn("selectedStageDetail", app_js)
+        self.assertIn("renderStageDetail", app_js)
+        self.assertIn("renderStageDeliverables", app_js)
+        self.assertIn("renderStageEngineering", app_js)
+        self.assertIn("renderImplementationFlow", app_js)
+        self.assertIn("filterEngineeringForStage", app_js)
+        self.assertIn("loadArtifactContent", app_js)
+        self.assertIn("stageDetail", i18n)
+        self.assertIn("implementationFlow", i18n)
+        for key in (
+            "deliverablesSuffix",
+            "engineeringSuffix",
+            "emptyDeliverables",
+            "emptyEngineering",
+            "openGlobalDeliverables",
+            "openGlobalEngineering",
+        ):
+            self.assertIn(key, i18n["stageDetail"])
+
+    def test_dashboard_stage_detail_content_is_bounded_inside_card(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('body.className = `stage-detail-body ${selection.mode === "engineering" ? "engineering-mode" : "deliverables-mode"}`', app_js)
+        self.assertIn('list.className = "stage-detail-list"', app_js)
+        self.assertIn(".stage-detail-panel {\n  display: grid;", css)
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", css)
+        self.assertIn("max-height: min(620px, 72vh);", css)
+        self.assertIn(".stage-detail-body.engineering-mode {\n  display: flex;\n  flex-direction: column;", css)
+        self.assertIn("overflow: auto;", css)
+        self.assertIn("align-items: stretch;", css)
+        self.assertIn(".implementation-flow", css)
+        self.assertIn("max-height: none;", css)
+        self.assertIn("min-height: auto;", css)
+        self.assertIn("overflow: visible;", css)
+        self.assertIn(".stage-detail-body.engineering-mode > .stage-detail-block", css)
+        self.assertIn("width: 100%;", css)
+        self.assertIn("white-space: nowrap;", css)
+        self.assertIn(".stage-detail-list li", css)
+        self.assertIn("overflow-wrap: anywhere;", css)
+
+    def test_dashboard_stage_detail_scroll_is_preserved_during_polling_refresh(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("stageDetailScroll", app_js)
+        self.assertIn("function stageDetailKey", app_js)
+        self.assertIn("function captureStageDetailScroll", app_js)
+        self.assertIn("function restoreStageDetailScroll", app_js)
+        self.assertIn("captureStageDetailScroll();", app_js)
+        self.assertIn('body.addEventListener("scroll"', app_js)
+        self.assertIn("restoreStageDetailScroll(body);", app_js)
+        self.assertIn('state.stageDetailScroll = { key: "", top: 0 };', app_js)
 
     def test_dashboard_frontend_display_copy_comes_from_i18n(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -199,6 +683,88 @@ class DashboardTests(unittest.TestCase):
         for literal in forbidden_display_literals:
             self.assertNotIn(literal, app_js)
             self.assertNotIn(literal, business_view_js)
+
+    def test_dashboard_frontend_tracks_selected_artifact_and_avoids_raw_warning_panel(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("selectedArtifactPath", app_js)
+        self.assertIn("artifact-button selected", app_js)
+        self.assertIn("warningGroups", app_js)
+        self.assertIn(".slice(0, 3)", app_js)
+        self.assertIn("raw_warnings", app_js)
+        self.assertIn("rawWarningsLabel", app_js)
+        self.assertIn('focusSection("deliverables-panel")', app_js)
+        self.assertIn('focusSection("engineering-rail")', app_js)
+        self.assertIn('toggleStageDetail(stage, "deliverables")', app_js)
+        self.assertIn('toggleStageDetail(stage, "engineering")', app_js)
+        self.assertNotIn("for (const warning of health.warnings", app_js)
+
+    def test_dashboard_diff_view_uses_file_grouped_codex_style_preview(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn("selectedDiffFilePath", app_js)
+        self.assertIn("renderDiffArtifact", app_js)
+        self.assertIn("parseUnifiedDiff", app_js)
+        self.assertIn("renderDiffSummary", app_js)
+        self.assertIn('artifact.path === "codex/diff.patch"', app_js)
+        self.assertNotIn('JSON.stringify(vm.engineering.diffSummary || {}, null, 2)', app_js)
+        self.assertIn("diffView", i18n)
+        for key in ("changedFiles", "additions", "deletions", "empty", "binaryOrNoText"):
+            self.assertIn(key, i18n["diffView"])
+        for class_name in (
+            ".diff-view",
+            ".diff-file-list",
+            ".diff-file-button",
+            ".diff-preview",
+            ".diff-line-add",
+            ".diff-line-remove",
+            ".diff-line-meta",
+        ):
+            self.assertIn(class_name, css)
+
+    def test_dashboard_acceptance_frontend_exposes_button_and_renderer(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("renderAcceptance", app_js)
+        self.assertIn("renderMemoryRecall", app_js)
+        self.assertIn("renderReleaseReadiness", app_js)
+        self.assertIn("startAcceptance", app_js)
+        self.assertIn("startReleaseReadiness", app_js)
+        self.assertIn('/acceptance"', app_js)
+        self.assertIn('/release/readiness"', app_js)
+        self.assertIn("acceptance-action", app_js)
+        self.assertIn("release-readiness-action", app_js)
+        self.assertIn("acceptance-step", app_js)
+        self.assertIn(".acceptance-panel", css)
+        self.assertIn(".acceptance-step", css)
+        self.assertIn(".release-readiness-panel", css)
+        self.assertIn(".release-gate-row", css)
+
+    def test_dashboard_pr_ci_frontend_exposes_button_renderer_and_i18n(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn('id="github-pr-panel"', html)
+        self.assertIn('id="github-pr-action"', html)
+        self.assertIn('id="github-ci-action"', html)
+        self.assertIn("renderGithubPrCi", app_js)
+        self.assertIn("startGithubDraftPr", app_js)
+        self.assertIn("refreshGithubCi", app_js)
+        self.assertIn('/pr/draft"', app_js)
+        self.assertIn('/pr/status"', app_js)
+        self.assertIn(".github-pr-panel", css)
+        self.assertIn("githubPr", i18n)
+        for key in ("title", "createDraftButton", "refreshCiButton", "notReady", "noPr"):
+            self.assertIn(key, i18n["githubPr"])
 
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -228,10 +794,51 @@ class DashboardTests(unittest.TestCase):
                 {"label": "Task Package", "path": "task.yaml", "scope": "run", "exists": True},
                 {"label": "PRD", "path": "prd.md", "scope": "run", "exists": True},
                 {"label": "Architecture Diagram", "path": "architecture_diagram.md", "scope": "run", "exists": False},
+                {"label": "Implementation Trace", "path": "codex/implementation_trace.json", "scope": "run", "exists": True},
                 {"label": "Diff Evidence", "path": "codex/diff.patch", "scope": "run", "exists": True},
             ],
+            "implementation_trace": {
+                "status": "completed",
+                "current_step": "finalize_result",
+                "steps": [{"id": "finalize_result", "title": "生成实现结果", "status": "completed"}],
+                "evidence": {"changed_files": ["dashboard/app.js"], "tests_run": ["python3 -m unittest tests.test_dashboard -v"]},
+                "blockers": [],
+                "risk_events": [],
+            },
             "risk_events": [],
             "next_actions": ["python -m growth_dev.cli team apply --run-id biz-run-1"],
+            "health_summary": {"status": "completed_ready", "label": "已完成可采纳", "summary": "结果已通过关键检查。", "warnings": [], "blockers": []},
+            "quality_report": {
+                "status": "passed",
+                "score": 1.0,
+                "summary": "文件产物贴合需求。",
+                "checks": [{"id": "prd.md.specificity", "title": "需求贴题度", "status": "passed", "detail": "通过", "artifact": "prd.md"}],
+            },
+            "memory_recall": {
+                "matches": [
+                    {
+                        "run_id": "similar-run",
+                        "domain_id": "web_monitoring",
+                        "task_type": "dashboard_ui_change",
+                        "score": 0.84,
+                        "reasons": ["same_domain"],
+                        "recommended_skills": ["context_engineering"],
+                    }
+                ],
+                "recommended_skills": [
+                    {
+                        "id": "context_engineering",
+                        "confidence": 0.84,
+                        "source_run_ids": ["similar-run"],
+                        "why": "历史任务需要收窄上下文。",
+                    }
+                ],
+                "context_strategy": {
+                    "reuse": ["dashboard/app.js"],
+                    "avoid": ["raw stdout/stderr"],
+                    "checklist": ["先看历史验收。"],
+                },
+            },
         }
         script = f"""
 const fs = require('fs');
@@ -250,7 +857,105 @@ console.log(JSON.stringify(vm));
         self.assertEqual(vm["stages"][4]["statusLabel"], "等待确认")
         self.assertEqual(vm["deliverables"][0]["title"], "任务包")
         self.assertEqual(vm["deliverables"][2]["title"], "架构图")
-        self.assertEqual(vm["deliverables"][3]["title"], "代码差异")
+        self.assertEqual(vm["deliverables"][3]["title"], "AI 实现流程")
+        self.assertEqual(vm["health"]["label"], "已完成可采纳")
+        self.assertEqual(vm["artifactQuality"]["status"], "passed")
+        self.assertEqual(vm["implementationFlow"]["status"], "completed")
+        self.assertEqual(vm["memoryRecall"]["matches"][0]["run_id"], "similar-run")
+        self.assertEqual(vm["memoryRecall"]["recommendedSkills"][0]["id"], "context_engineering")
+        design_stage = vm["stages"][1]
+        implementation_stage = vm["stages"][2]
+        self.assertEqual(design_stage["agentIds"], ["product", "architect", "ux", "qa"])
+        self.assertTrue(any(artifact["path"] == "prd.md" for artifact in design_stage["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "codex/implementation_trace.json" for artifact in implementation_stage["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
+        self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
+        self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
+
+    def test_business_view_model_marks_delivery_completed_after_acceptance_success(self) -> None:
+        run = {
+            "run_id": "accepted-run-1",
+            "brief": "验收成功后更新交付阶段",
+            "status": "completed",
+            "stages": [{"id": "publisher", "status": "completed", "outputs": ["final_report.md"]}],
+            "gates": [],
+            "apply_gate": {"status": "passed", "reason": "ready"},
+            "acceptance": {"status": "completed", "applied": True, "conclusion": "已采纳且测试通过。"},
+            "artifacts": [{"label": "Final", "path": "final_report.md", "scope": "run", "exists": True}],
+            "risk_events": [],
+        }
+
+        vm = self._business_view_model(run)
+        delivery_stage = vm["stages"][4]
+
+        self.assertEqual(vm["status"], "completed")
+        self.assertEqual(vm["statusLabel"], "已完成")
+        self.assertEqual(delivery_stage["status"], "completed")
+        self.assertEqual(delivery_stage["statusLabel"], "已完成")
+
+    def test_business_view_model_marks_delivery_needs_attention_after_acceptance_failure(self) -> None:
+        run = {
+            "run_id": "accepted-run-2",
+            "brief": "验收失败后提示处理",
+            "status": "completed",
+            "stages": [{"id": "publisher", "status": "completed", "outputs": ["final_report.md"]}],
+            "gates": [],
+            "apply_gate": {"status": "passed", "reason": "ready"},
+            "acceptance": {"status": "failed", "applied": True, "conclusion": "已采纳但测试失败，需修复后再验证。"},
+            "artifacts": [{"label": "Final", "path": "final_report.md", "scope": "run", "exists": True}],
+            "risk_events": [],
+        }
+
+        vm = self._business_view_model(run)
+        delivery_stage = vm["stages"][4]
+
+        self.assertEqual(vm["status"], "needs_attention")
+        self.assertEqual(vm["statusLabel"], "需要处理")
+        self.assertEqual(delivery_stage["status"], "needs_attention")
+        self.assertEqual(delivery_stage["statusLabel"], "需要处理")
+
+    def test_business_view_model_groups_health_warnings_and_recommends_default_artifact(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"
+        module_path = root / "dashboard" / "business_view.js"
+        run = {
+            "run_id": "biz-run-2",
+            "brief": "小改动",
+            "status": "completed",
+            "apply_gate": {"status": "passed", "reason": "ready"},
+            "stages": [],
+            "gates": [],
+            "artifacts": [
+                {"label": "PRD", "path": "prd.md", "scope": "run", "exists": True},
+                {"label": "Review", "path": "review_report.md", "scope": "run", "exists": True},
+                {"label": "Final", "path": "final_report.md", "scope": "run", "exists": True},
+            ],
+            "risk_events": [],
+            "next_actions": [],
+            "health_summary": {
+                "status": "completed_with_warnings",
+                "label": "已完成但有警告",
+                "summary": "存在 2 类非阻塞系统提示，未影响 Review/Test/Report。",
+                "warnings": [],
+                "warning_groups": [
+                    {"id": "plugin_sync", "title": "插件同步提示", "count": 2, "severity": "info"},
+                    {"id": "telemetry", "title": "遥测提示", "count": 1, "severity": "info"},
+                ],
+                "blockers": [],
+            },
+        }
+        script = f"""
+const fs = require('fs');
+const {{ toBusinessViewModel }} = require({json.dumps(str(module_path))});
+const i18n = JSON.parse(fs.readFileSync({json.dumps(str(i18n_path))}, 'utf8'));
+const vm = toBusinessViewModel({json.dumps(run)}, i18n);
+console.log(JSON.stringify(vm));
+"""
+        completed = subprocess.run(["node", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        vm = json.loads(completed.stdout)
+
+        self.assertEqual(vm["health"]["warningGroups"][0]["title"], "插件同步提示")
+        self.assertEqual(vm["recommendedArtifact"]["path"], "final_report.md")
 
     def test_business_view_model_marks_permission_error_as_needs_attention(self) -> None:
         root = Path(__file__).resolve().parents[1]

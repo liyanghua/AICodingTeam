@@ -160,17 +160,52 @@ class TeamRuntimeTests(unittest.TestCase):
             root = Path(temp_dir)
             team_spec, domain_spec = _load_specs(root)
             runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+            historical_dir = root / "runs" / "historical-run"
+            historical_dir.mkdir(parents=True)
+            (historical_dir / "learning_summary.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "historical-run",
+                        "domain_id": "xhs_browser_benchmark",
+                        "status": "completed",
+                        "task_type": "dashboard_ui_change",
+                        "outcome": "accepted_and_verified",
+                        "quality_findings": {"summary": "历史任务贴合 Dashboard 需求。"},
+                        "implementation_findings": {"changed_files": ["dashboard/app.js"], "tests_run": []},
+                        "review_test_findings": {"review_summary": "通过", "test_summary": "通过"},
+                        "failure_modes": [],
+                        "recommended_skills": ["context_engineering"],
+                        "reusable_context": ["dashboard/app.js"],
+                        "avoid_context": ["raw stdout/stderr"],
+                        "next_time_checklist": ["复用历史 Dashboard 验收经验。"],
+                        "source_artifacts": ["learning_summary.json"],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             record = runtime.run("demo", run_id="run-1")
 
             events_path = root / "runs" / "run-1" / "events.jsonl"
             events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+            retrospective_exists = (root / "runs" / "run-1" / "retrospective.md").exists()
+            learning_exists = (root / "runs" / "run-1" / "learning_summary.json").exists()
+            recall_exists = (root / "runs" / "run-1" / "memory_recall.json").exists()
+            recall = json.loads((root / "runs" / "run-1" / "memory_recall.json").read_text(encoding="utf-8"))
 
         self.assertEqual(record.status, "completed")
         self.assertEqual(events[0]["event"], "run_started")
+        self.assertEqual(events[1]["event"], "memory_recall_generated")
         self.assertIn("agent_started", [event["event"] for event in events])
         self.assertIn("gate_checked", [event["event"] for event in events])
         self.assertEqual(events[-1]["event"], "run_completed")
+        self.assertTrue(recall_exists)
+        self.assertIn("memory_recall.json", record.output_paths)
+        self.assertEqual(record.artifacts["memory_recall.json"], "memory_recall.json")
+        self.assertTrue(any(match["run_id"] == "historical-run" for match in recall["matches"]))
+        self.assertTrue(retrospective_exists)
+        self.assertTrue(learning_exists)
 
     def test_runtime_writes_failed_gate_event_with_missing_artifacts(self) -> None:
         from growth_dev.team.models import AgentSpec, DomainSpec, GateSpec, TeamSpec
@@ -190,11 +225,49 @@ class TeamRuntimeTests(unittest.TestCase):
             events_path = root / "runs" / "run-1" / "events.jsonl"
             events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
             gate_events = [event for event in events if event["event"] == "gate_checked"]
+            retrospective_exists = (root / "runs" / "run-1" / "retrospective.md").exists()
+            learning_exists = (root / "runs" / "run-1" / "learning_summary.json").exists()
 
         self.assertEqual(record.status, "failed")
         self.assertEqual(gate_events[0]["status"], "failed")
         self.assertEqual(gate_events[0]["missing_artifacts"], ["prd.md"])
         self.assertEqual(events[-1]["event"], "run_failed")
+        self.assertTrue(retrospective_exists)
+        self.assertTrue(learning_exists)
+
+    def test_runtime_keeps_run_status_when_retrospective_generation_fails(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+
+            with patch("growth_dev.team.runtime.generate_run_retrospective", side_effect=RuntimeError("retro failed")):
+                record = runtime.run("demo", run_id="run-1")
+
+            events_path = root / "runs" / "run-1" / "events.jsonl"
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(record.status, "completed")
+        self.assertIn("retrospective_failed", [event["event"] for event in events])
+
+    def test_runtime_keeps_run_status_when_memory_recall_generation_fails(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = _new_runtime(team_spec, domain_spec, root / "runs")
+
+            with patch("growth_dev.team.runtime.generate_memory_recall", side_effect=RuntimeError("recall failed")):
+                record = runtime.run("demo", run_id="run-1")
+
+            events_path = root / "runs" / "run-1" / "events.jsonl"
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(record.status, "completed")
+        self.assertIn("memory_recall_failed", [event["event"] for event in events])
 
 
 if __name__ == "__main__":

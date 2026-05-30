@@ -1,0 +1,19 @@
+slice_id: example_vertical_slice
+title: Example vertical slice
+type: coding
+blocked_by: []
+covers:
+  - acceptance_criterion_id
+vertical_path:
+  - schema
+  - service
+  - ui_or_cli
+  - tests
+allowed_paths: []
+verification_commands: []
+acceptance:
+  - User-visible behavior is implemented.
+  - Regression test proves the behavior.
+stop_conditions:
+  - Required artifact is missing.
+  - Scope expands beyond allowed paths.

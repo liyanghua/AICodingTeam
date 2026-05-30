@@ -1,12 +1,21 @@
 const state = {
   selectedRunId: "",
+  selectedArtifactPath: "",
+  selectedDiffFilePath: "",
+  selectedStageDetail: null,
+  stageDetailScroll: { key: "", top: 0 },
   timer: null,
   i18n: null,
   currentRun: null,
+  currentVm: null,
 };
 
 const $ = (id) => document.getElementById(id);
 const view = window.BusinessView;
+const ACCEPTANCE_ENDPOINT_SUFFIX = "/acceptance";
+const RELEASE_READINESS_ENDPOINT_SUFFIX = "/release/readiness";
+const GITHUB_PR_DRAFT_ENDPOINT_SUFFIX = "/pr/draft";
+const GITHUB_PR_STATUS_ENDPOINT_SUFFIX = "/pr/status";
 
 function t(path, fallback = "") {
   return view.lookup(state.i18n, path, fallback || view.lookup(state.i18n, "app.unknown", "未知项"));
@@ -81,6 +90,10 @@ function renderRunList(runs) {
 
 async function selectRun(runId) {
   state.selectedRunId = runId;
+  state.selectedArtifactPath = "";
+  state.selectedDiffFilePath = "";
+  state.selectedStageDetail = null;
+  state.stageDetailScroll = { key: "", top: 0 };
   await refreshRun();
 }
 
@@ -88,7 +101,8 @@ async function refreshRun() {
   if (!state.selectedRunId) return;
   const run = await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}`);
   state.currentRun = run;
-  renderBusinessRun(view.toBusinessViewModel(run, state.i18n));
+  state.currentVm = view.toBusinessViewModel(run, state.i18n);
+  renderBusinessRun(state.currentVm);
 }
 
 function renderBusinessRun(vm) {
@@ -101,11 +115,97 @@ function renderBusinessRun(vm) {
   pill.textContent = vm.statusLabel;
 
   renderStages(vm.stages || []);
+  renderStageDetail(vm);
+  renderHealth(vm.health || {});
+  renderArtifactQuality(vm.artifactQuality || {});
+  renderMemoryRecall(vm.memoryRecall || {});
   renderGates(vm.qualityGates || []);
-  renderDeliverables(vm.deliverables || []);
+  renderAcceptance(vm);
+  renderReleaseReadiness(vm);
+  renderGithubPrCi(vm);
   renderArtifactActions(vm.deliverables || []);
+  ensureSelectedArtifact(vm);
   renderNextActions(vm.nextActions || []);
   renderEngineering(vm);
+}
+
+function renderHealth(health) {
+  $("health-summary").textContent = health.summary || t("health.unknownSummary");
+  const list = $("health-details");
+  list.textContent = "";
+  const rows = [];
+  rows.push(`${t("health.statusLabel")}: ${health.label || t("app.unknown")}`);
+  for (const group of (health.warningGroups || []).slice(0, 3)) rows.push(`${t("health.warningLabel")}: ${group.title || group.id} (${group.count || 0})`);
+  for (const blocker of health.blockers || []) rows.push(`${t("health.blockerLabel")}: ${blocker}`);
+  if (rows.length === 1) rows.push(t("health.noIssue"));
+  for (const rowText of rows) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = rowText;
+    list.appendChild(row);
+  }
+}
+
+function renderArtifactQuality(quality) {
+  const summary = $("artifact-quality-summary");
+  const score = quality.score == null ? "" : ` ${Math.round(Number(quality.score) * 100)}%`;
+  summary.textContent = `${quality.summary || t("quality.unknownSummary")}${score}`;
+  const list = $("artifact-quality-checks");
+  list.textContent = "";
+  const checks = (quality.checks || []).slice(0, 6);
+  if (!checks.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("quality.noChecks");
+    list.appendChild(empty);
+    return;
+  }
+  for (const check of checks) {
+    const row = document.createElement("div");
+    row.className = `quality-row quality-${check.status || "unknown"}`;
+    row.textContent = `${check.title || check.id}: ${check.detail || ""}`;
+    list.appendChild(row);
+  }
+}
+
+function renderMemoryRecall(memoryRecall) {
+  const summary = $("memory-recall-summary");
+  const skills = $("memory-recall-skills");
+  const matches = $("memory-recall-matches");
+  if (!summary || !skills || !matches) return;
+  summary.textContent = memoryRecall.summary || t("memoryRecall.empty");
+  skills.textContent = "";
+  matches.textContent = "";
+
+  const skillItems = (memoryRecall.recommendedSkills || []).slice(0, 4);
+  if (!skillItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("memoryRecall.noSkills");
+    skills.appendChild(empty);
+  } else {
+    for (const skill of skillItems) {
+      const row = document.createElement("div");
+      row.className = "quality-row";
+      row.textContent = `${skill.id || t("app.unknown")} · ${Math.round(Number(skill.confidence || 0) * 100)}% · ${skill.why || ""}`;
+      skills.appendChild(row);
+    }
+  }
+
+  const matchItems = (memoryRecall.matches || []).slice(0, 4);
+  if (!matchItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("memoryRecall.noMatches");
+    matches.appendChild(empty);
+  } else {
+    for (const match of matchItems) {
+      const row = document.createElement("div");
+      row.className = "quality-row";
+      row.textContent = `${match.run_id || t("app.unknown")} · ${Math.round(Number(match.score || 0) * 100)}% · ${match.task_type || ""}`;
+      matches.appendChild(row);
+    }
+  }
 }
 
 function renderStages(stages) {
@@ -155,16 +255,276 @@ function renderStages(stages) {
 }
 
 function handleStageAction(action, stage) {
-  if (action === "viewArtifacts") {
+  if (action === "viewDeliverables") {
     const first = (stage.artifacts || []).find((artifact) => artifact.exists);
-    if (first) loadArtifact(first);
+    if (first) selectArtifact(first);
+    toggleStageDetail(stage, "deliverables");
     return;
   }
   if (action === "viewRisks") {
     $("artifact-preview").textContent = view.toBusinessViewModel(state.currentRun || {}, state.i18n).risks.join("\n");
+    focusSection("deliverables-panel");
     return;
   }
-  document.querySelector(".engineering-panel").open = true;
+  toggleStageDetail(stage, "engineering");
+}
+
+function toggleStageDetail(stage, mode) {
+  const current = state.selectedStageDetail || {};
+  if (current.stageId === stage.id && current.mode === mode) {
+    state.selectedStageDetail = null;
+    state.stageDetailScroll = { key: "", top: 0 };
+  } else {
+    state.selectedStageDetail = { stageId: stage.id, mode };
+    state.stageDetailScroll = { key: stageDetailKey(state.selectedStageDetail), top: 0 };
+  }
+  renderStageDetail(state.currentVm || view.toBusinessViewModel(state.currentRun || {}, state.i18n));
+}
+
+function stageDetailKey(selection = state.selectedStageDetail) {
+  if (!selection) return "";
+  return `${state.selectedRunId || ""}:${selection.stageId || ""}:${selection.mode || ""}`;
+}
+
+function captureStageDetailScroll() {
+  const body = document.querySelector("#stage-detail-panel .stage-detail-body");
+  if (!body || !state.selectedStageDetail) return;
+  state.stageDetailScroll = { key: stageDetailKey(), top: body.scrollTop || 0 };
+}
+
+function restoreStageDetailScroll(body) {
+  if (!body || !state.selectedStageDetail) return;
+  const currentKey = stageDetailKey();
+  if (state.stageDetailScroll.key !== currentKey) return;
+  const top = Math.min(state.stageDetailScroll.top || 0, Math.max(0, body.scrollHeight - body.clientHeight));
+  body.scrollTop = top;
+}
+
+function renderStageDetail(vm) {
+  const panel = $("stage-detail-panel");
+  if (!panel) return;
+  captureStageDetailScroll();
+  panel.textContent = "";
+  const selection = state.selectedStageDetail;
+  if (!selection) {
+    panel.hidden = true;
+    return;
+  }
+  const stage = (vm.stages || []).find((item) => item.id === selection.stageId);
+  if (!stage) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+
+  const header = document.createElement("div");
+  header.className = "stage-detail-header";
+  const title = document.createElement("h3");
+  title.textContent = `${stage.title} / ${selection.mode === "engineering" ? t("stageDetail.engineeringSuffix") : t("stageDetail.deliverablesSuffix")}`;
+  const status = document.createElement("span");
+  status.className = `mini-status ${statusClass(stage.tone)}`;
+  status.textContent = stage.statusLabel;
+  header.append(title, status);
+
+  const body = document.createElement("div");
+  body.className = `stage-detail-body ${selection.mode === "engineering" ? "engineering-mode" : "deliverables-mode"}`;
+  if (selection.mode === "engineering") {
+    renderStageEngineering(stage, vm, body);
+  } else {
+    renderStageDeliverables(stage, body);
+  }
+
+  body.addEventListener("scroll", () => {
+    state.stageDetailScroll = { key: stageDetailKey(), top: body.scrollTop || 0 };
+  });
+  panel.append(header, body);
+  restoreStageDetailScroll(body);
+}
+
+function renderStageDeliverables(stage, container) {
+  const artifacts = (stage.artifacts || []).filter((artifact) => artifact.exists);
+  if (!artifacts.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = t("stageDetail.emptyDeliverables");
+    container.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "stage-artifact-list";
+  for (const artifact of artifacts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = artifact.path === state.selectedArtifactPath ? "artifact-button selected" : "artifact-button";
+    button.textContent = artifact.title;
+    button.addEventListener("click", () => {
+      selectArtifact(artifact);
+      renderStageDetail(state.currentVm || view.toBusinessViewModel(state.currentRun || {}, state.i18n));
+    });
+    list.appendChild(button);
+  }
+
+  const preview = document.createElement("div");
+  preview.className = "stage-detail-preview";
+  const selected = artifacts.find((artifact) => artifact.path === state.selectedArtifactPath) || artifacts[0];
+  const heading = document.createElement("h4");
+  heading.textContent = `${t("stageDetail.selectedArtifact")}: ${selected.title}`;
+  const description = document.createElement("p");
+  description.className = "summary-text";
+  description.textContent = selected.description || t("stageDetail.globalArtifactsHint");
+  const content = document.createElement("pre");
+  content.className = "stage-artifact-preview";
+  content.textContent = "";
+  const hint = document.createElement("p");
+  hint.className = "meta";
+  hint.textContent = t("stageDetail.globalArtifactsHint");
+  preview.append(heading, description, content, hint);
+  loadArtifactContent(selected).then((value) => {
+    content.textContent = value;
+  }).catch((error) => {
+    content.textContent = String(error.message || error);
+  });
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "ghost small";
+  action.textContent = t("stageDetail.openGlobalDeliverables");
+  action.addEventListener("click", () => focusSection("deliverables-panel"));
+  preview.appendChild(action);
+
+  container.append(list, preview);
+}
+
+function renderStageEngineering(stage, vm, container) {
+  if (stage.id === "implementation") {
+    renderImplementationFlow(vm.implementationFlow || {}, container);
+  }
+  const related = filterEngineeringForStage(stage, vm);
+  const agents = document.createElement("div");
+  agents.className = "stage-detail-block";
+  const agentTitle = document.createElement("strong");
+  agentTitle.textContent = t("stageDetail.relatedAgents");
+  const agentText = document.createElement("p");
+  agentText.className = "summary-text";
+  agentText.textContent = (stage.agentIds || []).join(", ") || t("stageDetail.emptyEngineering");
+  agents.append(agentTitle, agentText);
+
+  const events = stageDetailList(t("stageDetail.relatedEvents"), related.events, t("stageDetail.emptyEngineering"));
+  const logs = stageDetailList(t("stageDetail.relatedLogs"), related.logs, t("stageDetail.globalEngineeringHint"));
+  const risks = stageDetailList(t("stageDetail.riskEvents"), related.risks, t("actions.noRisk"));
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "ghost small";
+  action.textContent = t("stageDetail.openGlobalEngineering");
+  action.addEventListener("click", () => focusSection("engineering-rail"));
+
+  container.append(agents, events, logs, risks, action);
+}
+
+function renderImplementationFlow(flow, container) {
+  const panel = document.createElement("div");
+  panel.className = "implementation-flow";
+  if (!flow || !Object.keys(flow).length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = t("implementationFlow.empty");
+    panel.appendChild(empty);
+    container.appendChild(panel);
+    return;
+  }
+
+  const current = document.createElement("div");
+  current.className = "implementation-current";
+  const currentTitle = document.createElement("strong");
+  currentTitle.textContent = t("implementationFlow.currentStep");
+  const currentText = document.createElement("span");
+  const step = (flow.steps || []).find((item) => item.id === flow.current_step) || {};
+  currentText.textContent = step.title || flow.current_step || t("implementationFlow.none");
+  current.append(currentTitle, currentText);
+
+  const inputs = stageDetailList(
+    t("implementationFlow.inputs"),
+    (flow.inputs || []).filter((item) => item.exists).map((item) => `${item.title || item.path}: ${item.path}`),
+    t("implementationFlow.none"),
+  );
+
+  const timeline = document.createElement("div");
+  timeline.className = "stage-detail-block";
+  const timelineTitle = document.createElement("strong");
+  timelineTitle.textContent = t("implementationFlow.timeline");
+  const timelineList = document.createElement("ol");
+  timelineList.className = "implementation-timeline";
+  for (const item of flow.steps || []) {
+    const row = document.createElement("li");
+    row.className = `implementation-step implementation-${item.status || "pending"}`;
+    const rowTitle = document.createElement("span");
+    rowTitle.textContent = item.title || item.id;
+    const rowStatus = document.createElement("em");
+    rowStatus.textContent = t(`implementationFlow.${item.status || "pending"}`);
+    const rowSummary = document.createElement("p");
+    rowSummary.textContent = item.summary || "";
+    row.append(rowTitle, rowStatus, rowSummary);
+    timelineList.appendChild(row);
+  }
+  timeline.append(timelineTitle, timelineList);
+
+  const evidence = flow.evidence || {};
+  const changedFiles = stageDetailList(t("implementationFlow.changedFiles"), evidence.changed_files || [], t("implementationFlow.none"));
+  const testEvidence = (evidence.tests_run || []).length ? evidence.tests_run : evidence.verification_commands || [];
+  const testsRun = stageDetailList(t("implementationFlow.testsRun"), testEvidence, t("implementationFlow.none"));
+  const blockers = stageDetailList(t("implementationFlow.blockers"), flow.blockers || [], t("implementationFlow.none"));
+  const risks = stageDetailList(t("implementationFlow.risks"), flow.risk_events || [], t("implementationFlow.none"));
+  const nextAction = stageDetailList(t("implementationFlow.nextAction"), flow.next_action ? [flow.next_action] : [], t("implementationFlow.none"));
+
+  panel.append(current, inputs, timeline, changedFiles, testsRun, blockers, risks, nextAction);
+  container.appendChild(panel);
+}
+
+function stageDetailList(title, values, emptyText) {
+  const block = document.createElement("div");
+  block.className = "stage-detail-block";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  block.appendChild(heading);
+  const items = (values || []).filter(Boolean).slice(0, 4);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = emptyText;
+    block.appendChild(empty);
+    return block;
+  }
+  const list = document.createElement("ul");
+  list.className = "stage-detail-list";
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.textContent = typeof item === "string" ? item : JSON.stringify(item);
+    list.appendChild(row);
+  }
+  block.appendChild(list);
+  return block;
+}
+
+function filterEngineeringForStage(stage, vm) {
+  const agentIds = stage.agentIds || [];
+  const engineering = vm.engineering || {};
+  const events = (engineering.events || []).filter((event) => {
+    const text = JSON.stringify(event);
+    return agentIds.some((agentId) => text.includes(agentId));
+  });
+  const logs = (engineering.logs || []).filter((line) => agentIds.some((agentId) => String(line).includes(agentId)));
+  const fallbackLogs = logs.length ? logs : (engineering.logs || []).slice(0, 3);
+  const risks = (vm.risks || []).filter((risk) => risk && risk !== t("actions.noRisk"));
+  return { events, logs: fallbackLogs, risks };
+}
+
+function focusSection(id) {
+  const target = $(id);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (typeof target.focus === "function") target.focus({ preventScroll: true });
 }
 
 function renderGates(gates) {
@@ -186,29 +546,247 @@ function renderGates(gates) {
   }
 }
 
-function renderDeliverables(deliverables) {
-  const container = $("deliverables");
-  container.textContent = "";
-  const visible = deliverables.filter((artifact) => artifact.exists).slice(0, 5);
-  if (!visible.length) {
-    const empty = document.createElement("p");
-    empty.className = "meta";
-    empty.textContent = t("actions.noArtifacts");
-    container.appendChild(empty);
-    return;
+function renderAcceptance(vm) {
+  const acceptance = vm.acceptance || {};
+  const applyGate = vm.applyGate || {};
+  const action = $("acceptance-action");
+  const summary = $("acceptance-summary");
+  const nextAction = $("acceptance-next-action");
+  const steps = $("acceptance-steps");
+  const status = acceptance.status || "not_started";
+  const canStart = applyGate.status === "passed" && status === "not_started";
+  const isRunning = status === "queued" || status === "running";
+
+  action.disabled = !canStart || isRunning;
+  action.textContent = isRunning ? t("acceptance.running") : t("acceptance.confirmButton");
+  action.onclick = startAcceptance;
+
+  if (status === "completed") {
+    summary.textContent = acceptance.conclusion || t("acceptance.completed");
+  } else if (status === "failed") {
+    summary.textContent = acceptance.conclusion || t("acceptance.failed");
+  } else if (isRunning) {
+    summary.textContent = acceptance.summary || t("acceptance.running");
+  } else if (applyGate.status !== "passed") {
+    summary.textContent = applyGate.reason || t("acceptance.blocked");
+  } else {
+    summary.textContent = t("acceptance.notStarted");
   }
-  for (const artifact of visible) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "deliverable-card";
-    item.addEventListener("click", () => loadArtifact(artifact));
+
+  steps.textContent = "";
+  const rows = (acceptance.steps || []).length ? acceptance.steps : defaultAcceptanceSteps();
+  for (const step of rows) {
+    const row = document.createElement("article");
+    row.className = `acceptance-step acceptance-${step.status || "pending"}`;
+
     const title = document.createElement("strong");
-    title.textContent = artifact.title;
-    const desc = document.createElement("span");
-    desc.textContent = artifact.description;
-    item.append(title, desc);
-    container.appendChild(item);
+    title.textContent = step.title || step.id || t("app.unknown");
+    const badge = document.createElement("span");
+    badge.className = `mini-status ${statusClass(acceptanceTone(step.status))}`;
+    badge.textContent = t(`acceptance.${step.status || "pending"}`, step.status || "");
+    const command = document.createElement("code");
+    command.textContent = step.command || "";
+    const exit = document.createElement("p");
+    exit.className = "meta";
+    exit.textContent = step.exit_code == null ? t("acceptance.waitingExit") : `${t("acceptance.exitCode")}: ${step.exit_code}`;
+    const logs = document.createElement("pre");
+    logs.className = "acceptance-log";
+    logs.textContent = [...(step.stdout_tail || []), ...(step.stderr_tail || [])].slice(-8).join("\n");
+    row.append(title, badge, command, exit);
+    if (logs.textContent) row.appendChild(logs);
+    steps.appendChild(row);
   }
+
+  nextAction.textContent = acceptance.next_action || t("acceptance.defaultNextAction");
+}
+
+function defaultAcceptanceSteps() {
+  return [
+    { id: "apply", title: t("acceptance.applyStep"), status: "pending", command: "" },
+    { id: "tests", title: t("acceptance.testsStep"), status: "pending", command: "python3 -m unittest discover -s tests -v" },
+  ];
+}
+
+function acceptanceTone(status) {
+  if (status === "completed") return "green";
+  if (status === "failed") return "red";
+  if (status === "running") return "blue";
+  return "muted";
+}
+
+async function startAcceptance() {
+  if (!state.selectedRunId) return;
+  const action = $("acceptance-action");
+  action.disabled = true;
+  action.textContent = t("acceptance.running");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${ACCEPTANCE_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderReleaseReadiness(vm) {
+  const readiness = vm.releaseReadiness || {};
+  const acceptance = vm.acceptance || {};
+  const action = $("release-readiness-action");
+  const summary = $("release-readiness-summary");
+  const gates = $("release-readiness-gates");
+  const pr = $("release-readiness-pr");
+  if (!action || !summary || !gates || !pr) return;
+
+  const canGenerate = (vm.status === "completed" || acceptance.status === "completed") && acceptance.status === "completed";
+  action.disabled = !canGenerate;
+  action.textContent = t("releaseReadiness.generateButton");
+  action.onclick = startReleaseReadiness;
+  summary.textContent = readiness.summary || (canGenerate ? t("releaseReadiness.readyToGenerate") : t("releaseReadiness.empty"));
+
+  gates.textContent = "";
+  const gateItems = (readiness.gates || []).slice(0, 6);
+  if (!gateItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("releaseReadiness.noGates");
+    gates.appendChild(empty);
+  } else {
+    for (const gate of gateItems) {
+      const row = document.createElement("div");
+      row.className = `quality-row release-gate-row release-gate-${gate.status || "unknown"}`;
+      row.textContent = `${gate.id || t("app.unknown")}: ${gate.status || ""} · ${gate.reason || ""}`;
+      gates.appendChild(row);
+    }
+  }
+
+  pr.textContent = "";
+  const decision = document.createElement("div");
+  decision.className = "quality-row";
+  decision.textContent = `${t("releaseReadiness.decision")}: ${readiness.decisionLabel || t("releaseReadiness.decisions.not_generated")}`;
+  pr.appendChild(decision);
+  if (readiness.prDraft && readiness.prDraft.title) {
+    const title = document.createElement("div");
+    title.className = "quality-row";
+    title.textContent = `${t("releaseReadiness.prTitle")}: ${readiness.prDraft.title}`;
+    pr.appendChild(title);
+  }
+  const nextActions = (readiness.nextActions || []).slice(0, 3);
+  if (nextActions.length) {
+    for (const item of nextActions) {
+      const row = document.createElement("div");
+      row.className = "quality-row";
+      row.textContent = `${t("releaseReadiness.nextActions")}: ${item}`;
+      pr.appendChild(row);
+    }
+  }
+}
+
+async function startReleaseReadiness() {
+  if (!state.selectedRunId) return;
+  const action = $("release-readiness-action");
+  action.disabled = true;
+  action.textContent = t("releaseReadiness.generating");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${RELEASE_READINESS_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderGithubPrCi(vm) {
+  const githubPr = vm.githubPr || {};
+  const readiness = vm.releaseReadiness || {};
+  const prAction = $("github-pr-action");
+  const ciAction = $("github-ci-action");
+  const summary = $("github-pr-summary");
+  const prInfo = $("github-pr-info");
+  const ciInfo = $("github-ci-info");
+  if (!prAction || !ciAction || !summary || !prInfo || !ciInfo) return;
+
+  const decision = readiness.decision || "not_generated";
+  const canCreate = decision === "ready_for_pr_ci" || decision === "ready_with_warnings";
+  const hasPr = githubPr.status === "created" && githubPr.pr && githubPr.pr.url;
+  prAction.disabled = !canCreate || hasPr;
+  ciAction.disabled = !hasPr;
+  prAction.textContent = t("githubPr.createDraftButton");
+  ciAction.textContent = t("githubPr.refreshCiButton");
+  prAction.onclick = startGithubDraftPr;
+  ciAction.onclick = refreshGithubCi;
+
+  if (!canCreate) {
+    summary.textContent = readiness.decision === "blocked" ? t("githubPr.blockedByReadiness") : t("githubPr.notReady");
+  } else if (hasPr) {
+    summary.textContent = `${githubPr.statusLabel || t("githubPr.status.created")} · ${githubPr.ciStatusLabel || ""} · ${githubPr.summary || ""}`;
+  } else {
+    summary.textContent = t("githubPr.readyToCreate");
+  }
+
+  prInfo.textContent = "";
+  const prRows = [];
+  const pr = githubPr.pr || {};
+  if (hasPr) {
+    prRows.push(`${t("githubPr.prUrl")}: ${pr.url}`);
+    prRows.push(`${t("githubPr.baseHead")}: ${pr.base || ""} <- ${pr.head || ""}`);
+    prRows.push(`${t("githubPr.draft")}: ${pr.is_draft === false ? t("githubPr.no") : t("githubPr.yes")}`);
+  } else {
+    prRows.push(t("githubPr.noPr"));
+  }
+  for (const blocker of githubPr.blockers || []) prRows.push(`${t("githubPr.blocker")}: ${blocker}`);
+  for (const warning of githubPr.warnings || []) prRows.push(`${t("githubPr.warning")}: ${warning}`);
+  for (const rowText of prRows.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = rowText;
+    prInfo.appendChild(row);
+  }
+
+  ciInfo.textContent = "";
+  const checks = githubPr.checks || [];
+  if (!checks.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = hasPr ? t("githubPr.noChecks") : t("githubPr.noPr");
+    ciInfo.appendChild(empty);
+  } else {
+    for (const check of checks.slice(0, 8)) {
+      const row = document.createElement("div");
+      row.className = `quality-row github-check github-check-${String(check.conclusion || check.status || "unknown").toLowerCase()}`;
+      row.textContent = `${check.name || t("app.unknown")}: ${check.status || ""} / ${check.conclusion || ""}`;
+      ciInfo.appendChild(row);
+    }
+  }
+  if (githubPr.nextAction) {
+    const next = document.createElement("div");
+    next.className = "quality-row";
+    next.textContent = `${t("githubPr.nextAction")}: ${githubPr.nextAction}`;
+    ciInfo.appendChild(next);
+  }
+}
+
+async function startGithubDraftPr() {
+  if (!state.selectedRunId) return;
+  const action = $("github-pr-action");
+  action.disabled = true;
+  action.textContent = t("githubPr.creating");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${GITHUB_PR_DRAFT_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+async function refreshGithubCi() {
+  if (!state.selectedRunId) return;
+  const action = $("github-ci-action");
+  action.disabled = true;
+  action.textContent = t("githubPr.refreshing");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${GITHUB_PR_STATUS_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
 }
 
 function renderArtifactActions(deliverables) {
@@ -217,19 +795,59 @@ function renderArtifactActions(deliverables) {
   for (const artifact of deliverables) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "artifact-button";
+    button.className = artifact.path === state.selectedArtifactPath ? "artifact-button selected" : "artifact-button";
     button.disabled = !artifact.exists;
     button.textContent = artifact.exists ? artifact.title : `${artifact.title} (${t("actions.artifactPending")})`;
-    button.addEventListener("click", () => loadArtifact(artifact));
+    button.addEventListener("click", () => selectArtifact(artifact));
     container.appendChild(button);
   }
 }
 
+function ensureSelectedArtifact(vm) {
+  const deliverables = vm.deliverables || [];
+  const selected = deliverables.find((artifact) => artifact.path === state.selectedArtifactPath && artifact.exists);
+  if (selected) {
+    renderSelectedArtifact(selected);
+    return;
+  }
+  if (vm.recommendedArtifact) {
+    selectArtifact(vm.recommendedArtifact);
+    return;
+  }
+  renderSelectedArtifact(null);
+}
+
+function selectArtifact(artifact) {
+  if (!artifact || !artifact.exists) return;
+  state.selectedArtifactPath = artifact.path;
+  if (artifact.path !== "codex/diff.patch") state.selectedDiffFilePath = "";
+  renderArtifactActions((view.toBusinessViewModel(state.currentRun || {}, state.i18n).deliverables || []));
+  renderSelectedArtifact(artifact);
+  loadArtifact(artifact);
+}
+
+function renderSelectedArtifact(artifact) {
+  $("selected-artifact-title").textContent = artifact ? artifact.title : t("actions.noDeliverables");
+  $("selected-artifact-description").textContent = artifact ? artifact.description : "";
+  $("selected-artifact-status").textContent = artifact ? t("actions.artifactReady") : t("actions.artifactPending");
+}
+
 async function loadArtifact(artifact) {
   if (!state.selectedRunId) return;
+  const content = await loadArtifactContent(artifact);
+  if (artifact.path === "codex/diff.patch") {
+    renderDiffArtifact(content, artifact);
+    return;
+  }
+  const preview = $("artifact-preview");
+  preview.className = "artifact-preview";
+  preview.textContent = content;
+}
+
+async function loadArtifactContent(artifact) {
   const params = new URLSearchParams({ path: artifact.path, scope: artifact.scope || "run" });
   const data = await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}/artifact?${params.toString()}`);
-  $("artifact-preview").textContent = data.content || "";
+  return data.content || "";
 }
 
 function renderNextActions(actions) {
@@ -253,8 +871,198 @@ function renderNextActions(actions) {
 function renderEngineering(vm) {
   $("engineering-run").textContent = [vm.engineering.runId, vm.engineering.status, vm.engineering.executor].filter(Boolean).join("\n");
   $("engineering-events").textContent = JSON.stringify(vm.engineering.events || [], null, 2);
-  $("engineering-logs").textContent = (vm.engineering.logs || []).join("\n");
-  $("engineering-diff").textContent = JSON.stringify(vm.engineering.diffSummary || {}, null, 2);
+  const rawWarnings = (vm.engineering.healthSummary || {}).raw_warnings || [];
+  const warningSection = rawWarnings.length ? ["", t("health.rawWarningsLabel"), ...rawWarnings] : [];
+  $("engineering-logs").textContent = [...(vm.engineering.logs || []), ...warningSection].join("\n");
+  $("engineering-diff").textContent = renderDiffSummary(vm.engineering.diffSummary || {});
+}
+
+function renderDiffSummary(diffSummary) {
+  if (!diffSummary || !diffSummary.available) return t("diffView.empty");
+  const files = diffSummary.files || [];
+  const rows = [
+    `${diffSummary.files_changed || files.length || 0} ${t("diffView.changedFiles")}，+${diffSummary.additions || 0} / -${diffSummary.deletions || 0}`,
+  ];
+  for (const file of files.slice(0, 8)) {
+    rows.push(`${file.path || t("app.unknown")}  ${statusText(file.status)}  +${file.additions || 0} / -${file.deletions || 0}`);
+  }
+  if (files.length > 8) rows.push(`... ${files.length - 8}`);
+  return rows.join("\n");
+}
+
+function renderDiffArtifact(rawPatch, artifact) {
+  const preview = $("artifact-preview");
+  preview.className = "artifact-preview diff-artifact-preview";
+  preview.textContent = "";
+
+  const parsed = parseUnifiedDiff(rawPatch);
+  const wrapper = document.createElement("div");
+  wrapper.className = "diff-view";
+  wrapper.setAttribute("role", "region");
+  wrapper.setAttribute("aria-label", artifact.title || t("artifacts.codex/diff.patch.title"));
+
+  if (!parsed.files.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = rawPatch && rawPatch.trim() ? t("diffView.binaryOrNoText") : t("diffView.empty");
+    wrapper.appendChild(empty);
+    preview.appendChild(wrapper);
+    return;
+  }
+
+  if (!state.selectedDiffFilePath || !parsed.files.some((file) => file.path === state.selectedDiffFilePath)) {
+    state.selectedDiffFilePath = parsed.files[0].path;
+  }
+  const selectedFile = parsed.files.find((file) => file.path === state.selectedDiffFilePath) || parsed.files[0];
+
+  const summary = document.createElement("div");
+  summary.className = "diff-summary";
+  summary.textContent = `${parsed.files.length} ${t("diffView.changedFiles")}，+${parsed.additions} / -${parsed.deletions}`;
+
+  const body = document.createElement("div");
+  body.className = "diff-body";
+
+  const fileList = document.createElement("div");
+  fileList.className = "diff-file-list";
+  for (const file of parsed.files) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = file.path === selectedFile.path ? "diff-file-button selected" : "diff-file-button";
+    button.addEventListener("click", () => {
+      state.selectedDiffFilePath = file.path;
+      renderDiffArtifact(rawPatch, artifact);
+    });
+
+    const name = document.createElement("span");
+    name.className = "diff-file-name";
+    name.textContent = file.path;
+    const meta = document.createElement("span");
+    meta.className = "diff-file-meta";
+    meta.textContent = `${statusText(file.status)}  +${file.additions} / -${file.deletions}`;
+    button.append(name, meta);
+    fileList.appendChild(button);
+  }
+
+  const diffPreview = document.createElement("div");
+  diffPreview.className = "diff-preview";
+  if (!selectedFile.lines.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = t("diffView.binaryOrNoText");
+    diffPreview.appendChild(empty);
+  } else {
+    for (const line of selectedFile.lines) {
+      const row = document.createElement("div");
+      row.className = `diff-line ${diffLineClass(line)}`;
+      row.textContent = line || " ";
+      diffPreview.appendChild(row);
+    }
+  }
+
+  body.append(fileList, diffPreview);
+  wrapper.append(summary, body);
+  preview.appendChild(wrapper);
+}
+
+function parseUnifiedDiff(rawPatch) {
+  const files = [];
+  let current = null;
+  let inHunk = false;
+
+  function finishCurrent() {
+    if (!current) return;
+    files.push({
+      path: current.path || current.newPath || current.oldPath || t("app.unknown"),
+      status: current.status || "modified",
+      additions: current.additions || 0,
+      deletions: current.deletions || 0,
+      lines: current.lines || [],
+    });
+    current = null;
+  }
+
+  for (const line of String(rawPatch || "").split(/\r?\n/)) {
+    if (line.startsWith("diff --git ")) {
+      finishCurrent();
+      const paths = parseDiffGitPaths(line);
+      current = {
+        path: paths.newPath || paths.oldPath,
+        oldPath: paths.oldPath,
+        newPath: paths.newPath,
+        status: "modified",
+        additions: 0,
+        deletions: 0,
+        lines: [line],
+      };
+      inHunk = false;
+      continue;
+    }
+    if (!current) continue;
+    current.lines.push(line);
+    if (line.startsWith("new file mode")) current.status = "added";
+    if (line.startsWith("deleted file mode")) current.status = "deleted";
+    if (line.startsWith("rename from ")) {
+      current.status = "renamed";
+      current.oldPath = normalizeDiffPath(line.replace("rename from ", ""));
+    }
+    if (line.startsWith("rename to ")) {
+      current.status = "renamed";
+      current.newPath = normalizeDiffPath(line.replace("rename to ", ""));
+      current.path = current.newPath;
+    }
+    if (line.startsWith("--- ")) {
+      const oldPath = normalizeDiffPath(line.replace("--- ", ""));
+      if (oldPath === "/dev/null") current.status = "added";
+      else current.oldPath = oldPath;
+    } else if (line.startsWith("+++ ")) {
+      const newPath = normalizeDiffPath(line.replace("+++ ", ""));
+      if (newPath === "/dev/null") {
+        current.status = "deleted";
+        current.path = current.oldPath || current.path;
+      } else {
+        current.newPath = newPath;
+        current.path = newPath;
+      }
+    } else if (line.startsWith("@@")) {
+      inHunk = true;
+    } else if (inHunk && line.startsWith("+") && !line.startsWith("+++")) {
+      current.additions += 1;
+    } else if (inHunk && line.startsWith("-") && !line.startsWith("---")) {
+      current.deletions += 1;
+    }
+  }
+  finishCurrent();
+  return {
+    files,
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
+  };
+}
+
+function parseDiffGitPaths(line) {
+  const match = line.match(/^diff --git a\/(.*?) b\/(.*)$/);
+  if (!match) return { oldPath: "", newPath: "" };
+  return { oldPath: normalizeDiffPath(match[1]), newPath: normalizeDiffPath(match[2]) };
+}
+
+function normalizeDiffPath(path) {
+  const value = String(path || "").trim().replace(/^"|"$/g, "");
+  if (value === "/dev/null" || value === "dev/null") return "/dev/null";
+  if (value.startsWith("a/") || value.startsWith("b/")) return value.slice(2);
+  return value;
+}
+
+function diffLineClass(line) {
+  if (line.startsWith("+") && !line.startsWith("+++")) return "diff-line-add";
+  if (line.startsWith("-") && !line.startsWith("---")) return "diff-line-remove";
+  if (line.startsWith("diff --git") || line.startsWith("@@") || line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++") || line.startsWith("new file mode") || line.startsWith("deleted file mode") || line.startsWith("rename ")) {
+    return "diff-line-meta";
+  }
+  return "diff-line-context";
+}
+
+function statusText(status) {
+  return t(`diffView.${status || "modified"}`, status || "");
 }
 
 async function startRun(event) {

@@ -118,6 +118,64 @@ def _build_parser() -> argparse.ArgumentParser:
     team_apply.add_argument("--repo-root", default=".")
     team_apply.set_defaults(func=_cmd_team_apply)
 
+    team_release = team_sub.add_parser("release", help="Generate release readiness reports")
+    team_release_sub = team_release.add_subparsers(dest="release_command", required=True)
+    team_release_readiness = team_release_sub.add_parser("readiness", help="Generate local release readiness and PR draft artifacts")
+    team_release_readiness.add_argument("--run-id", required=True)
+    team_release_readiness.add_argument("--runs-dir", default="runs")
+    team_release_readiness.add_argument("--repo-root", default=".")
+    team_release_readiness.add_argument("--json", action="store_true", dest="json_output")
+    team_release_readiness.set_defaults(func=_cmd_team_release_readiness)
+
+    team_pr = team_sub.add_parser("pr", help="Create GitHub draft PRs and observe CI checks")
+    team_pr_sub = team_pr.add_subparsers(dest="pr_command", required=True)
+    team_pr_draft = team_pr_sub.add_parser("draft", help="Push the current branch when requested and create a GitHub Draft PR")
+    team_pr_draft.add_argument("--run-id", required=True)
+    team_pr_draft.add_argument("--runs-dir", default="runs")
+    team_pr_draft.add_argument("--repo-root", default=".")
+    team_pr_draft.add_argument("--base", default="main")
+    team_pr_draft.add_argument("--push", action="store_true")
+    team_pr_draft.add_argument("--json", action="store_true", dest="json_output")
+    team_pr_draft.set_defaults(func=_cmd_team_pr_draft)
+
+    team_pr_status = team_pr_sub.add_parser("status", help="Refresh GitHub PR checks and write CI status artifacts")
+    team_pr_status.add_argument("--run-id", required=True)
+    team_pr_status.add_argument("--runs-dir", default="runs")
+    team_pr_status.add_argument("--repo-root", default=".")
+    team_pr_status.add_argument("--json", action="store_true", dest="json_output")
+    team_pr_status.set_defaults(func=_cmd_team_pr_status)
+
+    team_retrospective = team_sub.add_parser("retrospective", help="Generate deterministic run retrospectives")
+    team_retrospective_sub = team_retrospective.add_subparsers(dest="retrospective_command", required=True)
+    team_retrospective_generate = team_retrospective_sub.add_parser("generate", help="Generate retrospective artifacts")
+    retrospective_target = team_retrospective_generate.add_mutually_exclusive_group(required=True)
+    retrospective_target.add_argument("--run-id", default=None)
+    retrospective_target.add_argument("--all", dest="generate_all", action="store_true")
+    team_retrospective_generate.add_argument("--runs-dir", default="runs")
+    team_retrospective_generate.add_argument("--limit", type=int, default=50)
+    team_retrospective_generate.set_defaults(func=_cmd_team_retrospective_generate)
+
+    team_memory = team_sub.add_parser("memory", help="Export team run memory to Obsidian Markdown")
+    team_memory_sub = team_memory.add_subparsers(dest="memory_command", required=True)
+    team_memory_export = team_memory_sub.add_parser("export", help="Export run summaries to an Obsidian vault")
+    memory_target = team_memory_export.add_mutually_exclusive_group(required=True)
+    memory_target.add_argument("--run-id", default=None)
+    memory_target.add_argument("--all", dest="export_all", action="store_true")
+    team_memory_export.add_argument("--runs-dir", default="runs")
+    team_memory_export.add_argument("--vault-dir", required=True)
+    team_memory_export.add_argument("--limit", type=int, default=50)
+    team_memory_export.set_defaults(func=_cmd_team_memory_export)
+
+    team_memory_search = team_memory_sub.add_parser("search", help="Search historical learning summaries")
+    team_memory_search.add_argument("--query", required=True)
+    team_memory_search.add_argument("--runs-dir", default="runs")
+    team_memory_search.add_argument("--domain-id", default="")
+    team_memory_search.add_argument("--task-type", default="")
+    team_memory_search.add_argument("--limit", type=int, default=5)
+    team_memory_search.add_argument("--refresh-missing", action="store_true")
+    team_memory_search.add_argument("--json", action="store_true", dest="json_output")
+    team_memory_search.set_defaults(func=_cmd_team_memory_search)
+
     team_dashboard = team_sub.add_parser("serve-dashboard", help="Run the local Agent Team dashboard")
     team_dashboard.add_argument("--host", default="127.0.0.1")
     team_dashboard.add_argument("--port", type=int, default=8790)
@@ -541,6 +599,113 @@ def _cmd_team_apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_team_memory_export(args: argparse.Namespace) -> int:
+    from .team.memory import export_recent_runs_to_obsidian, export_run_to_obsidian
+
+    try:
+        if getattr(args, "export_all", False):
+            result = export_recent_runs_to_obsidian(
+                runs_dir=Path(args.runs_dir),
+                vault_dir=Path(args.vault_dir),
+                limit=args.limit,
+            )
+        else:
+            result = export_run_to_obsidian(
+                str(args.run_id),
+                runs_dir=Path(args.runs_dir),
+                vault_dir=Path(args.vault_dir),
+            )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_team_memory_search(args: argparse.Namespace) -> int:
+    from .team.memory_recall import format_memory_search_result, search_memory
+
+    result = search_memory(
+        str(args.query),
+        runs_dir=Path(args.runs_dir),
+        domain_id=str(args.domain_id or ""),
+        task_type=str(args.task_type or ""),
+        limit=int(args.limit),
+        refresh_missing=bool(args.refresh_missing),
+    )
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_memory_search_result(result), end="")
+    return 0
+
+
+def _cmd_team_release_readiness(args: argparse.Namespace) -> int:
+    from .team.release import format_release_readiness, generate_release_readiness
+
+    try:
+        result = generate_release_readiness(str(args.run_id), runs_dir=Path(args.runs_dir), repo_root=Path(args.repo_root))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_release_readiness(result), end="")
+    return 0
+
+
+def _cmd_team_pr_draft(args: argparse.Namespace) -> int:
+    from .team.github_pr import create_draft_pr, format_pr_status
+
+    try:
+        result = create_draft_pr(
+            str(args.run_id),
+            runs_dir=Path(args.runs_dir),
+            repo_root=Path(args.repo_root),
+            base=str(args.base),
+            push=bool(args.push),
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_pr_status(result), end="")
+    return 0 if result.get("status") == "created" else 1
+
+
+def _cmd_team_pr_status(args: argparse.Namespace) -> int:
+    from .team.github_pr import format_ci_status, refresh_ci_status
+
+    try:
+        result = refresh_ci_status(str(args.run_id), runs_dir=Path(args.runs_dir), repo_root=Path(args.repo_root))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_ci_status(result), end="")
+    return 0 if result.get("status") in {"passed", "running", "pending", "unknown"} else 1
+
+
+def _cmd_team_retrospective_generate(args: argparse.Namespace) -> int:
+    from .team.retrospective import generate_recent_run_retrospectives, generate_run_retrospective
+
+    try:
+        if getattr(args, "generate_all", False):
+            result = generate_recent_run_retrospectives(runs_dir=Path(args.runs_dir), limit=args.limit)
+        else:
+            result = generate_run_retrospective(str(args.run_id), runs_dir=Path(args.runs_dir))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_team_serve_dashboard(args: argparse.Namespace) -> int:
     from .team.dashboard import DashboardConfig, run_dashboard_server
 
@@ -581,14 +746,24 @@ def _print_run_artifact(run_dir: Path, artifact: str, label: str) -> int:
 
 
 def _team_status_summary(record, run_dir: Path) -> str:
+    from .team.quality import evaluate_run_quality, summarize_run_health
+
     current = _current_agent(record)
+    health = summarize_run_health(record, run_dir)
+    quality = evaluate_run_quality(record, run_dir)
     lines = [
         f"Run: {record.run_id}",
         f"Status: {record.status}",
+        f"Run health: {health.label} - {health.summary}",
+        f"Artifact quality: {quality.status} ({quality.score:.0%}) - {quality.summary}",
         f"Domain: {record.domain_id}",
         f"Executor: {record.executor}",
         f"Current agent: {current.agent_id if current else 'none'}",
     ]
+    if health.warnings:
+        lines.extend(["Warnings:", *[f"- {warning}" for warning in health.warnings[:3]]])
+    if health.blockers:
+        lines.extend(["Blockers:", *[f"- {blocker}" for blocker in health.blockers[:3]]])
     if current:
         lines.extend(
             [
@@ -742,19 +917,9 @@ def _elapsed_label(started_at: str, finished_at: str) -> str:
 
 
 def _latest_log_lines(run_dir: Path, max_lines: int = 6) -> list[str]:
-    candidates = [
-        run_dir / "codex" / "stdout.jsonl",
-        run_dir / "codex" / "stderr.log",
-        run_dir / "codex" / "reviewer_stdout.log",
-        run_dir / "codex" / "reviewer_stderr.log",
-    ]
-    lines: list[str] = []
-    for path in candidates:
-        if not path.exists():
-            continue
-        for line in _tail_lines(path, max_lines=2):
-            lines.append(f"{path.name}: {line}")
-    return lines[-max_lines:]
+    from .team.quality import summarize_run_logs
+
+    return summarize_run_logs(run_dir, max_lines=max_lines)
 
 
 def _tail_lines(path: Path, max_lines: int = 5) -> list[str]:

@@ -30,9 +30,10 @@ It turns a single business brief into gated engineering artifacts, then compares
 ## Project Skills
 
 - Project-level skills live under `skills/` and are indexed by `skills/registry.yaml`.
-- For requirement clarification, PRD generation, repo context compilation, vertical task slicing, TDD planning, or failure diagnosis, read `skills/registry.yaml` first and then the corresponding `SKILL.md`.
+- For skill routing, spec writing, context engineering, task breakdown, incremental implementation, TDD planning, failure recovery, or code review, read `skills/registry.yaml` first and then the corresponding `SKILL.md`.
 - Skills define the project method layer; they do not replace per-run artifacts in `tasks/current/` or execution evidence in `runs/<run_id>/`.
-- The first batch call order is `requirement_grilling -> requirement_to_prd -> repo_context_compiler -> prd_to_task_slices -> tech_spec_to_tdd -> diagnose_failure`.
+- The first batch call order is `using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality`.
+- Skills are not better because there are more of them. Default to one primary skill per phase and at most one companion skill to avoid context pollution.
 
 ## Coding Rules
 
