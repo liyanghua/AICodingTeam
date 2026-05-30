@@ -229,6 +229,50 @@ console.log(JSON.stringify(vm));
         )
         (run_dir / "release_readiness.md").write_text("# Release Readiness\n", encoding="utf-8")
         (run_dir / "pr_draft.md").write_text("# PR Title\n\nweb_monitoring: Dashboard 状态修复\n", encoding="utf-8")
+        (run_dir / "github_pr.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "created",
+                    "generated_at": "2026-05-23T00:03:00+00:00",
+                    "pr": {
+                        "number": 42,
+                        "url": "https://github.com/example/project/pull/42",
+                        "title": "web_monitoring: Dashboard 状态修复",
+                        "state": "OPEN",
+                        "is_draft": True,
+                        "base": "main",
+                        "head": "feature/demo",
+                    },
+                    "release_decision": "ready_for_pr_ci",
+                    "warnings": [],
+                    "blockers": [],
+                    "commands": [],
+                    "next_action": "刷新 PR/CI 状态。",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "ci_status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "passed",
+                    "generated_at": "2026-05-23T00:04:00+00:00",
+                    "pr_url": "https://github.com/example/project/pull/42",
+                    "checks": [{"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS", "url": ""}],
+                    "summary": "1 个 CI check 已通过。",
+                    "warnings": [],
+                    "blockers": [],
+                    "next_action": "可以进行人工 Review。",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "github_pr.md").write_text("# GitHub Draft PR\n", encoding="utf-8")
+        (run_dir / "ci_status.md").write_text("# CI Status\n", encoding="utf-8")
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -255,6 +299,8 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["implementation_trace"]["status"], "completed")
         self.assertEqual(state["memory_recall"]["matches"][0]["run_id"], "historical-dashboard-run")
         self.assertEqual(state["release_readiness"]["release_decision"], "ready_for_pr_ci")
+        self.assertEqual(state["github_pr"]["status"], "created")
+        self.assertEqual(state["ci_status"]["status"], "passed")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.json" for item in state["artifacts"]))
@@ -263,6 +309,10 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "release_readiness.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "release_readiness.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "pr_draft.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "github_pr.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "github_pr.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "ci_status.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "ci_status.json" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -372,6 +422,34 @@ console.log(JSON.stringify(vm));
                 start_dashboard_acceptance("dashboard-run-1", runs_dir=runs_dir, repo_root=root)
 
         self.assertFalse((runs_dir / "dashboard-run-1" / "acceptance" / "status.json").exists())
+
+    def test_dashboard_pr_endpoints_delegate_to_github_pr_layer(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, create_dashboard_handler
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_completed_run(runs_dir)
+            handler = create_dashboard_handler(DashboardConfig(runs_dir=runs_dir, repo_root=root, dashboard_dir=Path("dashboard")))
+
+            with mock.patch("growth_dev.team.dashboard.create_draft_pr") as create_mock:
+                create_mock.return_value = {"status": "created"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/pr/draft"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                draft_payload = request._send_json.call_args.args[0]
+
+            with mock.patch("growth_dev.team.dashboard.refresh_ci_status") as status_mock:
+                status_mock.return_value = {"status": "passed"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/pr/status"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                status_payload = request._send_json.call_args.args[0]
+
+        self.assertEqual(draft_payload["status"], "created")
+        self.assertEqual(status_payload["status"], "passed")
 
     def test_dashboard_acceptance_rejects_run_id_path_escape(self) -> None:
         from growth_dev.team.dashboard import start_dashboard_acceptance
@@ -667,6 +745,26 @@ console.log(JSON.stringify(vm));
         self.assertIn(".acceptance-step", css)
         self.assertIn(".release-readiness-panel", css)
         self.assertIn(".release-gate-row", css)
+
+    def test_dashboard_pr_ci_frontend_exposes_button_renderer_and_i18n(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn('id="github-pr-panel"', html)
+        self.assertIn('id="github-pr-action"', html)
+        self.assertIn('id="github-ci-action"', html)
+        self.assertIn("renderGithubPrCi", app_js)
+        self.assertIn("startGithubDraftPr", app_js)
+        self.assertIn("refreshGithubCi", app_js)
+        self.assertIn('/pr/draft"', app_js)
+        self.assertIn('/pr/status"', app_js)
+        self.assertIn(".github-pr-panel", css)
+        self.assertIn("githubPr", i18n)
+        for key in ("title", "createDraftButton", "refreshCiButton", "notReady", "noPr"):
+            self.assertIn(key, i18n["githubPr"])
 
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
         root = Path(__file__).resolve().parents[1]

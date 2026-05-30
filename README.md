@@ -151,7 +151,17 @@ python -m growth_dev.cli team release readiness --run-id <run-id>
 python -m growth_dev.cli team release readiness --run-id <run-id> --json
 ```
 
-This writes `release_readiness.json`, `release_readiness.md`, and `pr_draft.md` under `runs/<run_id>/`. The decision is one of `ready_for_pr_ci`, `ready_with_warnings`, or `blocked`, based on acceptance status, Review/Test reports, risk/blocker state, changed-file evidence, and current git status. It does not create a PR, push code, or trigger remote CI.
+This writes `release_readiness.json`, `release_readiness.md`, and `pr_draft.md` under `runs/<run_id>/`. The decision is one of `ready_for_pr_ci`, `ready_with_warnings`, or `blocked`, based on acceptance status, Review/Test reports, risk/blocker state, changed-file evidence, and current git status.
+
+When readiness is not blocked, you can explicitly push the current branch, create a GitHub Draft PR, and refresh CI check status:
+
+```bash
+python -m growth_dev.cli team pr draft --run-id <run-id> --base main --push
+python -m growth_dev.cli team pr status --run-id <run-id>
+python -m growth_dev.cli team pr status --run-id <run-id> --json
+```
+
+This writes `github_pr.json`, `github_pr.md`, `ci_status.json`, and `ci_status.md`. It uses the GitHub CLI (`gh`) and never merges, deploys, or auto-fixes CI. If `gh` is missing, not authenticated, or the repo/branch is not ready, the failure is recorded as a run artifact.
 
 ### Obsidian project memory
 
@@ -168,7 +178,7 @@ python -m growth_dev.cli team memory export \
   --vault-dir /path/to/ObsidianVault
 ```
 
-Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, historical recall, release readiness, retrospectives, recommended skills, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
+Exported notes live under `AI Coding Memory/` with `Index.md`, monthly timeline notes, domain notes, and one run note per exported run. Notes include summaries, historical recall, release readiness, GitHub PR / CI status, retrospectives, recommended skills, gates, changed files, risks, and local artifact links; raw logs, full diffs, `.env`, and provider secrets are not copied into the vault.
 
 ### Local dashboard
 
@@ -185,7 +195,7 @@ python -m growth_dev.cli team serve-dashboard \
   --open-browser
 ```
 
-Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next actions. When a completed run passes the apply gate, the dashboard can trigger a human-confirmed acceptance flow: it applies the run with `python3 -m growth_dev.cli team apply --run-id <run-id>` and then runs `python3 -m unittest discover -s tests -v`, with progress and log tails written under `runs/<run_id>/acceptance/`. After acceptance passes, the dashboard can generate the local release readiness report and PR draft; it still does not push, create PRs, or trigger remote CI. The CLI `growth-dev team apply` path remains available for manual operation.
+Open `http://127.0.0.1:8790`, enter a brief, and the page will show the Agent stages, artifacts, gates, logs, diff summary, and next actions. When a completed run passes the apply gate, the dashboard can trigger a human-confirmed acceptance flow: it applies the run with `python3 -m growth_dev.cli team apply --run-id <run-id>` and then runs `python3 -m unittest discover -s tests -v`, with progress and log tails written under `runs/<run_id>/acceptance/`. After acceptance passes, the dashboard can generate the local release readiness report and PR draft, then explicitly trigger “推送当前分支并创建 Draft PR” and refresh PR/CI status. The CLI `growth-dev team apply` path remains available for manual operation.
 
 ## Safety
 

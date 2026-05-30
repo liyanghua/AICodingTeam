@@ -192,6 +192,10 @@ def _run_note(record: TeamRunRecord, run_dir: Path) -> str:
         "",
         *_release_readiness_lines(run_dir),
         "",
+        "## GitHub PR / CI",
+        "",
+        *_github_pr_ci_lines(run_dir),
+        "",
         "## 推荐 Project Skills",
         "",
         *_recommended_skill_lines(run_dir),
@@ -390,6 +394,44 @@ def _release_readiness_lines(run_dir: Path) -> list[str]:
     return lines
 
 
+def _github_pr_ci_lines(run_dir: Path) -> list[str]:
+    github_pr = _github_pr(run_dir)
+    ci_status = _ci_status(run_dir)
+    if not github_pr and not ci_status:
+        return ["暂无 GitHub PR / CI 记录。"]
+    lines: list[str] = []
+    pr = github_pr.get("pr", {}) if isinstance(github_pr.get("pr"), dict) else {}
+    if github_pr:
+        lines.append(f"- PR status: `{_redact(str(github_pr.get('status', 'unknown')))}`")
+        pr_url = _redact(str(pr.get("url", "")))
+        if pr_url:
+            lines.append(f"- PR: {pr_url}")
+        base = _redact(str(pr.get("base", "")))
+        head = _redact(str(pr.get("head", "")))
+        if base or head:
+            lines.append(f"- Base/head: `{base}` <- `{head}`")
+    if ci_status:
+        lines.append(f"- CI status: `{_redact(str(ci_status.get('status', 'unknown')))}`")
+        summary = _redact(str(ci_status.get("summary", "")))
+        if summary:
+            lines.append(f"- CI summary: {summary}")
+        blockers = ci_status.get("blockers", []) if isinstance(ci_status.get("blockers"), list) else []
+        warnings = ci_status.get("warnings", []) if isinstance(ci_status.get("warnings"), list) else []
+        if blockers:
+            lines.append("### CI Blockers")
+            lines.extend(f"- {_redact(str(item))}" for item in blockers[:6])
+        if warnings:
+            lines.append("### CI Warnings")
+            lines.extend(f"- {_redact(str(item))}" for item in warnings[:6])
+    github_pr_path = run_dir / "github_pr.md"
+    ci_path = run_dir / "ci_status.md"
+    if github_pr_path.exists():
+        lines.append(f"- Source: [github_pr.md]({github_pr_path.resolve().as_uri()})")
+    if ci_path.exists():
+        lines.append(f"- CI artifact: [ci_status.md]({ci_path.resolve().as_uri()})")
+    return lines
+
+
 def _learning_summary(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "learning_summary.json"
     if not path.exists():
@@ -408,6 +450,22 @@ def _memory_recall(run_dir: Path) -> dict[str, Any]:
 
 def _release_readiness(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "release_readiness.json"
+    if not path.exists():
+        return {}
+    payload = read_json(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _github_pr(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "github_pr.json"
+    if not path.exists():
+        return {}
+    payload = read_json(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _ci_status(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "ci_status.json"
     if not path.exists():
         return {}
     payload = read_json(path)

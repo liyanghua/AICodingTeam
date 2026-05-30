@@ -14,6 +14,8 @@ const $ = (id) => document.getElementById(id);
 const view = window.BusinessView;
 const ACCEPTANCE_ENDPOINT_SUFFIX = "/acceptance";
 const RELEASE_READINESS_ENDPOINT_SUFFIX = "/release/readiness";
+const GITHUB_PR_DRAFT_ENDPOINT_SUFFIX = "/pr/draft";
+const GITHUB_PR_STATUS_ENDPOINT_SUFFIX = "/pr/status";
 
 function t(path, fallback = "") {
   return view.lookup(state.i18n, path, fallback || view.lookup(state.i18n, "app.unknown", "未知项"));
@@ -120,6 +122,7 @@ function renderBusinessRun(vm) {
   renderGates(vm.qualityGates || []);
   renderAcceptance(vm);
   renderReleaseReadiness(vm);
+  renderGithubPrCi(vm);
   renderArtifactActions(vm.deliverables || []);
   ensureSelectedArtifact(vm);
   renderNextActions(vm.nextActions || []);
@@ -683,6 +686,102 @@ async function startReleaseReadiness() {
   action.disabled = true;
   action.textContent = t("releaseReadiness.generating");
   await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${RELEASE_READINESS_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderGithubPrCi(vm) {
+  const githubPr = vm.githubPr || {};
+  const readiness = vm.releaseReadiness || {};
+  const prAction = $("github-pr-action");
+  const ciAction = $("github-ci-action");
+  const summary = $("github-pr-summary");
+  const prInfo = $("github-pr-info");
+  const ciInfo = $("github-ci-info");
+  if (!prAction || !ciAction || !summary || !prInfo || !ciInfo) return;
+
+  const decision = readiness.decision || "not_generated";
+  const canCreate = decision === "ready_for_pr_ci" || decision === "ready_with_warnings";
+  const hasPr = githubPr.status === "created" && githubPr.pr && githubPr.pr.url;
+  prAction.disabled = !canCreate || hasPr;
+  ciAction.disabled = !hasPr;
+  prAction.textContent = t("githubPr.createDraftButton");
+  ciAction.textContent = t("githubPr.refreshCiButton");
+  prAction.onclick = startGithubDraftPr;
+  ciAction.onclick = refreshGithubCi;
+
+  if (!canCreate) {
+    summary.textContent = readiness.decision === "blocked" ? t("githubPr.blockedByReadiness") : t("githubPr.notReady");
+  } else if (hasPr) {
+    summary.textContent = `${githubPr.statusLabel || t("githubPr.status.created")} · ${githubPr.ciStatusLabel || ""} · ${githubPr.summary || ""}`;
+  } else {
+    summary.textContent = t("githubPr.readyToCreate");
+  }
+
+  prInfo.textContent = "";
+  const prRows = [];
+  const pr = githubPr.pr || {};
+  if (hasPr) {
+    prRows.push(`${t("githubPr.prUrl")}: ${pr.url}`);
+    prRows.push(`${t("githubPr.baseHead")}: ${pr.base || ""} <- ${pr.head || ""}`);
+    prRows.push(`${t("githubPr.draft")}: ${pr.is_draft === false ? t("githubPr.no") : t("githubPr.yes")}`);
+  } else {
+    prRows.push(t("githubPr.noPr"));
+  }
+  for (const blocker of githubPr.blockers || []) prRows.push(`${t("githubPr.blocker")}: ${blocker}`);
+  for (const warning of githubPr.warnings || []) prRows.push(`${t("githubPr.warning")}: ${warning}`);
+  for (const rowText of prRows.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = rowText;
+    prInfo.appendChild(row);
+  }
+
+  ciInfo.textContent = "";
+  const checks = githubPr.checks || [];
+  if (!checks.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = hasPr ? t("githubPr.noChecks") : t("githubPr.noPr");
+    ciInfo.appendChild(empty);
+  } else {
+    for (const check of checks.slice(0, 8)) {
+      const row = document.createElement("div");
+      row.className = `quality-row github-check github-check-${String(check.conclusion || check.status || "unknown").toLowerCase()}`;
+      row.textContent = `${check.name || t("app.unknown")}: ${check.status || ""} / ${check.conclusion || ""}`;
+      ciInfo.appendChild(row);
+    }
+  }
+  if (githubPr.nextAction) {
+    const next = document.createElement("div");
+    next.className = "quality-row";
+    next.textContent = `${t("githubPr.nextAction")}: ${githubPr.nextAction}`;
+    ciInfo.appendChild(next);
+  }
+}
+
+async function startGithubDraftPr() {
+  if (!state.selectedRunId) return;
+  const action = $("github-pr-action");
+  action.disabled = true;
+  action.textContent = t("githubPr.creating");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${GITHUB_PR_DRAFT_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+async function refreshGithubCi() {
+  if (!state.selectedRunId) return;
+  const action = $("github-ci-action");
+  action.disabled = true;
+  action.textContent = t("githubPr.refreshing");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${GITHUB_PR_STATUS_ENDPOINT_SUFFIX}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

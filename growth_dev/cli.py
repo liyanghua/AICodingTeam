@@ -127,6 +127,24 @@ def _build_parser() -> argparse.ArgumentParser:
     team_release_readiness.add_argument("--json", action="store_true", dest="json_output")
     team_release_readiness.set_defaults(func=_cmd_team_release_readiness)
 
+    team_pr = team_sub.add_parser("pr", help="Create GitHub draft PRs and observe CI checks")
+    team_pr_sub = team_pr.add_subparsers(dest="pr_command", required=True)
+    team_pr_draft = team_pr_sub.add_parser("draft", help="Push the current branch when requested and create a GitHub Draft PR")
+    team_pr_draft.add_argument("--run-id", required=True)
+    team_pr_draft.add_argument("--runs-dir", default="runs")
+    team_pr_draft.add_argument("--repo-root", default=".")
+    team_pr_draft.add_argument("--base", default="main")
+    team_pr_draft.add_argument("--push", action="store_true")
+    team_pr_draft.add_argument("--json", action="store_true", dest="json_output")
+    team_pr_draft.set_defaults(func=_cmd_team_pr_draft)
+
+    team_pr_status = team_pr_sub.add_parser("status", help="Refresh GitHub PR checks and write CI status artifacts")
+    team_pr_status.add_argument("--run-id", required=True)
+    team_pr_status.add_argument("--runs-dir", default="runs")
+    team_pr_status.add_argument("--repo-root", default=".")
+    team_pr_status.add_argument("--json", action="store_true", dest="json_output")
+    team_pr_status.set_defaults(func=_cmd_team_pr_status)
+
     team_retrospective = team_sub.add_parser("retrospective", help="Generate deterministic run retrospectives")
     team_retrospective_sub = team_retrospective.add_subparsers(dest="retrospective_command", required=True)
     team_retrospective_generate = team_retrospective_sub.add_parser("generate", help="Generate retrospective artifacts")
@@ -635,6 +653,42 @@ def _cmd_team_release_readiness(args: argparse.Namespace) -> int:
     else:
         print(format_release_readiness(result), end="")
     return 0
+
+
+def _cmd_team_pr_draft(args: argparse.Namespace) -> int:
+    from .team.github_pr import create_draft_pr, format_pr_status
+
+    try:
+        result = create_draft_pr(
+            str(args.run_id),
+            runs_dir=Path(args.runs_dir),
+            repo_root=Path(args.repo_root),
+            base=str(args.base),
+            push=bool(args.push),
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_pr_status(result), end="")
+    return 0 if result.get("status") == "created" else 1
+
+
+def _cmd_team_pr_status(args: argparse.Namespace) -> int:
+    from .team.github_pr import format_ci_status, refresh_ci_status
+
+    try:
+        result = refresh_ci_status(str(args.run_id), runs_dir=Path(args.runs_dir), repo_root=Path(args.repo_root))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_ci_status(result), end="")
+    return 0 if result.get("status") in {"passed", "running", "pending", "unknown"} else 1
 
 
 def _cmd_team_retrospective_generate(args: argparse.Namespace) -> int:

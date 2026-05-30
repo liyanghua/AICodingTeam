@@ -143,6 +143,38 @@ def _write_run(
     )
     (run_dir / "release_readiness.md").write_text("# Release Readiness\n\nDo not copy full readiness body.\n", encoding="utf-8")
     (run_dir / "pr_draft.md").write_text("# PR Title\n\nDo not copy full PR draft body.\n", encoding="utf-8")
+    (run_dir / "github_pr.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "status": "created",
+                "pr": {"number": 42, "url": "https://github.com/example/project/pull/42", "base": "main", "head": "feature/demo"},
+                "warnings": [],
+                "blockers": [],
+                "next_action": "刷新 PR/CI 状态。",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "ci_status.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "status": "passed",
+                "pr_url": "https://github.com/example/project/pull/42",
+                "summary": "1 个 CI check 已通过。",
+                "checks": [{"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS", "url": "https://github.com/example/project/actions/runs/1"}],
+                "warnings": [],
+                "blockers": [],
+                "next_action": "可以进行人工 Review。",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "github_pr.md").write_text("# GitHub Draft PR\n\nDo not copy full PR body.\n", encoding="utf-8")
+    (run_dir / "ci_status.md").write_text("# CI Status\n\nDo not copy raw CI logs.\n", encoding="utf-8")
     return run_dir
 
 
@@ -347,6 +379,7 @@ class TeamMemoryTests(unittest.TestCase):
         self.assertIn("## 任务复盘", note)
         self.assertIn("## 历史任务召回", note)
         self.assertIn("## 发布准备", note)
+        self.assertIn("## GitHub PR / CI", note)
         self.assertIn("## 推荐 Project Skills", note)
         self.assertIn("## 下次上下文策略", note)
         self.assertIn("## 本地产物链接", note)
@@ -354,7 +387,10 @@ class TeamMemoryTests(unittest.TestCase):
         self.assertIn("ready_with_warnings", note)
         self.assertIn("release_readiness.md", note)
         self.assertIn("pr_draft.md", note)
+        self.assertIn("https://github.com/example/project/pull/42", note)
+        self.assertIn("ci_status.md", note)
         self.assertNotIn("Do not copy full PR draft body", note)
+        self.assertNotIn("Do not copy raw CI logs", note)
         self.assertTrue(retrospective_exists)
         self.assertTrue(learning_exists)
 

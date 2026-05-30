@@ -19,6 +19,7 @@ from ..utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
 from .models import TeamRunRecord
 from .quality import evaluate_run_quality, summarize_run_health, summarize_run_logs
 from .release import generate_release_readiness
+from .github_pr import create_draft_pr, refresh_ci_status
 
 
 _DASHBOARD_PROCESSES: list[subprocess.Popen] = []
@@ -154,6 +155,8 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "implementation_trace": _read_implementation_trace(run_dir),
         "memory_recall": _read_memory_recall(run_dir),
         "release_readiness": _read_release_readiness(run_dir),
+        "github_pr": _read_github_pr(run_dir),
+        "ci_status": _read_ci_status(run_dir),
         "acceptance": _read_acceptance_status(run_dir),
         "artifacts": _build_artifact_view(run_dir, repo_root, record),
         "events": events[-50:],
@@ -482,6 +485,32 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
                     self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3:] == ["pr", "draft"]:
+                try:
+                    self._send_json(
+                        create_draft_pr(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root, base="main", push=True),
+                        status=HTTPStatus.ACCEPTED,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3:] == ["pr", "status"]:
+                try:
+                    self._send_json(
+                        refresh_ci_status(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
+                        status=HTTPStatus.OK,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
             if parsed.path != "/api/runs":
                 self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -656,6 +685,10 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("release_readiness.md", "Release Readiness", "run"),
         ("release_readiness.json", "Release Readiness JSON", "run"),
         ("pr_draft.md", "PR Draft", "run"),
+        ("github_pr.md", "GitHub Draft PR", "run"),
+        ("github_pr.json", "GitHub Draft PR JSON", "run"),
+        ("ci_status.md", "CI Status", "run"),
+        ("ci_status.json", "CI Status JSON", "run"),
     ]
     seen: set[tuple[str, str]] = set()
     artifacts: list[dict[str, Any]] = []
@@ -742,6 +775,22 @@ def _read_release_readiness(run_dir: Path) -> dict[str, Any]:
         return {}
     payload = _safe_read_json(path)
     return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_github_pr(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "github_pr.json"
+    if not path.exists():
+        return {"schema_version": 1, "status": "not_started", "pr": {}, "warnings": [], "blockers": []}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "pr": {}, "warnings": [], "blockers": []}
+
+
+def _read_ci_status(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "ci_status.json"
+    if not path.exists():
+        return {"schema_version": 1, "status": "not_started", "checks": [], "warnings": [], "blockers": []}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "checks": [], "warnings": [], "blockers": []}
 
 
 def _read_acceptance_status(run_dir: Path) -> dict[str, Any]:

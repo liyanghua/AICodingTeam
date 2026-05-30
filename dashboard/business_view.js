@@ -27,6 +27,7 @@
       artifactQuality: buildArtifactQuality(run, i18n),
       memoryRecall: buildMemoryRecall(run, i18n),
       releaseReadiness: buildReleaseReadiness(run, i18n),
+      githubPr: buildGithubPr(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
       recommendedArtifact: recommendedArtifact(run, i18n),
@@ -105,6 +106,26 @@
       warnings: readiness.warnings || [],
       nextActions: readiness.next_actions || [],
       generatedAt: readiness.generated_at || "",
+    };
+  }
+
+  function buildGithubPr(run, i18n) {
+    const githubPr = run.github_pr || {};
+    const ciStatus = run.ci_status || {};
+    const pr = githubPr.pr || {};
+    const prStatus = githubPr.status || "not_started";
+    const ciState = ciStatus.status || "not_started";
+    return {
+      status: prStatus,
+      statusLabel: lookup(i18n, `githubPr.status.${prStatus}`, prStatus),
+      pr,
+      ciStatus: ciState,
+      ciStatusLabel: lookup(i18n, `githubPr.ciStatus.${ciState}`, ciState),
+      checks: ciStatus.checks || [],
+      summary: ciStatus.summary || githubPr.next_action || lookup(i18n, "githubPr.noPr", ""),
+      warnings: [...(githubPr.warnings || []), ...(ciStatus.warnings || [])],
+      blockers: [...(githubPr.blockers || []), ...(ciStatus.blockers || [])],
+      nextAction: ciStatus.next_action || githubPr.next_action || "",
     };
   }
 
@@ -239,7 +260,7 @@
 
   function recommendedArtifact(run, i18n) {
     const artifacts = buildArtifacts(run, i18n).filter((artifact) => artifact.exists);
-    const priority = ["pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
+    const priority = ["github_pr.md", "ci_status.md", "pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
     for (const path of priority) {
       const found = artifacts.find((artifact) => artifact.path === path);
       if (found) return found;

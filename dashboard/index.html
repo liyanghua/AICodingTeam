@@ -149,6 +149,27 @@
             </div>
           </section>
 
+          <section id="github-pr-panel" class="panel github-pr-panel">
+            <div class="panel-header">
+              <h2 data-i18n="githubPr.title">GitHub PR / CI</h2>
+              <div class="button-group">
+                <button id="github-pr-action" type="button" data-i18n="githubPr.createDraftButton">推送当前分支并创建 Draft PR</button>
+                <button id="github-ci-action" type="button" class="ghost" data-i18n="githubPr.refreshCiButton">刷新 PR/CI 状态</button>
+              </div>
+            </div>
+            <p id="github-pr-summary" class="summary-text" data-i18n="githubPr.notReady">先生成发布准备报告，且不能存在硬阻塞。</p>
+            <div class="two-column compact-panel-grid">
+              <div>
+                <h3 data-i18n="githubPr.prInfo">Draft PR</h3>
+                <div id="github-pr-info" class="quality-list"></div>
+              </div>
+              <div>
+                <h3 data-i18n="githubPr.ciInfo">CI Checks</h3>
+                <div id="github-ci-info" class="quality-list"></div>
+              </div>
+            </div>
+          </section>
+
           <section id="deliverables-panel" class="panel deliverables-panel">
             <div class="panel-header">
               <h2 data-i18n="app.deliverables">产物与验收</h2>

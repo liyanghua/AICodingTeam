@@ -509,7 +509,8 @@ def _next_actions(run_id: str, decision: str) -> list[str]:
     if decision == "blocked":
         actions.append("先处理 release_readiness.md 中的 blockers，再重新生成发布准备报告。")
     else:
-        actions.append("人工阅读 pr_draft.md，确认后再进入 GitHub draft PR/CI。")
+        actions.append(f"python3 -m growth_dev.cli team pr draft --run-id {run_id} --base main --push")
+        actions.append(f"python3 -m growth_dev.cli team pr status --run-id {run_id}")
     return actions
 
 

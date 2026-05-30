@@ -163,6 +163,10 @@
     "release_readiness.md": {"title": "发布准备报告", "description": "判断本次 run 是否值得进入 PR/CI。"},
     "release_readiness.json": {"title": "发布准备数据", "description": "发布 Gate、证据、阻塞和 warning 的结构化结果。"},
     "pr_draft.md": {"title": "PR Draft", "description": "可复制到 PR 的标题、说明、验证和风险清单。"},
+    "github_pr.md": {"title": "GitHub Draft PR", "description": "Draft PR 创建结果、链接、阻塞和下一步。"},
+    "github_pr.json": {"title": "GitHub Draft PR 数据", "description": "Draft PR 状态的结构化记录。"},
+    "ci_status.md": {"title": "CI 状态", "description": "PR checks 的业务友好摘要。"},
+    "ci_status.json": {"title": "CI 状态数据", "description": "PR checks 的结构化状态。"},
     "codex/diff.patch": {"title": "代码差异", "description": "AI 实现产生的变更证据。"}
   },
   "events": {
@@ -213,6 +217,42 @@
       "ready_for_pr_ci": "可进入 PR/CI",
       "ready_with_warnings": "可进入 PR/CI，但需关注 warning",
       "blocked": "暂不建议进入 PR/CI"
+    }
+  },
+  "githubPr": {
+    "title": "GitHub PR / CI",
+    "createDraftButton": "推送当前分支并创建 Draft PR",
+    "refreshCiButton": "刷新 PR/CI 状态",
+    "creating": "创建中",
+    "refreshing": "刷新中",
+    "notReady": "先生成发布准备报告，且不能存在硬阻塞。",
+    "blockedByReadiness": "发布准备存在硬阻塞，暂不能创建 Draft PR。",
+    "readyToCreate": "发布准备已通过，可推送当前分支并创建 GitHub Draft PR。",
+    "noPr": "尚未创建 GitHub Draft PR。",
+    "noChecks": "尚未发现 CI checks。",
+    "prInfo": "Draft PR",
+    "ciInfo": "CI Checks",
+    "prUrl": "PR 链接",
+    "baseHead": "Base / Head",
+    "draft": "Draft",
+    "yes": "是",
+    "no": "否",
+    "warning": "提示",
+    "blocker": "阻塞",
+    "nextAction": "下一步",
+    "status": {
+      "not_started": "尚未创建",
+      "running": "创建中",
+      "created": "Draft PR 已创建",
+      "failed": "创建失败"
+    },
+    "ciStatus": {
+      "not_started": "CI 尚未开始",
+      "pending": "CI 等待中",
+      "running": "CI 运行中",
+      "passed": "CI 已通过",
+      "failed": "CI 未通过",
+      "unknown": "CI 状态未知"
     }
   },
   "stageDetail": {
