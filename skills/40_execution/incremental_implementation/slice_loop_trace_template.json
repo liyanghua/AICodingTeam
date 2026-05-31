@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "run_id": "",
+  "slice_id": "slice-001",
+  "status": "running",
+  "started_at": "",
+  "finished_at": "",
+  "current_step": "prepare_context",
+  "overall_goal": "",
+  "slice_goal": "",
+  "inputs": [
+    {
+      "title": "Slice YAML",
+      "path": "tasks/current/slices/slice-001.yaml",
+      "exists": true
+    },
+    {
+      "title": "Acceptance Coverage Matrix",
+      "path": "tasks/current/acceptance_coverage_matrix.md",
+      "exists": true
+    }
+  ],
+  "steps": [
+    {
+      "id": "prepare_context",
+      "title": "Prepare bounded context",
+      "status": "running",
+      "summary": "",
+      "started_at": "",
+      "finished_at": ""
+    }
+  ],
+  "acceptance_coverage": [
+    {
+      "acceptance_criterion_id": "AC-001",
+      "status": "pending",
+      "evidence": []
+    }
+  ],
+  "evidence": {
+    "changed_files": [],
+    "tests_run": [],
+    "verification_commands": [],
+    "diff_path": "codex/diff.patch"
+  },
+  "risk_events": [],
+  "blockers": [],
+  "next_action": ""
+}

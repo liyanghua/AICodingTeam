@@ -60,6 +60,18 @@ class TeamCliTests(unittest.TestCase):
             ["team", "run", "--brief", "对比 5 个浏览器自动化框架完成小红书采集任务"],
             ["team", "run", "--brief", "接入 Codex", "--executor", "codex", "--model", "gpt-5.3-codex", "--reasoning-effort", "medium"],
             ["team", "run", "--brief", "接入第三方 Codex provider", "--executor", "codex", "--codex-provider", "aicodemirror", "--env-file", ".env"],
+            [
+                "team",
+                "run",
+                "--brief",
+                "复杂 Dashboard 需求",
+                "--planning-mode",
+                "llm_assisted",
+                "--requirements-model",
+                "gpt-5.3",
+                "--requirements-reasoning-effort",
+                "high",
+            ],
             ["team", "status", "--run-id", "team-run-1"],
             ["team", "status", "--run-id", "team-run-1", "--summary"],
             ["team", "report", "--run-id", "team-run-1"],
@@ -151,6 +163,54 @@ class TeamCliTests(unittest.TestCase):
             self.assertEqual(payload["domain_id"], "web_monitoring")
             self.assertEqual(payload["status"], "completed")
             self.assertTrue((run_dirs[0] / "final_report.md").exists())
+
+    def test_team_run_cli_writes_complex_task_planning_artifacts(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            domains_dir = root / "domains"
+            runs_dir = root / "runs"
+            _write_domain_pack(domains_dir, "web_monitoring", WEB_MONITORING_DOMAIN_YAML)
+
+            exit_code = main(
+                [
+                    "team",
+                    "run",
+                    "--domain",
+                    "web_monitoring",
+                    "--domains-dir",
+                    str(domains_dir),
+                    "--runs-dir",
+                    str(runs_dir),
+                    "--run-id",
+                    "complex-run-1",
+                    "--brief",
+                    "优化 Dashboard 交付验收流程，展示需求理解、覆盖矩阵和 slice 执行。",
+                    "--planning-mode",
+                    "llm_assisted",
+                    "--requirements-model",
+                    "gpt-5.3",
+                    "--requirements-reasoning-effort",
+                    "high",
+                ]
+            )
+
+            run_dir = runs_dir / "complex-run-1"
+            payload = json.loads((run_dir / "team_run_record.json").read_text(encoding="utf-8"))
+            analysis = json.loads((run_dir / "requirements" / "brief_analysis.json").read_text(encoding="utf-8"))
+            draft_exists = (run_dir / "requirements" / "acceptance_criteria.draft.md").exists()
+            coverage_exists = (run_dir / "planning" / "acceptance_coverage_matrix.json").exists()
+            slice_exists = (run_dir / "slices" / "slice-001.yaml").exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["executor_config"]["complex_task"]["planning_mode"], "llm_assisted")
+        self.assertEqual(payload["executor_config"]["complex_task"]["requirements_model"], "gpt-5.3")
+        self.assertEqual(payload["executor_config"]["complex_task"]["requirements_reasoning_effort"], "high")
+        self.assertTrue(draft_exists)
+        self.assertTrue(coverage_exists)
+        self.assertTrue(slice_exists)
+        self.assertTrue(analysis["llm_draft_requested"])
 
     def test_team_status_summary_includes_current_agent_logs_and_diff(self) -> None:
         from growth_dev.cli import main
@@ -339,6 +399,8 @@ class TeamCliTests(unittest.TestCase):
         self.assertEqual(process_record["run_id"], run_id)
         self.assertGreater(process_record["pid"], 0)
         self.assertIn(process_record["status"], {"running", "completed"})
+        self.assertIn("--planning-mode", process_record["command"])
+        self.assertIn("auto", process_record["command"])
         self.assertNotIn("sk-", command_text)
 
     def test_team_watch_once_shows_events_gates_logs_and_next_actions(self) -> None:

@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from ..utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
 from .models import TeamRunRecord
 from .quality import evaluate_run_quality, summarize_run_health, summarize_run_logs
-from .release import generate_release_readiness
+from .release import generate_release_readiness, generate_staging_readiness
 from .github_pr import create_draft_pr, refresh_ci_status
 
 
@@ -28,6 +28,7 @@ _ACCEPTANCE_THREADS: list[threading.Thread] = []
 
 STAGE_DEFINITIONS = [
     {"id": "orchestrator", "label": "Orchestrator", "phase": "Plan", "artifact_hints": ["task.yaml", "context.md"]},
+    {"id": "requirements", "label": "Requirements", "phase": "Plan", "artifact_hints": ["requirements/brief_analysis.json", "requirements/requirement_quality_report.json"]},
     {"id": "product", "label": "Product", "phase": "Spec", "artifact_hints": ["prd.md"]},
     {"id": "architect", "label": "Architect", "phase": "Spec", "artifact_hints": ["tech_spec.md", "architecture_diagram.md"]},
     {"id": "ux", "label": "UX", "phase": "Spec", "artifact_hints": ["ui_spec.md"]},
@@ -56,6 +57,9 @@ class DashboardConfig:
     model: str = "gpt-5.3-codex"
     reasoning_effort: str = "medium"
     executor: str = "codex"
+    planning_mode: str = "auto"
+    requirements_model: str = ""
+    requirements_reasoning_effort: str = "medium"
 
 
 def list_dashboard_runs(runs_dir: Path = Path("runs"), limit: int = 30) -> list[dict[str, Any]]:
@@ -128,10 +132,12 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
     health_summary = summarize_run_health(record_object, run_dir).to_dict()
     quality_report = evaluate_run_quality(record_object, run_dir).to_dict()
     gates.append({"id": "apply_gate", "label": "Apply Gate", "status": apply_status, "reason": apply_reason})
+    ci_status = _read_ci_status(run_dir)
+    staging_readiness = _read_staging_readiness(run_dir)
     gates.extend(
         [
-            {"id": "ci_gate", "label": "CI Gate", "status": "planned", "reason": "Reserved for GitHub Actions integration."},
-            {"id": "deploy_gate", "label": "Deploy Gate", "status": "planned", "reason": "Reserved for staging deploy integration."},
+            _ci_gate_view(ci_status),
+            _deploy_gate_view(staging_readiness),
             {"id": "human_release_gate", "label": "Human Release Gate", "status": "planned", "reason": "Reserved for production approval."},
         ]
     )
@@ -152,11 +158,16 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "apply_gate": {"status": apply_status, "reason": apply_reason},
         "health_summary": health_summary,
         "quality_report": quality_report,
+        "requirement_understanding": _read_requirement_understanding(run_dir),
+        "acceptance_coverage": _read_acceptance_coverage(run_dir),
         "implementation_trace": _read_implementation_trace(run_dir),
+        "slice_loop": _read_slice_loop_state(run_dir),
+        "implementation_completion_gate": _read_implementation_completion_gate(run_dir),
         "memory_recall": _read_memory_recall(run_dir),
         "release_readiness": _read_release_readiness(run_dir),
         "github_pr": _read_github_pr(run_dir),
-        "ci_status": _read_ci_status(run_dir),
+        "ci_status": ci_status,
+        "staging_readiness": staging_readiness,
         "acceptance": _read_acceptance_status(run_dir),
         "artifacts": _build_artifact_view(run_dir, repo_root, record),
         "events": events[-50:],
@@ -251,6 +262,12 @@ def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dic
         str(payload.get("env_file") or config.env_file),
         "--repo-root",
         str(repo_root),
+        "--planning-mode",
+        str(payload.get("planning_mode") or config.planning_mode),
+        "--requirements-model",
+        str(payload.get("requirements_model") or config.requirements_model),
+        "--requirements-reasoning-effort",
+        str(payload.get("requirements_reasoning_effort") or config.requirements_reasoning_effort),
     ]
     process_record = {
         "run_id": run_id,
@@ -511,6 +528,19 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
                     self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "staging-readiness":
+                try:
+                    self._send_json(
+                        generate_staging_readiness(parts[2], runs_dir=config.runs_dir),
+                        status=HTTPStatus.OK,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
             if parsed.path != "/api/runs":
                 self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -666,6 +696,17 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
     ordered = [
         ("task.yaml", "Task Package", "run"),
         ("context.md", "Context", "run"),
+        ("requirements/brief_analysis.json", "Requirement Analysis", "run"),
+        ("requirements/requirement_quality_report.json", "Requirement Quality Report", "run"),
+        ("requirements/clarification.md", "Requirement Clarification", "run"),
+        ("requirements/acceptance_criteria.draft.md", "Draft Acceptance Criteria", "run"),
+        ("requirements/open_questions.md", "Open Questions", "run"),
+        ("requirements/assumptions.md", "Assumptions", "run"),
+        ("acceptance_criteria.md", "Acceptance Criteria", "run"),
+        ("context_pack.md", "Context Pack", "run"),
+        ("planning/acceptance_coverage_matrix.md", "Acceptance Coverage Matrix", "run"),
+        ("planning/acceptance_coverage_matrix.json", "Acceptance Coverage Matrix JSON", "run"),
+        ("planning/planning_quality_report.json", "Planning Quality Report", "run"),
         ("prd.md", "PRD", "run"),
         ("tech_spec.md", "Tech Spec", "run"),
         ("architecture_diagram.md", "Architecture Diagram", "run"),
@@ -674,6 +715,9 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("eval.md", "Eval / TDD", "run"),
         ("coding_prompt.md", "Coding Prompt", "run"),
         ("codex/implementation_trace.json", "Implementation Trace", "run"),
+        ("codex/slice_loop_state.json", "Slice Loop State", "run"),
+        ("implementation_completion_gate.md", "Implementation Completion Gate", "run"),
+        ("implementation_completion_gate.json", "Implementation Completion Gate JSON", "run"),
         ("codex/diff.patch", "Diff Evidence", "run"),
         ("review_report.md", "Review Report", "run"),
         ("test_report.md", "Test Report", "run"),
@@ -689,6 +733,8 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("github_pr.json", "GitHub Draft PR JSON", "run"),
         ("ci_status.md", "CI Status", "run"),
         ("ci_status.json", "CI Status JSON", "run"),
+        ("staging_readiness.md", "Staging Readiness", "run"),
+        ("staging_readiness.json", "Staging Readiness JSON", "run"),
     ]
     seen: set[tuple[str, str]] = set()
     artifacts: list[dict[str, Any]] = []
@@ -761,6 +807,47 @@ def _read_implementation_trace(run_dir: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _read_requirement_understanding(run_dir: Path) -> dict[str, Any]:
+    analysis = _safe_read_json(run_dir / "requirements" / "brief_analysis.json")
+    quality = _safe_read_json(run_dir / "requirements" / "requirement_quality_report.json")
+    return _redact(
+        {
+            "brief_analysis": analysis if isinstance(analysis, dict) else {},
+            "quality_report": quality if isinstance(quality, dict) else {},
+            "draft_artifacts": {
+                "clarification": (run_dir / "requirements" / "clarification.md").exists(),
+                "acceptance_criteria_draft": (run_dir / "requirements" / "acceptance_criteria.draft.md").exists(),
+                "open_questions": (run_dir / "requirements" / "open_questions.md").exists(),
+                "assumptions": (run_dir / "requirements" / "assumptions.md").exists(),
+            },
+        }
+    )
+
+
+def _read_acceptance_coverage(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "planning" / "acceptance_coverage_matrix.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_slice_loop_state(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "codex" / "slice_loop_state.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_implementation_completion_gate(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "implementation_completion_gate.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
 def _read_memory_recall(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "memory_recall.json"
     if not path.exists():
@@ -791,6 +878,36 @@ def _read_ci_status(run_dir: Path) -> dict[str, Any]:
         return {"schema_version": 1, "status": "not_started", "checks": [], "warnings": [], "blockers": []}
     payload = _safe_read_json(path)
     return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "checks": [], "warnings": [], "blockers": []}
+
+
+def _read_staging_readiness(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "staging_readiness.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _ci_gate_view(ci_status: dict[str, Any]) -> dict[str, str]:
+    status = str(ci_status.get("status", "not_started")) if ci_status else "not_started"
+    if status == "passed":
+        return {"id": "ci_gate", "label": "CI Gate", "status": "passed", "reason": str(ci_status.get("summary", "CI checks passed."))}
+    if status == "failed":
+        return {"id": "ci_gate", "label": "CI Gate", "status": "blocked", "reason": str(ci_status.get("summary", "CI checks failed."))}
+    if status in {"running", "pending", "unknown"}:
+        return {"id": "ci_gate", "label": "CI Gate", "status": "warning", "reason": str(ci_status.get("summary", "CI checks are not complete."))}
+    return {"id": "ci_gate", "label": "CI Gate", "status": "planned", "reason": "Reserved for GitHub Actions integration."}
+
+
+def _deploy_gate_view(staging_readiness: dict[str, Any]) -> dict[str, str]:
+    decision = str(staging_readiness.get("staging_decision", ""))
+    if decision == "ready_for_staging":
+        return {"id": "deploy_gate", "label": "Deploy Gate", "status": "passed", "reason": str(staging_readiness.get("summary", "Ready for staging."))}
+    if decision == "waiting_for_ci":
+        return {"id": "deploy_gate", "label": "Deploy Gate", "status": "warning", "reason": str(staging_readiness.get("summary", "Waiting for CI."))}
+    if decision == "blocked":
+        return {"id": "deploy_gate", "label": "Deploy Gate", "status": "blocked", "reason": str(staging_readiness.get("summary", "Staging is blocked."))}
+    return {"id": "deploy_gate", "label": "Deploy Gate", "status": "planned", "reason": "Reserved for staging deploy integration."}
 
 
 def _read_acceptance_status(run_dir: Path) -> dict[str, Any]:

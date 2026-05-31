@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -373,10 +374,10 @@ class SqliteAssetCenterRepository:
             )
             conn.commit()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> closing[sqlite3.Connection]:
         conn = sqlite3.connect(self.database_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        return closing(conn)
 
 
 class PostgresAssetCenterRepository:

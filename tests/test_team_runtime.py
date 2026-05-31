@@ -153,6 +153,82 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(len(record.agent_runs), 1)
         self.assertEqual(record.agent_runs[-1].status, "completed")
 
+    def test_runtime_stops_before_coding_when_requirement_gate_has_blocking_question(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = TeamRuntime(team_spec=team_spec, domain_spec=domain_spec, runs_dir=root / "runs")
+
+            record = runtime.run(
+                "实现复杂 Dashboard 交互，但还有阻塞问题",
+                inputs={"force_blocking_question": True},
+                run_id="blocking-requirement-run",
+            )
+
+            run_dir = root / "runs" / "blocking-requirement-run"
+            quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+            events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+            agent_ids = [agent.agent_id for agent in record.agent_runs]
+            gate_statuses = {gate.gate_id: gate.status for gate in record.gate_results}
+
+        self.assertEqual(record.status, "failed")
+        self.assertEqual(agent_ids, ["orchestrator", "requirements"])
+        self.assertNotIn("coder", agent_ids)
+        self.assertEqual(quality["status"], "failed")
+        self.assertIn("blocking_questions_present", quality["blockers"])
+        self.assertEqual(gate_statuses["requirement_quality"], "failed")
+        self.assertEqual(events[-1]["event"], "run_failed")
+        self.assertEqual(events[-1]["reason"], "requirement_quality_gate_failed")
+
+    def test_complex_task_artifacts_redact_secrets_from_brief_and_inputs(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = TeamRuntime(
+                team_spec=team_spec,
+                domain_spec=domain_spec,
+                runs_dir=root / "runs",
+                planning_mode="llm_assisted",
+                requirements_model="gpt-5.3",
+            )
+
+            record = runtime.run(
+                "优化 Dashboard 流程 api_key=brief-secret sk-briefsecret123",
+                inputs={
+                    "api_key": "input-secret",
+                    "token": "input-token",
+                    "verification_commands": ["echo token=command-secret"],
+                    "blocking_questions": ["是否允许使用 password=question-secret？"],
+                },
+                run_id="redacted-complex-run",
+            )
+
+            run_dir = root / "runs" / "redacted-complex-run"
+            artifact_text = "\n".join(
+                [
+                    (run_dir / "requirements" / "brief_analysis.json").read_text(encoding="utf-8"),
+                    (run_dir / "requirements" / "clarification.md").read_text(encoding="utf-8"),
+                    (run_dir / "requirements" / "open_questions.md").read_text(encoding="utf-8"),
+                    (run_dir / "acceptance_criteria.md").read_text(encoding="utf-8"),
+                    (run_dir / "context_pack.md").read_text(encoding="utf-8"),
+                    (run_dir / "planning" / "acceptance_coverage_matrix.json").read_text(encoding="utf-8"),
+                    (run_dir / "slices" / "slice-001.yaml").read_text(encoding="utf-8"),
+                ]
+            )
+
+        self.assertEqual(record.status, "failed")
+        self.assertNotIn("brief-secret", artifact_text)
+        self.assertNotIn("sk-briefsecret123", artifact_text)
+        self.assertNotIn("input-secret", artifact_text)
+        self.assertNotIn("input-token", artifact_text)
+        self.assertNotIn("command-secret", artifact_text)
+        self.assertNotIn("question-secret", artifact_text)
+        self.assertIn("<redacted", artifact_text)
+
     def test_runtime_writes_ordered_events_jsonl(self) -> None:
         from growth_dev.team.runtime import TeamRuntime
 

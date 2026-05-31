@@ -7,6 +7,7 @@ import json
 import mimetypes
 import sqlite3
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -663,10 +664,10 @@ class AssetLibrary:
             )
             conn.commit()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> closing[sqlite3.Connection]:
         conn = sqlite3.connect(self.database_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        return closing(conn)
 
     def _insert_source_image(self, conn: sqlite3.Connection, **values: Any) -> bool:
         now = _now()

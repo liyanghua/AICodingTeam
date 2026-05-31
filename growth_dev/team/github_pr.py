@@ -169,13 +169,28 @@ def refresh_ci_status(
         _write_ci_artifacts(run_dir, result)
         return _redact(result)
 
-    command = ["gh", "pr", "checks", pr_ref, "--json", "name,workflow,status,conclusion,link,startedAt,completedAt"]
+    command = ["gh", "pr", "checks", pr_ref, "--json", "name,workflow,state,bucket,link,startedAt,completedAt"]
     completed = _run(command_runner, command, repo_root)
     if completed.returncode != 0:
+        error = _command_error(completed)
+        if _is_no_checks_reported_error(error):
+            status, warnings, blockers = _ci_rollup([])
+            result.update(
+                {
+                    "status": status,
+                    "checks": [],
+                    "summary": _ci_summary(status, []),
+                    "warnings": warnings,
+                    "blockers": blockers,
+                    "next_action": _ci_next_action(status),
+                }
+            )
+            _write_ci_artifacts(run_dir, result)
+            return _redact(result)
         result.update(
             {
                 "status": "unknown",
-                "blockers": [f"gh pr checks failed: {_command_error(completed)}"],
+                "blockers": [f"gh pr checks failed: {error}"],
                 "next_action": "确认 gh 已登录且有仓库权限后刷新 CI 状态。",
             }
         )
@@ -375,8 +390,8 @@ def _parse_checks(stdout: str) -> list[dict[str, Any]]:
             {
                 "name": _redact_text(str(item.get("name", ""))),
                 "workflow": _redact_text(str(item.get("workflow", ""))),
-                "status": _redact_text(str(item.get("status", ""))),
-                "conclusion": _redact_text(str(item.get("conclusion", ""))),
+                "status": _redact_text(str(item.get("status") or item.get("state") or "")),
+                "conclusion": _redact_text(str(item.get("conclusion") or item.get("bucket") or "")),
                 "url": _redact_text(str(item.get("link") or item.get("url") or "")),
                 "started_at": _redact_text(str(item.get("startedAt") or item.get("started_at") or "")),
                 "completed_at": _redact_text(str(item.get("completedAt") or item.get("completed_at") or "")),
@@ -390,12 +405,15 @@ def _ci_rollup(checks: list[dict[str, Any]]) -> tuple[str, list[str], list[str]]
         return "unknown", ["尚未发现 CI checks，可能是仓库没有 workflow 或 GitHub 尚未生成 checks。"], []
     statuses = [str(item.get("status", "")).upper() for item in checks]
     conclusions = [str(item.get("conclusion", "")).upper() for item in checks]
-    if any(value in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"} for value in conclusions):
-        failed = [str(item.get("name", "")) for item in checks if str(item.get("conclusion", "")).upper() in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}]
+    failed_values = {"FAIL", "FAILURE", "CANCEL", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+    passed_values = {"PASS", "SUCCESS", "SKIPPING", "SKIPPED", "NEUTRAL", ""}
+    running_values = {"PENDING", "IN_PROGRESS", "QUEUED", "REQUESTED", "WAITING"}
+    if any(value in failed_values for value in conclusions):
+        failed = [str(item.get("name", "")) for item in checks if str(item.get("conclusion", "")).upper() in failed_values]
         return "failed", [], [f"CI checks failed: {', '.join(failed)}"]
-    if all(status in {"COMPLETED", "SUCCESS"} for status in statuses) and all(value in {"SUCCESS", "SKIPPED", "NEUTRAL", ""} for value in conclusions):
+    if all(value in passed_values for value in conclusions) and all(status in {"COMPLETED", "SUCCESS", "PASS", ""} for status in statuses):
         return "passed", [], []
-    if any(status in {"IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"} for status in statuses):
+    if any(status in running_values for status in statuses) or any(value == "PENDING" for value in conclusions):
         return "running", ["CI checks 仍在运行。"], []
     return "pending", ["CI checks 尚未完成。"], []
 
@@ -555,6 +573,10 @@ def _command_text(command: list[str]) -> str:
 
 def _command_error(completed: subprocess.CompletedProcess[str]) -> str:
     return _redact_text(str(completed.stderr or completed.stdout or f"exit {completed.returncode}").strip())
+
+
+def _is_no_checks_reported_error(error: str) -> bool:
+    return "no checks reported" in str(error).lower()
 
 
 def _porcelain_path(value: str) -> str:

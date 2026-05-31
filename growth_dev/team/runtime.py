@@ -7,10 +7,18 @@ from typing import Any
 from ..utils import ensure_dir, now_iso, timestamp_slug, write_json
 from .agents import AgentContext, run_deterministic_agent
 from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
+from .complex_task import ComplexTaskConfig, generate_complex_task_artifacts
 from .domain import load_domain_spec, load_team_spec
 from .memory_recall import generate_memory_recall
 from .models import AgentRun, AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 from .retrospective import generate_run_retrospective
+
+COMPLEX_TASK_REQUIRED_ARTIFACTS = [
+    "acceptance_criteria.md",
+    "context_pack.md",
+    "planning/acceptance_coverage_matrix.json",
+    "planning/planning_quality_report.json",
+]
 
 
 class GateFailure(RuntimeError):
@@ -39,7 +47,7 @@ def default_team_spec() -> TeamSpec:
             GateSpec(
                 id="before_coding",
                 before_agent="coder",
-                required_artifacts=["prd.md", "tech_spec.md", "ui_spec.md", "eval.md"],
+                required_artifacts=["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", *COMPLEX_TASK_REQUIRED_ARTIFACTS],
             ),
             GateSpec(
                 id="before_publish",
@@ -85,6 +93,9 @@ class TeamRuntime:
         codex_reasoning_effort: str = "medium",
         codex_provider: str = "default",
         codex_env_file: Path | None = None,
+        planning_mode: str = "auto",
+        requirements_model: str = "",
+        requirements_reasoning_effort: str = "medium",
     ) -> None:
         self.team = team if team is not None else team_spec
         self.domain = domain if domain is not None else domain_spec
@@ -114,6 +125,11 @@ class TeamRuntime:
             reasoning_effort=codex_reasoning_effort,
             provider=provider_config,
         )
+        self.complex_task_config = ComplexTaskConfig(
+            planning_mode=planning_mode,
+            requirements_model=requirements_model,
+            requirements_reasoning_effort=requirements_reasoning_effort,
+        ).normalized()
 
     @classmethod
     def from_files(
@@ -129,6 +145,9 @@ class TeamRuntime:
         codex_reasoning_effort: str = "medium",
         codex_provider: str = "default",
         codex_env_file: Path | None = None,
+        planning_mode: str = "auto",
+        requirements_model: str = "",
+        requirements_reasoning_effort: str = "medium",
     ) -> "TeamRuntime":
         return cls(
             team=load_team_spec(team_path),
@@ -141,6 +160,9 @@ class TeamRuntime:
             codex_reasoning_effort=codex_reasoning_effort,
             codex_provider=codex_provider,
             codex_env_file=codex_env_file,
+            planning_mode=planning_mode,
+            requirements_model=requirements_model,
+            requirements_reasoning_effort=requirements_reasoning_effort,
         )
 
     @classmethod
@@ -157,6 +179,9 @@ class TeamRuntime:
         codex_reasoning_effort: str = "medium",
         codex_provider: str = "default",
         codex_env_file: Path | None = None,
+        planning_mode: str = "auto",
+        requirements_model: str = "",
+        requirements_reasoning_effort: str = "medium",
     ) -> "TeamRuntime":
         return cls(
             team=team or default_team_spec(),
@@ -169,6 +194,9 @@ class TeamRuntime:
             codex_reasoning_effort=codex_reasoning_effort,
             codex_provider=codex_provider,
             codex_env_file=codex_env_file,
+            planning_mode=planning_mode,
+            requirements_model=requirements_model,
+            requirements_reasoning_effort=requirements_reasoning_effort,
         )
 
     def run(
@@ -190,7 +218,10 @@ class TeamRuntime:
             started_at=now_iso(),
             inputs=dict(inputs or {}),
             executor=self.executor,
-            executor_config=self.codex_config.to_dict() if self.executor == "codex" else {},
+            executor_config={
+                **(self.codex_config.to_dict() if self.executor == "codex" else {}),
+                "complex_task": self.complex_task_config.to_dict(),
+            },
         )
         self._write_record(record)
         self._write_event(
@@ -206,6 +237,8 @@ class TeamRuntime:
 
         for agent in self.team.agents:
             gate_failed = self._run_gates_before(agent.id, record)
+            if agent.id == "coder" and self._run_complex_task_required_artifact_gate(record):
+                gate_failed = True
             if gate_failed:
                 record.status = "failed"
                 record.finished_at = now_iso()
@@ -266,6 +299,15 @@ class TeamRuntime:
                 self._write_retrospective(record)
                 return record
 
+            if agent.id == "orchestrator":
+                if self._write_complex_task_artifacts(record, inputs=dict(inputs or {})):
+                    record.status = "failed"
+                    record.finished_at = now_iso()
+                    self._write_record(record)
+                    self._write_event(record, "run_failed", reason="requirement_quality_gate_failed")
+                    self._write_retrospective(record)
+                    return record
+
         record.status = "completed"
         record.finished_at = now_iso()
         self._write_record(record)
@@ -299,6 +341,27 @@ class TeamRuntime:
             if result.status != "passed":
                 failed = True
         return failed
+
+    def _run_complex_task_required_artifact_gate(self, record: TeamRunRecord) -> bool:
+        result = check_gate(
+            GateSpec(
+                id="complex_task_ready",
+                before_agent="coder",
+                required_artifacts=COMPLEX_TASK_REQUIRED_ARTIFACTS,
+            ),
+            record.run_dir,
+        )
+        record.gate_results.append(result)
+        self._write_event(
+            record,
+            "gate_checked",
+            gate_id=result.gate_id,
+            status=result.status,
+            before_agent=result.before_agent,
+            required_artifacts=result.required_artifacts,
+            missing_artifacts=result.missing_artifacts,
+        )
+        return result.status != "passed"
 
     def _missing_declared_outputs(self, agent: AgentSpec, run_dir: Path) -> list[str]:
         return [output for output in agent.outputs if not _artifact_exists(run_dir, output)]
@@ -351,6 +414,82 @@ class TeamRuntime:
             "memory_recall_generated",
             match_count=len(result.get("memory_recall", {}).get("matches", [])),
         )
+
+    def _write_complex_task_artifacts(self, record: TeamRunRecord, *, inputs: dict[str, Any]) -> bool:
+        started_at = now_iso()
+        try:
+            result = generate_complex_task_artifacts(
+                run_id=record.run_id,
+                run_dir=record.run_dir,
+                brief=record.brief,
+                domain=self.domain,
+                inputs=inputs,
+                config=self.complex_task_config,
+            )
+        except Exception as exc:  # noqa: BLE001 - persisted as a stage failure.
+            agent_run = AgentRun(
+                agent_id="requirements",
+                status="failed",
+                started_at=started_at,
+                finished_at=now_iso(),
+                risk_events=[f"complex_task_generation_failed:{type(exc).__name__}:{exc}"],
+                output_paths=[],
+                message="complex task artifacts failed",
+            )
+            record.agent_runs.append(agent_run)
+            record.add_agent_run_outputs(agent_run)
+            self._write_record(record)
+            self._write_event(record, "risk_event", agent_id="requirements", risk_event=agent_run.risk_events[0])
+            return True
+
+        status = "completed" if result["status"] == "passed" else "failed"
+        risk_events = [] if status == "completed" else list(result["requirement_quality"].get("blockers", [])) + list(result["planning_quality"].get("blockers", []))
+        agent_run = AgentRun(
+            agent_id="requirements",
+            status=status,
+            started_at=started_at,
+            finished_at=now_iso(),
+            risk_events=risk_events,
+            output_paths=list(result["output_paths"]),
+            message="complex task artifacts generated",
+            metadata={
+                "requirement_quality": result["requirement_quality"],
+                "planning_quality": result["planning_quality"],
+            },
+        )
+        record.agent_runs.append(agent_run)
+        record.add_agent_run_outputs(agent_run)
+        for gate_id, report in (
+            ("requirement_quality", result["requirement_quality"]),
+            ("planning_quality", result["planning_quality"]),
+        ):
+            gate_result = GateResult(
+                gate_id=gate_id,
+                status="passed" if report.get("status") == "passed" else "failed",
+                required_artifacts=list(result["output_paths"]),
+                missing_artifacts=list(report.get("blockers", [])),
+                checked_at=now_iso(),
+                before_agent="coder",
+            )
+            record.gate_results.append(gate_result)
+            self._write_event(
+                record,
+                "gate_checked",
+                gate_id=gate_result.gate_id,
+                status=gate_result.status,
+                before_agent=gate_result.before_agent,
+                required_artifacts=gate_result.required_artifacts,
+                missing_artifacts=gate_result.missing_artifacts,
+            )
+        self._write_record(record)
+        self._write_event(
+            record,
+            "complex_task_artifacts_generated",
+            status=status,
+            planning_mode=self.complex_task_config.planning_mode,
+            output_paths=result["output_paths"],
+        )
+        return status != "completed"
 
     @staticmethod
     def load_record(run_id: str, runs_dir: Path = Path("runs")) -> TeamRunRecord:

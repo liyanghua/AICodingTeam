@@ -34,6 +34,7 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Skills define the project method layer; they do not replace per-run artifacts in `tasks/current/` or execution evidence in `runs/<run_id>/`.
 - The first batch call order is `using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality`.
 - Skills are not better because there are more of them. Default to one primary skill per phase and at most one companion skill to avoid context pollution.
+- Complex tasks should use coverage-driven slice planning: acceptance criteria map to `slices/*.yaml`, Codex slice-loop traces, and an implementation completion gate.
 
 ## Coding Rules
 
@@ -42,6 +43,7 @@ It turns a single business brief into gated engineering artifacts, then compares
 - Use deterministic fixture generation for tests.
 - Keep v1 team agents deterministic and file-driven.
 - Keep Codex prompts narrow: include the goal, allowed paths, current state summary, failed tests, acceptance criteria, stop conditions, and verification commands.
+- For Codex slice-loop work, continuity must come from run artifacts, slice yaml, acceptance coverage matrix, per-slice trace, current diff, and verification evidence, not chat history.
 - Codex final responses must be structured JSON with `summary`, `files_changed`, `tests_run`, `risk_events`, `blockers`, and `next_action`.
 - For Dashboard or UI changes, read root `DESIGN.md` first and keep styles aligned with its design tokens, component rules, and business-friendly language.
 - Do not add unrelated refactors.

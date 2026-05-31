@@ -14,6 +14,8 @@ from .quality import evaluate_run_quality, summarize_run_health
 READINESS_JSON = "release_readiness.json"
 READINESS_MD = "release_readiness.md"
 PR_DRAFT_MD = "pr_draft.md"
+STAGING_READINESS_JSON = "staging_readiness.json"
+STAGING_READINESS_MD = "staging_readiness.md"
 
 SECRET_REPLACEMENTS = [
     (re.compile(r"sk-[A-Za-z0-9_\-]{6,}"), "<redacted-secret>"),
@@ -44,6 +46,7 @@ def generate_release_readiness(
     working_tree = _working_tree_summary(repo_root, expected_changed_files)
     quality = evaluate_run_quality(record, run_dir).to_dict()
     health = summarize_run_health(record, run_dir).to_dict()
+    ci_status = _read_json(run_dir / "ci_status.json")
 
     gates: list[dict[str, Any]] = []
     blockers: list[str] = []
@@ -56,6 +59,7 @@ def generate_release_readiness(
     _add_risk_gates(record, trace, gates, blockers)
     _add_change_evidence_gate(expected_changed_files, diff_summary, gates, blockers)
     _add_working_tree_gate(working_tree, gates, blockers, warnings)
+    _add_ci_status_gate(ci_status, gates, blockers, warnings)
     _add_quality_warning(quality, gates, warnings)
     _add_health_warnings(health, gates, warnings)
 
@@ -99,6 +103,9 @@ def generate_release_readiness(
             "tests_run": tests_run,
             "review_status": review_status,
             "acceptance_status": acceptance_status,
+            "ci_status": str(ci_status.get("status", "not_started")) if ci_status else "",
+            "ci_summary": str(ci_status.get("summary", "")) if ci_status else "",
+            "ci_checks": ci_status.get("checks", []) if isinstance(ci_status.get("checks"), list) else [],
             "working_tree": working_tree,
         },
         "pr_draft": pr_draft,
@@ -135,11 +142,102 @@ def format_release_readiness(result: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def generate_staging_readiness(
+    run_id: str,
+    *,
+    runs_dir: Path = Path("runs"),
+) -> dict[str, Any]:
+    runs_dir = Path(runs_dir)
+    run_dir = runs_dir / run_id
+    record_path = run_dir / "team_run_record.json"
+    if not record_path.exists():
+        raise FileNotFoundError(f"team_run_record.json not found: {record_path}")
+
+    record = TeamRunRecord.from_dict(read_json(record_path))
+    acceptance = _read_json(run_dir / "acceptance" / "status.json")
+    release = _read_json(run_dir / READINESS_JSON)
+    github_pr = _read_json(run_dir / "github_pr.json")
+    ci_status = _read_json(run_dir / "ci_status.json")
+    trace = _read_json(run_dir / "codex" / "implementation_trace.json")
+    diff_summary = _parse_diff_summary(_read_text(run_dir / "codex" / "diff.patch"))
+    changed_files = _expected_changed_files(record, trace, diff_summary)
+
+    gates: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    _add_staging_acceptance_gate(acceptance, gates, blockers)
+    _add_staging_release_gate(release, gates, blockers, warnings)
+    _add_staging_pr_gate(github_pr, gates, blockers)
+    _add_staging_ci_gate(ci_status, gates, blockers, warnings)
+    _add_staging_risk_gate(record, trace, ci_status, gates, blockers)
+
+    if blockers:
+        decision = "blocked"
+    elif any(gate.get("id") == "ci_passed" and gate.get("status") == "warning" for gate in gates):
+        decision = "waiting_for_ci"
+    else:
+        decision = "ready_for_staging"
+
+    result = {
+        "schema_version": 1,
+        "run_id": record.run_id,
+        "generated_at": now_iso(),
+        "staging_decision": decision,
+        "summary": _staging_summary(decision, blockers, warnings),
+        "gates": gates,
+        "evidence": {
+            "release_decision": str(release.get("release_decision", "")),
+            "pr_url": _pr_url(github_pr),
+            "ci_status": str(ci_status.get("status", "not_started")) if ci_status else "not_started",
+            "ci_summary": str(ci_status.get("summary", "")) if ci_status else "",
+            "checks": ci_status.get("checks", []) if isinstance(ci_status.get("checks"), list) else [],
+            "acceptance_status": str(acceptance.get("status", "not_started")),
+            "changed_files": changed_files,
+        },
+        "blockers": _dedupe(blockers),
+        "warnings": _dedupe(warnings),
+        "next_actions": _staging_next_actions(record.run_id, decision),
+    }
+    result = _redact(result)
+    _write_staging_artifacts(run_dir, result)
+    return result
+
+
+def format_staging_readiness(result: dict[str, Any]) -> str:
+    lines = [
+        f"Run: {result.get('run_id', '')}",
+        f"Decision: {result.get('staging_decision', '')}",
+        f"Summary: {result.get('summary', '')}",
+        "",
+        "Gates:",
+    ]
+    for gate in result.get("gates", []):
+        if isinstance(gate, dict):
+            lines.append(f"- {gate.get('id', '')}: {gate.get('status', '')} - {gate.get('reason', '')}")
+    blockers = [str(item) for item in result.get("blockers", [])]
+    warnings = [str(item) for item in result.get("warnings", [])]
+    if blockers:
+        lines.extend(["", "Blockers:", *[f"- {item}" for item in blockers]])
+    if warnings:
+        lines.extend(["", "Warnings:", *[f"- {item}" for item in warnings]])
+    next_actions = [str(item) for item in result.get("next_actions", [])]
+    if next_actions:
+        lines.extend(["", "Next actions:", *[f"- {item}" for item in next_actions]])
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _write_artifacts(run_dir: Path, result: dict[str, Any]) -> None:
     ensure_dir(run_dir)
     write_json(run_dir / READINESS_JSON, result)
     (run_dir / READINESS_MD).write_text(_readiness_markdown(result), encoding="utf-8")
     (run_dir / PR_DRAFT_MD).write_text(_pr_draft_markdown(result), encoding="utf-8")
+
+
+def _write_staging_artifacts(run_dir: Path, result: dict[str, Any]) -> None:
+    ensure_dir(run_dir)
+    write_json(run_dir / STAGING_READINESS_JSON, result)
+    (run_dir / STAGING_READINESS_MD).write_text(_staging_markdown(result), encoding="utf-8")
 
 
 def _readiness_markdown(result: dict[str, Any]) -> str:
@@ -167,6 +265,9 @@ def _readiness_markdown(result: dict[str, Any]) -> str:
     lines.append(f"- Tests run: {', '.join(f'`{item}`' for item in evidence.get('tests_run', []) or []) or 'none'}")
     lines.append(f"- Review status: `{evidence.get('review_status', '')}`")
     lines.append(f"- Acceptance status: `{evidence.get('acceptance_status', '')}`")
+    if evidence.get("ci_status"):
+        lines.append(f"- CI status: `{evidence.get('ci_status', '')}`")
+        lines.append(f"- CI summary: {evidence.get('ci_summary', '') or 'none'}")
     lines.append(f"- Tracked working tree files: {', '.join(f'`{item}`' for item in working_tree.get('tracked_changed_files', []) or []) or 'none'}")
     lines.extend(["", "## Blockers", ""])
     lines.extend([f"- {item}" for item in result.get("blockers", [])] or ["暂无硬阻塞。"])
@@ -183,6 +284,41 @@ def _pr_draft_markdown(result: dict[str, Any]) -> str:
     title = str(pr.get("title", "")).strip()
     body = str(pr.get("body", "")).strip()
     return _redact_text(f"# PR Title\n\n{title}\n\n{body}\n").rstrip() + "\n"
+
+
+def _staging_markdown(result: dict[str, Any]) -> str:
+    evidence = result.get("evidence", {}) if isinstance(result.get("evidence"), dict) else {}
+    lines = [
+        "# Staging Readiness",
+        "",
+        f"- Run: `{result.get('run_id', '')}`",
+        f"- Decision: `{result.get('staging_decision', '')}`",
+        f"- Summary: {result.get('summary', '')}",
+        "",
+        "## Gates",
+        "",
+        "| Gate | Status | Reason |",
+        "| --- | --- | --- |",
+    ]
+    for gate in result.get("gates", []):
+        if not isinstance(gate, dict):
+            continue
+        reason = str(gate.get("reason", "")).replace("|", "\\|")
+        lines.append(f"| `{gate.get('id', '')}` | `{gate.get('status', '')}` | {reason} |")
+    lines.extend(["", "## Evidence", ""])
+    lines.append(f"- Release decision: `{evidence.get('release_decision', '')}`")
+    lines.append(f"- PR: {evidence.get('pr_url', '') or 'not created'}")
+    lines.append(f"- CI status: `{evidence.get('ci_status', '')}`")
+    lines.append(f"- CI summary: {evidence.get('ci_summary', '') or 'none'}")
+    lines.append(f"- Acceptance status: `{evidence.get('acceptance_status', '')}`")
+    lines.append(f"- Changed files: {', '.join(f'`{item}`' for item in evidence.get('changed_files', []) or []) or 'none'}")
+    lines.extend(["", "## Blockers", ""])
+    lines.extend([f"- {item}" for item in result.get("blockers", [])] or ["暂无硬阻塞。"])
+    lines.extend(["", "## Warnings", ""])
+    lines.extend([f"- {item}" for item in result.get("warnings", [])] or ["暂无 warning。"])
+    lines.extend(["", "## Next Actions", ""])
+    lines.extend([f"- `{item}`" for item in result.get("next_actions", [])] or ["暂无下一步动作。"])
+    return _redact_text("\n".join(lines).rstrip() + "\n")
 
 
 def _add_run_status_gate(record: TeamRunRecord, gates: list[dict[str, Any]], blockers: list[str]) -> None:
@@ -291,6 +427,31 @@ def _add_working_tree_gate(
         warnings.append(f"存在未跟踪文件，未计入 PR 范围：{', '.join(untracked[:6])}")
 
 
+def _add_ci_status_gate(
+    ci_status: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    if not ci_status:
+        return
+    status = str(ci_status.get("status", "unknown"))
+    summary = str(ci_status.get("summary", "")) or _ci_status_reason(status)
+    checks = _ci_check_names(ci_status)
+    if status == "passed":
+        gates.append(_gate("ci_status", "passed", summary or "CI checks 已通过。", checks))
+        return
+    if status == "failed":
+        reason = summary or "CI checks failed."
+        ci_blockers = [str(item) for item in ci_status.get("blockers", []) if item]
+        gates.append(_gate("ci_status", "blocked", reason, ci_blockers or checks))
+        blockers.extend(ci_blockers or [f"CI 未通过：{reason}"])
+        return
+    reason = summary or _ci_status_reason(status)
+    gates.append(_gate("ci_status", "warning", reason, checks))
+    warnings.append(f"CI 尚未形成可放行结论：{reason}")
+
+
 def _add_quality_warning(quality: dict[str, Any], gates: list[dict[str, Any]], warnings: list[str]) -> None:
     status = str(quality.get("status", "unknown"))
     if status == "passed":
@@ -313,6 +474,108 @@ def _add_health_warnings(health: dict[str, Any], gates: list[dict[str, Any]], wa
         warnings.append(summary)
     else:
         gates.append(_gate("non_blocking_warnings", "passed", "未发现 Codex 非阻塞 warning。", []))
+
+
+def _add_staging_acceptance_gate(acceptance: dict[str, Any], gates: list[dict[str, Any]], blockers: list[str]) -> None:
+    status = str(acceptance.get("status", "not_started"))
+    applied = bool(acceptance.get("applied", False))
+    test_step = _step_by_id(acceptance, "tests")
+    test_exit = test_step.get("exit_code") if test_step else None
+    if status == "completed" and applied and test_exit == 0:
+        gates.append(_gate("acceptance_completed", "passed", "采纳验收已完成，且全量测试通过。", [f"tests.exit_code={test_exit}"]))
+        return
+    reason = f"采纳验收未完成或测试未通过：status={status}, applied={applied}, tests_exit_code={test_exit}"
+    gates.append(_gate("acceptance_completed", "blocked", reason, [status, str(applied), str(test_exit)]))
+    blockers.append(reason)
+
+
+def _add_staging_release_gate(
+    release: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    decision = str(release.get("release_decision", ""))
+    if not release:
+        reason = "release_readiness.json is missing."
+        gates.append(_gate("release_readiness", "blocked", reason, [READINESS_JSON]))
+        blockers.append(reason)
+        return
+    if decision == "blocked":
+        reason = "release_readiness is blocked."
+        gates.append(_gate("release_readiness", "blocked", reason, release.get("blockers", []) if isinstance(release.get("blockers"), list) else []))
+        blockers.append(reason)
+        blockers.extend(str(item) for item in release.get("blockers", []) if item)
+        return
+    if decision == "ready_with_warnings":
+        reason = "发布准备可进入 PR/CI，但仍有 warning。"
+        gates.append(_gate("release_readiness", "warning", reason, release.get("warnings", []) if isinstance(release.get("warnings"), list) else []))
+        warnings.append(reason)
+        warnings.extend(str(item) for item in release.get("warnings", []) if item)
+        return
+    if decision == "ready_for_pr_ci":
+        gates.append(_gate("release_readiness", "passed", "发布准备已通过。", [decision]))
+        return
+    reason = f"release_readiness decision is `{decision or 'missing'}`."
+    gates.append(_gate("release_readiness", "blocked", reason, [decision]))
+    blockers.append(reason)
+
+
+def _add_staging_pr_gate(github_pr: dict[str, Any], gates: list[dict[str, Any]], blockers: list[str]) -> None:
+    pr = github_pr.get("pr") if isinstance(github_pr.get("pr"), dict) else {}
+    status = str(github_pr.get("status", "not_started"))
+    url = str(pr.get("url", ""))
+    if status == "created" and url:
+        gates.append(_gate("draft_pr_created", "passed", "GitHub Draft PR 已创建。", [url]))
+        return
+    reason = "GitHub Draft PR has not been created."
+    gates.append(_gate("draft_pr_created", "blocked", reason, [status]))
+    blockers.append(reason)
+
+
+def _add_staging_ci_gate(
+    ci_status: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    status = str(ci_status.get("status", "not_started")) if ci_status else "not_started"
+    summary = str(ci_status.get("summary", "")) if ci_status else ""
+    checks = _ci_check_names(ci_status)
+    if status == "passed":
+        gates.append(_gate("ci_passed", "passed", summary or "CI checks 已通过。", checks))
+        return
+    if status == "failed":
+        reason = summary or "CI checks failed."
+        ci_blockers = [str(item) for item in ci_status.get("blockers", []) if item]
+        gates.append(_gate("ci_passed", "blocked", reason, ci_blockers or checks))
+        blockers.extend(ci_blockers or [f"CI 未通过：{reason}"])
+        return
+    reason = summary or _ci_status_reason(status)
+    gates.append(_gate("ci_passed", "warning", reason, checks))
+    warnings.append(f"CI 尚未通过：{reason}")
+
+
+def _add_staging_risk_gate(
+    record: TeamRunRecord,
+    trace: dict[str, Any],
+    ci_status: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+) -> None:
+    risks: list[str] = []
+    risks.extend(record.risk_events)
+    for agent in record.agent_runs:
+        risks.extend(agent.risk_events)
+    risks.extend(str(item) for item in trace.get("risk_events", []) if item)
+    risks.extend(str(item) for item in trace.get("blockers", []) if item)
+    risks.extend(str(item) for item in ci_status.get("blockers", []) if item)
+    risks = _dedupe(risks)
+    if risks:
+        gates.append(_gate("risk_and_blockers", "blocked", "存在未清零风险或阻塞。", risks))
+        blockers.extend(risks)
+    else:
+        gates.append(_gate("risk_and_blockers", "passed", "未发现未清零风险或阻塞。", []))
 
 
 def _gate(gate_id: str, status: str, reason: str, evidence: list[Any]) -> dict[str, Any]:
@@ -512,6 +775,59 @@ def _next_actions(run_id: str, decision: str) -> list[str]:
         actions.append(f"python3 -m growth_dev.cli team pr draft --run-id {run_id} --base main --push")
         actions.append(f"python3 -m growth_dev.cli team pr status --run-id {run_id}")
     return actions
+
+
+def _staging_summary(decision: str, blockers: list[str], warnings: list[str]) -> str:
+    if decision == "ready_for_staging":
+        return "采纳验收、发布准备、Draft PR 和 CI 均已通过，可以进入 staging 判断下一步。"
+    if decision == "waiting_for_ci":
+        return f"本地与 PR 条件基本齐备，但 CI 尚未形成通过结论，存在 {len(warnings)} 条等待项。"
+    return f"存在 {len(blockers)} 个硬阻塞，暂不能进入 staging。"
+
+
+def _staging_next_actions(run_id: str, decision: str) -> list[str]:
+    if decision == "ready_for_staging":
+        return [
+            f"python3 -m growth_dev.cli team release staging-readiness --run-id {run_id}",
+            "人工确认 staging 变更窗口、回滚方式和责任人；第一版不会自动部署。",
+        ]
+    if decision == "waiting_for_ci":
+        return [
+            f"python3 -m growth_dev.cli team pr status --run-id {run_id}",
+            f"python3 -m growth_dev.cli team release staging-readiness --run-id {run_id}",
+        ]
+    return [
+        "先处理 staging_readiness.md 中的 blockers。",
+        f"python3 -m growth_dev.cli team release readiness --run-id {run_id}",
+        f"python3 -m growth_dev.cli team release staging-readiness --run-id {run_id}",
+    ]
+
+
+def _ci_status_reason(status: str) -> str:
+    if status in {"running", "pending"}:
+        return "CI checks 尚未完成。"
+    if status == "unknown":
+        return "CI 状态未知或尚未发现 checks。"
+    if status == "not_started":
+        return "CI 状态尚未刷新。"
+    return f"CI status is `{status}`."
+
+
+def _ci_check_names(ci_status: dict[str, Any]) -> list[str]:
+    checks = ci_status.get("checks", []) if isinstance(ci_status.get("checks"), list) else []
+    names: list[str] = []
+    for check in checks:
+        if isinstance(check, dict):
+            name = str(check.get("name", ""))
+            status = str(check.get("status", ""))
+            conclusion = str(check.get("conclusion", ""))
+            names.append(" / ".join(item for item in (name, status, conclusion) if item))
+    return names
+
+
+def _pr_url(github_pr: dict[str, Any]) -> str:
+    pr = github_pr.get("pr") if isinstance(github_pr.get("pr"), dict) else {}
+    return str(pr.get("url", ""))
 
 
 def _parse_diff_summary(diff: str) -> dict[str, Any]:

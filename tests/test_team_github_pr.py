@@ -155,6 +155,98 @@ class TeamGitHubPrTests(unittest.TestCase):
         self.assertEqual(empty["status"], "unknown")
         self.assertTrue(empty["warnings"])
 
+    def test_refresh_ci_status_accepts_current_gh_state_and_bucket_fields(self) -> None:
+        from growth_dev.team.github_pr import refresh_ci_status
+
+        captured_commands: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            captured_commands.append(list(command))
+            if command[:3] == ["gh", "pr", "checks"]:
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        [
+                            {
+                                "name": "tests",
+                                "workflow": "CI",
+                                "state": "SUCCESS",
+                                "bucket": "pass",
+                                "link": "https://github.com/example/project/actions/runs/1",
+                            }
+                        ]
+                    ),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected command: {command}")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir, repo_root = _write_readiness(root)
+            pr_status = {
+                "schema_version": 1,
+                "run_id": "release-run-1",
+                "status": "created",
+                "pr": {"url": "https://github.com/example/project/pull/42", "number": 42, "title": "demo", "state": "OPEN", "is_draft": True, "base": "main", "head": "feature/demo"},
+                "release_decision": "ready_for_pr_ci",
+                "warnings": [],
+                "blockers": [],
+                "commands": [],
+                "next_action": "",
+            }
+            (runs_dir / "release-run-1" / "github_pr.json").write_text(json.dumps(pr_status), encoding="utf-8")
+
+            result = refresh_ci_status("release-run-1", runs_dir=runs_dir, repo_root=repo_root, command_runner=fake_run)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["checks"][0]["status"], "SUCCESS")
+        self.assertEqual(result["checks"][0]["conclusion"], "pass")
+        fields = captured_commands[0][-1]
+        self.assertIn("state", fields)
+        self.assertIn("bucket", fields)
+        self.assertNotIn("status", fields)
+        self.assertNotIn("conclusion", fields)
+
+    def test_refresh_ci_status_treats_no_checks_reported_as_warning(self) -> None:
+        from growth_dev.team.github_pr import refresh_ci_status
+
+        def fake_run(command, **kwargs):
+            if command[:3] == ["gh", "pr", "checks"]:
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="no checks reported on the 'feature/demo' branch\n",
+                )
+            raise AssertionError(f"unexpected command: {command}")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir, repo_root = _write_readiness(root)
+            pr_status = {
+                "schema_version": 1,
+                "run_id": "release-run-1",
+                "status": "created",
+                "pr": {"url": "https://github.com/example/project/pull/42", "number": 42, "title": "demo", "state": "OPEN", "is_draft": True, "base": "main", "head": "feature/demo"},
+                "release_decision": "ready_for_pr_ci",
+                "warnings": [],
+                "blockers": [],
+                "commands": [],
+                "next_action": "",
+            }
+            (runs_dir / "release-run-1" / "github_pr.json").write_text(json.dumps(pr_status), encoding="utf-8")
+
+            result = refresh_ci_status("release-run-1", runs_dir=runs_dir, repo_root=repo_root, command_runner=fake_run)
+            artifact = json.loads((runs_dir / "release-run-1" / "ci_status.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "unknown")
+        self.assertEqual(result["checks"], [])
+        self.assertEqual(result["blockers"], [])
+        self.assertTrue(result["warnings"])
+        self.assertIn("尚未发现", result["summary"])
+        self.assertEqual(artifact["blockers"], [])
+
     def test_cli_pr_draft_and_status_commands(self) -> None:
         from growth_dev import cli
 

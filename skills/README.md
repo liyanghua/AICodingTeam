@@ -34,3 +34,11 @@ Skills 不是越多越好。Too many active skills create trigger noise, context
 - `run_retrospective` and `historical_task_recall` are listed separately under `memory_skills`; they are not active coding skills.
 - Retrospective output may recommend active skills for the next run, but it should not be loaded into coding context unless explicitly selected and cited.
 - Historical recall may cite similar run summaries and recommend active skills, but it must stay report-only unless a future audited runtime step explicitly injects it.
+
+## Complex task planning
+
+复杂任务默认使用 coverage-driven slice planning：先建立 acceptance coverage matrix，再生成 `slices/*.yaml`。每个 slice 必须覆盖至少一个 acceptance criterion，每条 acceptance criterion 也必须被至少一个 slice 覆盖。
+
+Codex slice-loop 默认一次只执行一个 slice。连续性来自 run artifacts、slice yaml、coverage matrix、per-slice trace、current diff 和 verification evidence，而不是聊天历史。
+
+整体完成判断以 implementation completion gate 为准：所有 slice 完成、验收标准被覆盖、测试通过、无开放 blocker、无无关变更，并且最终报告说明覆盖关系。

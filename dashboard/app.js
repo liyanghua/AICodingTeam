@@ -16,6 +16,7 @@ const ACCEPTANCE_ENDPOINT_SUFFIX = "/acceptance";
 const RELEASE_READINESS_ENDPOINT_SUFFIX = "/release/readiness";
 const GITHUB_PR_DRAFT_ENDPOINT_SUFFIX = "/pr/draft";
 const GITHUB_PR_STATUS_ENDPOINT_SUFFIX = "/pr/status";
+const STAGING_READINESS_ENDPOINT_SUFFIX = "/staging-readiness";
 
 function t(path, fallback = "") {
   return view.lookup(state.i18n, path, fallback || view.lookup(state.i18n, "app.unknown", "未知项"));
@@ -119,10 +120,12 @@ function renderBusinessRun(vm) {
   renderHealth(vm.health || {});
   renderArtifactQuality(vm.artifactQuality || {});
   renderMemoryRecall(vm.memoryRecall || {});
+  renderComplexTask(vm);
   renderGates(vm.qualityGates || []);
   renderAcceptance(vm);
   renderReleaseReadiness(vm);
   renderGithubPrCi(vm);
+  renderStagingReadiness(vm);
   renderArtifactActions(vm.deliverables || []);
   ensureSelectedArtifact(vm);
   renderNextActions(vm.nextActions || []);
@@ -205,6 +208,94 @@ function renderMemoryRecall(memoryRecall) {
       row.textContent = `${match.run_id || t("app.unknown")} · ${Math.round(Number(match.score || 0) * 100)}% · ${match.task_type || ""}`;
       matches.appendChild(row);
     }
+  }
+}
+
+function renderComplexTask(vm) {
+  renderRequirementUnderstanding(vm.requirementUnderstanding || {});
+  renderAcceptanceCoverage(vm.acceptanceCoverage || {});
+  renderSliceLoop(vm.sliceLoop || {});
+  renderCompletionGate(vm.completionGate || {});
+}
+
+function renderRequirementUnderstanding(requirement) {
+  const summary = $("requirement-understanding-summary");
+  const details = $("requirement-understanding-details");
+  if (!summary || !details) return;
+  summary.textContent = requirement.summary || t("complexTask.requirementEmpty");
+  const rows = [
+    `${t("complexTask.statusLabel")}: ${requirement.statusLabel || t("app.unknown")}`,
+  ];
+  if (requirement.complexity) rows.push(`${t("complexTask.complexity")}: ${requirement.complexity}`);
+  if (requirement.planningMode) rows.push(`${t("complexTask.planningMode")}: ${requirement.planningMode}`);
+  rows.push(`${t("complexTask.llmDraft")}: ${requirement.llmDraftRequested ? t("githubPr.yes") : t("githubPr.no")}`);
+  for (const question of (requirement.blockingQuestions || []).slice(0, 2)) rows.push(`${t("complexTask.blockingQuestion")}: ${question}`);
+  for (const blocker of (requirement.blockers || []).slice(0, 2)) rows.push(`${t("complexTask.blocker")}: ${blocker}`);
+  for (const warning of (requirement.warnings || []).slice(0, 2)) rows.push(`${t("complexTask.warning")}: ${warning}`);
+  if ((requirement.recommendedSkills || []).length) rows.push(`${t("complexTask.skills")}: ${requirement.recommendedSkills.slice(0, 3).join(", ")}`);
+  renderCompactRows(details, rows, t("complexTask.requirementEmpty"));
+}
+
+function renderAcceptanceCoverage(coverage) {
+  const summary = $("acceptance-coverage-summary");
+  const details = $("acceptance-coverage-details");
+  if (!summary || !details) return;
+  summary.textContent = coverage.summary || t("complexTask.coverageEmpty");
+  const rows = [];
+  if (coverage.totalCriteria) rows.push(`${t("complexTask.acceptanceCriteria")}: ${coverage.coveredCount || 0}/${coverage.totalCriteria}`);
+  if (coverage.sliceCount) rows.push(`${t("complexTask.slices")}: ${coverage.sliceCount}`);
+  rows.push(`${t("complexTask.ready")}: ${coverage.ready ? t("githubPr.yes") : t("githubPr.no")}`);
+  for (const item of (coverage.orphanCriteria || []).slice(0, 2)) rows.push(`${t("complexTask.orphanCriteria")}: ${item.id || item.description || ""}`);
+  for (const item of (coverage.slices || []).slice(0, 3)) rows.push(`${item.id || t("app.unknown")}: ${(item.acceptance_criteria_ids || []).join(", ")}`);
+  renderCompactRows(details, rows, t("complexTask.coverageEmpty"));
+}
+
+function renderSliceLoop(sliceLoop) {
+  const summary = $("slice-loop-summary");
+  const details = $("slice-loop-details");
+  if (!summary || !details) return;
+  summary.textContent = sliceLoop.summary || t("complexTask.sliceLoopEmpty");
+  const rows = [
+    `${t("complexTask.statusLabel")}: ${sliceLoop.statusLabel || t("app.unknown")}`,
+  ];
+  if (sliceLoop.executionStrategy) rows.push(`${t("complexTask.executionStrategy")}: ${sliceLoop.executionStrategy}`);
+  if (sliceLoop.currentSliceId) rows.push(`${t("complexTask.currentSlice")}: ${sliceLoop.currentSliceId}`);
+  if ((sliceLoop.completedSliceIds || []).length) rows.push(`${t("complexTask.completedSlices")}: ${sliceLoop.completedSliceIds.join(", ")}`);
+  if ((sliceLoop.pendingSliceIds || []).length) rows.push(`${t("complexTask.pendingSlices")}: ${sliceLoop.pendingSliceIds.join(", ")}`);
+  for (const blocker of (sliceLoop.blockers || []).slice(0, 2)) rows.push(`${t("complexTask.blocker")}: ${blocker}`);
+  if (sliceLoop.nextAction) rows.push(`${t("complexTask.nextAction")}: ${sliceLoop.nextAction}`);
+  renderCompactRows(details, rows, t("complexTask.sliceLoopEmpty"));
+}
+
+function renderCompletionGate(completionGate) {
+  const summary = $("completion-gate-summary");
+  const details = $("completion-gate-details");
+  if (!summary || !details) return;
+  summary.textContent = completionGate.summary || t("complexTask.completionEmpty");
+  const rows = [
+    `${t("complexTask.statusLabel")}: ${completionGate.statusLabel || t("app.unknown")}`,
+  ];
+  for (const check of (completionGate.checks || []).slice(0, 4)) rows.push(`${check.id || t("app.unknown")}: ${check.status || ""}`);
+  for (const blocker of (completionGate.blockers || []).slice(0, 2)) rows.push(`${t("complexTask.blocker")}: ${blocker}`);
+  if (completionGate.nextAction) rows.push(`${t("complexTask.nextAction")}: ${completionGate.nextAction}`);
+  renderCompactRows(details, rows, t("complexTask.completionEmpty"));
+}
+
+function renderCompactRows(container, rows, emptyText) {
+  container.textContent = "";
+  const items = rows.filter(Boolean).slice(0, 8);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+  for (const rowText of items) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = rowText;
+    container.appendChild(row);
   }
 }
 
@@ -782,6 +873,70 @@ async function refreshGithubCi() {
   action.disabled = true;
   action.textContent = t("githubPr.refreshing");
   await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${GITHUB_PR_STATUS_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderStagingReadiness(vm) {
+  const staging = vm.stagingReadiness || {};
+  const githubPr = vm.githubPr || {};
+  const action = $("staging-readiness-action");
+  const summary = $("staging-readiness-summary");
+  const gates = $("staging-readiness-gates");
+  const evidence = $("staging-readiness-evidence");
+  if (!action || !summary || !gates || !evidence) return;
+
+  const hasPr = githubPr.status === "created" && githubPr.pr && githubPr.pr.url;
+  const canGenerate = hasPr || (githubPr.ciStatus && githubPr.ciStatus !== "not_started");
+  action.disabled = !canGenerate;
+  action.textContent = t("stagingReadiness.generateButton");
+  action.onclick = startStagingReadiness;
+  summary.textContent = staging.summary || (canGenerate ? t("stagingReadiness.readyToGenerate") : t("stagingReadiness.empty"));
+
+  gates.textContent = "";
+  const gateItems = (staging.gates || []).slice(0, 6);
+  if (!gateItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("stagingReadiness.noGates");
+    gates.appendChild(empty);
+  } else {
+    for (const gate of gateItems) {
+      const row = document.createElement("div");
+      row.className = `quality-row release-gate-row release-gate-${gate.status || "unknown"}`;
+      row.textContent = `${gate.id || t("app.unknown")}: ${gate.status || ""} · ${gate.reason || ""}`;
+      gates.appendChild(row);
+    }
+  }
+
+  evidence.textContent = "";
+  const rows = [];
+  rows.push(`${t("stagingReadiness.decision")}: ${staging.decisionLabel || t("stagingReadiness.decisions.not_generated")}`);
+  if (staging.evidence) {
+    if (staging.evidence.pr_url) rows.push(`${t("stagingReadiness.prUrl")}: ${staging.evidence.pr_url}`);
+    if (staging.evidence.ci_status) rows.push(`${t("stagingReadiness.ciStatus")}: ${staging.evidence.ci_status}`);
+    if (staging.evidence.ci_summary) rows.push(`${t("stagingReadiness.ciSummary")}: ${staging.evidence.ci_summary}`);
+  }
+  for (const blocker of staging.blockers || []) rows.push(`${t("stagingReadiness.blocker")}: ${blocker}`);
+  for (const warning of staging.warnings || []) rows.push(`${t("stagingReadiness.warning")}: ${warning}`);
+  for (const item of (staging.nextActions || []).slice(0, 3)) rows.push(`${t("stagingReadiness.nextActions")}: ${item}`);
+  for (const rowText of rows.slice(0, 10)) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = rowText;
+    evidence.appendChild(row);
+  }
+}
+
+async function startStagingReadiness() {
+  if (!state.selectedRunId) return;
+  const action = $("staging-readiness-action");
+  action.disabled = true;
+  action.textContent = t("stagingReadiness.generating");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${STAGING_READINESS_ENDPOINT_SUFFIX}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

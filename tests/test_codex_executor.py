@@ -544,6 +544,60 @@ class CodexExecutorTests(unittest.TestCase):
             self.assertIn("## 风险与阻塞", test_report)
             self.assertIn("阻塞：无", test_report)
 
+    def test_codex_slice_loop_artifacts_capture_planned_slices(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_fake_codex(root)
+
+            runtime = TeamRuntime(
+                team=default_team_spec(),
+                domain=DomainSpec(domain_id="demo", summary="Demo coding domain", risk_rules=["manual_login_only"]),
+                runs_dir=root / "runs",
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+                codex_reasoning_effort="medium",
+                planning_mode="llm_assisted",
+                requirements_model="gpt-5.3",
+            )
+            record = runtime.run(
+                "Implement a complex Dashboard workflow with coverage-driven slices.",
+                inputs={
+                    "allowed_paths": ["growth_dev/fake_target.py"],
+                    "verification_commands": ["python3 -c \"print('ok')\""],
+                },
+                run_id="run-1",
+            )
+
+            run_dir = root / "runs" / "run-1"
+            code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            prompt_text = (run_dir / "codex" / "codex_prompt.md").read_text(encoding="utf-8")
+            loop_state = json.loads((run_dir / "codex" / "slice_loop_state.json").read_text(encoding="utf-8"))
+            slice_trace = json.loads((run_dir / "codex" / "slices" / "slice-001" / "slice_trace.json").read_text(encoding="utf-8"))
+            completion_gate = json.loads((run_dir / "implementation_completion_gate.json").read_text(encoding="utf-8"))
+            completion_gate_md = (run_dir / "implementation_completion_gate.md").read_text(encoding="utf-8")
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(loop_state["status"], "completed")
+        self.assertEqual(loop_state["execution_strategy"], "single_codex_pass_over_planned_slices_v1")
+        self.assertIn("slice-001", loop_state["completed_slice_ids"])
+        self.assertEqual(slice_trace["status"], "completed")
+        self.assertEqual(slice_trace["execution_strategy"], "single_codex_pass_over_planned_slices_v1")
+        self.assertEqual(slice_trace["acceptance_criteria_ids"], ["AC-001"])
+        self.assertIn("growth_dev/fake_target.py", slice_trace["evidence"]["changed_files"])
+        self.assertEqual(completion_gate["status"], "passed")
+        self.assertIn("all_slices_completed", [item["id"] for item in completion_gate["checks"]])
+        self.assertIn("# Implementation Completion Gate", completion_gate_md)
+        self.assertIn("Codex Slice-Loop", prompt_text)
+        self.assertIn("Acceptance Coverage Matrix", prompt_text)
+        self.assertEqual(code_record["artifacts"]["slice_loop_state"], "codex/slice_loop_state.json")
+        self.assertEqual(code_record["artifacts"]["implementation_completion_gate"], "implementation_completion_gate.json")
+
     def test_codex_non_blocking_risk_notes_do_not_fail_coder_gate(self) -> None:
         from growth_dev.team.models import DomainSpec
         from growth_dev.team.runtime import TeamRuntime, default_team_spec

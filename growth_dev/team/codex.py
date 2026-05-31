@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..utils import ensure_dir, now_iso, read_json, write_json
+from .yaml_io import load_yaml_subset
 
 
 REQUIRED_CODEX_RESPONSE_FIELDS = ["summary", "files_changed", "tests_run", "risk_events", "blockers", "next_action"]
@@ -36,6 +37,10 @@ DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
 UPSTREAM_CONTEXT_ARTIFACTS = ["task.yaml", "context.md", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "AGENTS.md", "DESIGN.md"]
 
 IMPLEMENTATION_TRACE_PATH = "codex/implementation_trace.json"
+SLICE_LOOP_STATE_PATH = "codex/slice_loop_state.json"
+IMPLEMENTATION_COMPLETION_GATE_JSON_PATH = "implementation_completion_gate.json"
+IMPLEMENTATION_COMPLETION_GATE_MD_PATH = "implementation_completion_gate.md"
+SLICE_LOOP_EXECUTION_STRATEGY = "single_codex_pass_over_planned_slices_v1"
 IMPLEMENTATION_TRACE_STEPS = [
     ("prepare_context", "准备上下文"),
     ("check_executor", "检查执行器"),
@@ -295,12 +300,15 @@ class CodexExecutor:
         bundle = self.write_prompt_bundle("coder", context)
         trace_path = self.codex_dir / "implementation_trace.json"
         trace = _new_implementation_trace(context, bundle)
+        slice_loop = _new_slice_loop_state(context, bundle)
+        slice_loop_output_paths = _write_initial_slice_loop_artifacts(self.run_dir, self.codex_dir, slice_loop)
         _trace_step(trace, "prepare_context", "running", "正在生成 AI coding 所需的上下文和提示包。")
         _write_implementation_trace(trace_path, trace)
         human_prompt = _human_coding_prompt(context, bundle, self.worktree_dir)
         output_paths = [context.write_text("coding_prompt.md", human_prompt)]
         output_paths.extend(bundle.relative_paths(self.run_dir))
         output_paths.append(IMPLEMENTATION_TRACE_PATH)
+        output_paths.extend(slice_loop_output_paths)
         _trace_step(
             trace,
             "prepare_context",
@@ -315,6 +323,8 @@ class CodexExecutor:
         if not self._binary_available():
             record = self._failure_record("coder", bundle, "codex_binary_missing", extra={"binary": self.config.binary})
             record["artifacts"]["implementation_trace"] = IMPLEMENTATION_TRACE_PATH
+            _attach_slice_loop_artifacts(record, slice_loop_output_paths)
+            _finalize_slice_loop_failure(self.run_dir, self.codex_dir, slice_loop, "codex_binary_missing")
             _trace_fail(trace, "check_executor", "Codex 执行器不可用。", record["risk_events"], record["blockers"], "fix_executor")
             _write_implementation_trace(trace_path, trace)
             output_paths.append(context.write_json("code_run_record.json", record))
@@ -329,6 +339,8 @@ class CodexExecutor:
         except Exception as exc:  # noqa: BLE001 - persisted in run artifacts for offline inspection.
             record = self._failure_record("coder", bundle, f"worktree_prepare_failed:{type(exc).__name__}:{exc}")
             record["artifacts"]["implementation_trace"] = IMPLEMENTATION_TRACE_PATH
+            _attach_slice_loop_artifacts(record, slice_loop_output_paths)
+            _finalize_slice_loop_failure(self.run_dir, self.codex_dir, slice_loop, record["risk_events"][0])
             _trace_fail(trace, "prepare_worktree", "隔离工作区准备失败。", record["risk_events"], record["blockers"], "fix_worktree")
             _write_implementation_trace(trace_path, trace)
             output_paths.append(context.write_json("code_run_record.json", record))
@@ -438,6 +450,36 @@ class CodexExecutor:
                 "implementation_trace": IMPLEMENTATION_TRACE_PATH,
             },
         }
+        completion_paths: list[str] = []
+        completion_gate: dict[str, Any] = {}
+        if slice_loop.get("enabled"):
+            completion_gate = _write_completion_gate(
+                self.run_dir,
+                slice_loop,
+                status=status,
+                files_changed=files_changed,
+                tests_run=tests_run,
+                verification_commands=bundle.verification_commands,
+                risk_events=risk_events,
+                blockers=blockers,
+                allowed_paths=bundle.allowed_paths,
+            )
+            completion_paths = [IMPLEMENTATION_COMPLETION_GATE_JSON_PATH, IMPLEMENTATION_COMPLETION_GATE_MD_PATH]
+            output_paths.extend(completion_paths)
+            _finalize_slice_loop_success(
+                self.run_dir,
+                self.codex_dir,
+                slice_loop,
+                status=status,
+                files_changed=files_changed,
+                tests_run=tests_run,
+                verification_commands=bundle.verification_commands,
+                risk_events=risk_events,
+                blockers=blockers,
+                diff_path=_relative_to(diff_path, self.run_dir),
+                completion_gate=completion_gate,
+            )
+        _attach_slice_loop_artifacts(record, slice_loop_output_paths + completion_paths)
         trace["status"] = status
         trace["current_step"] = "finalize_result"
         trace["risk_events"] = risk_events
@@ -827,6 +869,7 @@ def _build_state_summary(stage: str, context: Any, allowed_paths: list[str], ver
         "## Evaluation Rules",
         *[f"- {rule}" for rule in evaluation_rules],
     ]
+    lines.extend(_slice_loop_context_lines(context))
     if previous_record:
         lines.extend(
             [
@@ -884,6 +927,9 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             "- The final response names changed files and verification commands actually run.",
             "- Risk events and blockers are explicit and not hidden in prose.",
             "",
+            "## Codex Slice-Loop",
+            *_slice_loop_prompt_lines(context),
+            "",
             "## Allowed Files",
             *[f"- {path}" for path in allowed_paths],
             "",
@@ -891,6 +937,55 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             *[f"- `{command}`" for command in verification_commands],
         ]
     ).rstrip() + "\n"
+
+
+def _slice_loop_context_lines(context: Any) -> list[str]:
+    run_dir = Path(getattr(context, "run_dir", "."))
+    slices = _read_slice_definitions(run_dir)
+    if not slices:
+        return []
+    coverage = _read_acceptance_coverage_matrix(run_dir)
+    first_slice = slices[0]
+    lines = [
+        "",
+        "## Codex Slice-Loop",
+        f"- Execution strategy: `{SLICE_LOOP_EXECUTION_STRATEGY}`",
+        f"- Current slice: `{first_slice.get('id', '')}` {first_slice.get('title', '')}",
+        f"- Completed slices: none",
+        f"- Pending slices: {', '.join(str(item.get('id', '')) for item in slices)}",
+        "- Continuity source: run artifacts, slice yaml, coverage matrix, traces, and current diff.",
+        "",
+        "### Current Slice",
+        f"- Acceptance criteria ids: {', '.join(_string_list(first_slice.get('acceptance_criteria_ids', []))) or 'none'}",
+        f"- Allowed paths: {', '.join(_string_list(first_slice.get('allowed_paths', []))) or 'none'}",
+        f"- Verification commands: {'; '.join(_string_list(first_slice.get('verification_commands', []))) or 'none'}",
+    ]
+    if coverage:
+        lines.extend(
+            [
+                "",
+                "### Acceptance Coverage Matrix",
+                f"- Acceptance criteria count: {len(coverage.get('acceptance_criteria', []))}",
+                f"- Slice count: {len(coverage.get('slices', []))}",
+                "- Coverage matrix artifact: `planning/acceptance_coverage_matrix.json`",
+            ]
+        )
+    return lines
+
+
+def _slice_loop_prompt_lines(context: Any) -> list[str]:
+    run_dir = Path(getattr(context, "run_dir", "."))
+    slices = _read_slice_definitions(run_dir)
+    if not slices:
+        return ["- No planned slices were found; use the single-prompt Codex flow."]
+    first_slice = slices[0]
+    return [
+        "- Use coverage-driven slice-loop discipline even when v1 executes through one Codex process.",
+        "- Treat `planning/acceptance_coverage_matrix.json` and `slices/*.yaml` as the continuity source.",
+        f"- Current slice: `{first_slice.get('id', '')}`.",
+        "- Keep the final JSON focused on changed files, tests, risk events, blockers, and next action.",
+        "- Do not start unrelated refactors outside the declared allowed paths.",
+    ]
 
 
 def _human_coding_prompt(context: Any, bundle: CodexPromptBundle, worktree_dir: Path) -> str:
@@ -1121,6 +1216,348 @@ def _new_implementation_trace(context: Any, bundle: CodexPromptBundle) -> dict[s
         "blockers": [],
         "next_action": "",
     }
+
+
+def _new_slice_loop_state(context: Any, bundle: CodexPromptBundle) -> dict[str, Any]:
+    now = now_iso()
+    run_dir = Path(getattr(context, "run_dir", "."))
+    slices = _read_slice_definitions(run_dir)
+    coverage = _read_acceptance_coverage_matrix(run_dir)
+    return {
+        "schema_version": 1,
+        "run_id": getattr(context, "run_id", ""),
+        "stage": "coder",
+        "enabled": bool(slices),
+        "status": "not_started" if slices else "skipped",
+        "execution_strategy": SLICE_LOOP_EXECUTION_STRATEGY if slices else "single_prompt_no_slices",
+        "current_slice_id": str(slices[0].get("id", "")) if slices else "",
+        "updated_at": now,
+        "overall_goal": getattr(context, "brief", ""),
+        "coverage_matrix_path": "planning/acceptance_coverage_matrix.json" if coverage else "",
+        "slices": [
+            {
+                "id": str(item.get("id", "")),
+                "title": str(item.get("title", "")),
+                "status": "pending",
+                "acceptance_criteria_ids": _string_list(item.get("acceptance_criteria_ids", [])),
+                "depends_on": _string_list(item.get("depends_on", [])),
+                "allowed_paths": _string_list(item.get("allowed_paths", [])),
+                "verification_commands": _string_list(item.get("verification_commands", [])),
+                "trace_path": f"codex/slices/{item.get('id', '')}/slice_trace.json",
+            }
+            for item in slices
+        ],
+        "completed_slice_ids": [],
+        "pending_slice_ids": [str(item.get("id", "")) for item in slices],
+        "blockers": [],
+        "risk_events": [],
+        "next_action": "",
+    }
+
+
+def _write_initial_slice_loop_artifacts(run_dir: Path, codex_dir: Path, slice_loop: dict[str, Any]) -> list[str]:
+    if not slice_loop.get("enabled"):
+        return []
+    output_paths = [SLICE_LOOP_STATE_PATH]
+    for item in slice_loop.get("slices", []):
+        slice_id = str(item.get("id", "")).strip()
+        if not slice_id:
+            continue
+        trace_path = codex_dir / "slices" / slice_id / "slice_trace.json"
+        trace = _slice_trace_payload(
+            run_id=str(slice_loop.get("run_id", "")),
+            slice_item=item,
+            status="pending",
+            summary="Slice is planned and waiting for Codex execution.",
+        )
+        ensure_dir(trace_path.parent)
+        write_json(trace_path, trace)
+        output_paths.append(_relative_to(trace_path, run_dir))
+    write_json(codex_dir / "slice_loop_state.json", slice_loop)
+    return output_paths
+
+
+def _finalize_slice_loop_failure(run_dir: Path, codex_dir: Path, slice_loop: dict[str, Any], reason: str) -> None:
+    if not slice_loop.get("enabled"):
+        return
+    slice_loop["status"] = "failed"
+    slice_loop["updated_at"] = now_iso()
+    slice_loop["blockers"] = _dedupe(_string_list(slice_loop.get("blockers", [])) + [reason])
+    slice_loop["risk_events"] = _dedupe(_string_list(slice_loop.get("risk_events", [])) + [reason])
+    slice_loop["next_action"] = "Resolve the blocker, then rerun the current slice."
+    for item in slice_loop.get("slices", []):
+        if item.get("id") == slice_loop.get("current_slice_id"):
+            item["status"] = "failed"
+            trace_path = codex_dir / "slices" / str(item.get("id", "")) / "slice_trace.json"
+            trace = _slice_trace_payload(
+                run_id=str(slice_loop.get("run_id", "")),
+                slice_item=item,
+                status="failed",
+                summary="Slice could not start because Codex setup failed.",
+                blockers=[reason],
+                risk_events=[reason],
+            )
+            write_json(trace_path, trace)
+            break
+    write_json(codex_dir / "slice_loop_state.json", slice_loop)
+    _write_completion_gate(
+        run_dir,
+        slice_loop,
+        status="failed",
+        files_changed=[],
+        tests_run=[],
+        verification_commands=[],
+        risk_events=[reason],
+        blockers=[reason],
+        allowed_paths=[],
+    )
+
+
+def _finalize_slice_loop_success(
+    run_dir: Path,
+    codex_dir: Path,
+    slice_loop: dict[str, Any],
+    *,
+    status: str,
+    files_changed: list[str],
+    tests_run: list[str],
+    verification_commands: list[str],
+    risk_events: list[str],
+    blockers: list[str],
+    diff_path: str,
+    completion_gate: dict[str, Any],
+) -> None:
+    if not slice_loop.get("enabled"):
+        return
+    completed_ids: list[str] = []
+    for item in slice_loop.get("slices", []):
+        slice_id = str(item.get("id", ""))
+        item["status"] = "completed" if status == "completed" else "failed"
+        if status == "completed":
+            completed_ids.append(slice_id)
+        trace_path = codex_dir / "slices" / slice_id / "slice_trace.json"
+        trace = _slice_trace_payload(
+            run_id=str(slice_loop.get("run_id", "")),
+            slice_item=item,
+            status=item["status"],
+            summary="Slice evidence was collected from the Codex implementation pass.",
+            changed_files=files_changed,
+            tests_run=tests_run,
+            verification_commands=verification_commands,
+            risk_events=risk_events,
+            blockers=blockers,
+            diff_path=diff_path,
+        )
+        write_json(trace_path, trace)
+    slice_loop["status"] = "completed" if status == "completed" and completion_gate.get("status") == "passed" else "failed"
+    slice_loop["current_slice_id"] = ""
+    slice_loop["completed_slice_ids"] = completed_ids
+    slice_loop["pending_slice_ids"] = [] if status == "completed" else [str(item.get("id", "")) for item in slice_loop.get("slices", [])]
+    slice_loop["risk_events"] = risk_events
+    slice_loop["blockers"] = blockers
+    slice_loop["next_action"] = "Ready for review." if slice_loop["status"] == "completed" else "Resolve slice-loop blockers before review."
+    slice_loop["updated_at"] = now_iso()
+    write_json(codex_dir / "slice_loop_state.json", slice_loop)
+
+
+def _slice_trace_payload(
+    *,
+    run_id: str,
+    slice_item: dict[str, Any],
+    status: str,
+    summary: str,
+    changed_files: list[str] | None = None,
+    tests_run: list[str] | None = None,
+    verification_commands: list[str] | None = None,
+    risk_events: list[str] | None = None,
+    blockers: list[str] | None = None,
+    diff_path: str = "",
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "slice_id": str(slice_item.get("id", "")),
+        "title": str(slice_item.get("title", "")),
+        "status": status,
+        "execution_strategy": SLICE_LOOP_EXECUTION_STRATEGY,
+        "updated_at": now_iso(),
+        "goal": str(slice_item.get("coverage_goal", slice_item.get("title", ""))),
+        "acceptance_criteria_ids": _string_list(slice_item.get("acceptance_criteria_ids", [])),
+        "depends_on": _string_list(slice_item.get("depends_on", [])),
+        "allowed_paths": _string_list(slice_item.get("allowed_paths", [])),
+        "expected_artifacts": _string_list(slice_item.get("expected_artifacts", [])),
+        "stop_conditions": _string_list(slice_item.get("stop_conditions", [])),
+        "summary": summary,
+        "evidence": {
+            "changed_files": changed_files or [],
+            "tests_run": tests_run or [],
+            "verification_commands": verification_commands or _string_list(slice_item.get("verification_commands", [])),
+            "diff_path": diff_path,
+        },
+        "risk_events": risk_events or [],
+        "blockers": blockers or [],
+        "acceptance_criteria_satisfied": status == "completed" and not blockers and not risk_events,
+    }
+
+
+def _write_completion_gate(
+    run_dir: Path,
+    slice_loop: dict[str, Any],
+    *,
+    status: str,
+    files_changed: list[str],
+    tests_run: list[str],
+    verification_commands: list[str],
+    risk_events: list[str],
+    blockers: list[str],
+    allowed_paths: list[str],
+) -> dict[str, Any]:
+    slices = [item for item in slice_loop.get("slices", []) if isinstance(item, dict)]
+    all_slice_ids = [str(item.get("id", "")) for item in slices]
+    completed_slice_ids = all_slice_ids if status == "completed" and not blockers and not risk_events else _string_list(slice_loop.get("completed_slice_ids", []))
+    covered_ac_ids = {ac_id for item in slices for ac_id in _string_list(item.get("acceptance_criteria_ids", []))}
+    coverage = _read_acceptance_coverage_matrix(run_dir)
+    required_ac_ids = {str(item.get("id", "")) for item in coverage.get("acceptance_criteria", []) if str(item.get("id", "")).strip()}
+    if not required_ac_ids:
+        required_ac_ids = set(covered_ac_ids)
+    unrelated = _unrelated_changed_files(files_changed, allowed_paths)
+    checks = [
+        _completion_check("all_slices_completed", set(completed_slice_ids) == set(all_slice_ids), all_slice_ids),
+        _completion_check("all_acceptance_criteria_covered", required_ac_ids.issubset(covered_ac_ids), sorted(required_ac_ids)),
+        _completion_check("required_tests_passed", bool(tests_run) or bool(verification_commands), tests_run or verification_commands),
+        _completion_check("no_open_blockers", not blockers and not risk_events, blockers + risk_events),
+        _completion_check("no_unrelated_changes", not unrelated, unrelated),
+        {
+            "id": "final_report_mentions_coverage",
+            "status": "warning",
+            "reason": "Final report is generated after coding; publisher should mention acceptance coverage.",
+            "evidence": ["final_report.md"],
+        },
+    ]
+    hard_failed = any(item["status"] == "failed" for item in checks)
+    gate = {
+        "schema_version": 1,
+        "run_id": str(slice_loop.get("run_id", "")),
+        "generated_at": now_iso(),
+        "status": "failed" if hard_failed else "passed",
+        "summary": "Implementation is ready for review." if not hard_failed else "Implementation is not ready for review.",
+        "checks": checks,
+        "evidence": {
+            "changed_files": files_changed,
+            "tests_run": tests_run,
+            "verification_commands": verification_commands,
+            "completed_slice_ids": completed_slice_ids,
+            "required_acceptance_criteria_ids": sorted(required_ac_ids),
+            "covered_acceptance_criteria_ids": sorted(covered_ac_ids),
+        },
+        "blockers": blockers + risk_events + unrelated,
+        "next_action": "Proceed to review and verifier." if not hard_failed else "Resolve blockers, rerun tests, and regenerate completion gate.",
+    }
+    write_json(run_dir / IMPLEMENTATION_COMPLETION_GATE_JSON_PATH, gate)
+    (run_dir / IMPLEMENTATION_COMPLETION_GATE_MD_PATH).write_text(_completion_gate_markdown(gate), encoding="utf-8")
+    return gate
+
+
+def _completion_check(check_id: str, passed: bool, evidence: list[str]) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "status": "passed" if passed else "failed",
+        "reason": "Check passed." if passed else "Check failed.",
+        "evidence": evidence,
+    }
+
+
+def _completion_gate_markdown(gate: dict[str, Any]) -> str:
+    lines = [
+        "# Implementation Completion Gate",
+        "",
+        f"- Status: `{gate.get('status', '')}`",
+        f"- Summary: {gate.get('summary', '')}",
+        "",
+        "## Checks",
+    ]
+    for item in gate.get("checks", []):
+        lines.append(f"- `{item.get('id', '')}`: {item.get('status', '')} - {item.get('reason', '')}")
+    evidence = gate.get("evidence", {})
+    lines.extend(
+        [
+            "",
+            "## Evidence",
+            f"- Completed slices: {', '.join(_string_list(evidence.get('completed_slice_ids', []))) or 'none'}",
+            f"- Covered AC: {', '.join(_string_list(evidence.get('covered_acceptance_criteria_ids', []))) or 'none'}",
+            f"- Changed files: {', '.join(_string_list(evidence.get('changed_files', []))) or 'none'}",
+            f"- Tests: {', '.join(_string_list(evidence.get('tests_run', []))) or 'none'}",
+            "",
+            "## Next Action",
+            str(gate.get("next_action", "")),
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _attach_slice_loop_artifacts(record: dict[str, Any], output_paths: list[str]) -> None:
+    artifacts = record.setdefault("artifacts", {})
+    if SLICE_LOOP_STATE_PATH in output_paths:
+        artifacts["slice_loop_state"] = SLICE_LOOP_STATE_PATH
+    if IMPLEMENTATION_COMPLETION_GATE_JSON_PATH in output_paths:
+        artifacts["implementation_completion_gate"] = IMPLEMENTATION_COMPLETION_GATE_JSON_PATH
+    slice_traces = [path for path in output_paths if path.startswith("codex/slices/") and path.endswith("/slice_trace.json")]
+    if slice_traces:
+        artifacts["slice_traces"] = slice_traces
+
+
+def _read_slice_definitions(run_dir: Path) -> list[dict[str, Any]]:
+    slices_dir = run_dir / "slices"
+    if not slices_dir.exists():
+        return []
+    definitions: list[dict[str, Any]] = []
+    for path in sorted(slices_dir.glob("*.yaml")):
+        try:
+            payload = load_yaml_subset(path)
+        except Exception:  # noqa: BLE001 - bad slices are handled by planning quality artifacts.
+            continue
+        if not isinstance(payload, dict):
+            continue
+        slice_id = str(payload.get("slice_id") or payload.get("id") or path.stem)
+        definitions.append(
+            {
+                "id": slice_id,
+                "title": str(payload.get("title", slice_id)),
+                "type": str(payload.get("type", "coding")),
+                "depends_on": _string_list(payload.get("depends_on", [])),
+                "acceptance_criteria_ids": _string_list(payload.get("acceptance_criteria_ids", [])),
+                "coverage_goal": str(payload.get("coverage_goal", "")),
+                "allowed_paths": _string_list(payload.get("allowed_paths", [])),
+                "expected_artifacts": _string_list(payload.get("expected_artifacts", [])),
+                "verification_commands": _string_list(payload.get("verification_commands", [])),
+                "stop_conditions": _string_list(payload.get("stop_conditions", [])),
+            }
+        )
+    return definitions
+
+
+def _read_acceptance_coverage_matrix(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "planning" / "acceptance_coverage_matrix.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = read_json(path)
+    except Exception:  # noqa: BLE001 - optional observability artifact.
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _unrelated_changed_files(files_changed: list[str], allowed_paths: list[str]) -> list[str]:
+    if not allowed_paths:
+        return []
+    unrelated: list[str] = []
+    for file_name in files_changed:
+        normalized = file_name.strip()
+        if not normalized:
+            continue
+        if not any(normalized == allowed.rstrip("/") or normalized.startswith(allowed.rstrip("/") + "/") for allowed in allowed_paths):
+            unrelated.append(normalized)
+    return unrelated
 
 
 def _implementation_trace_inputs(context: Any) -> list[dict[str, Any]]:

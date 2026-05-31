@@ -663,14 +663,46 @@ h3 {
 
 .acceptance-panel .panel-header,
 .release-readiness-panel .panel-header,
-.github-pr-panel .panel-header {
+.github-pr-panel .panel-header,
+.staging-readiness-panel .panel-header {
   margin-bottom: 0;
 }
 
 .release-readiness-panel,
-.github-pr-panel {
+.github-pr-panel,
+.staging-readiness-panel {
   display: grid;
   gap: var(--space-3);
+}
+
+.complex-task-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.complex-task-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.complex-task-card {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  border: var(--component-card-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  padding: 10px;
+}
+
+.complex-task-card h3,
+.complex-task-card p {
+  margin-bottom: 0;
+}
+
+.complex-task-card .quality-row {
+  overflow-wrap: anywhere;
 }
 
 .github-pr-panel .button-group {

@@ -107,18 +107,23 @@ skills:
     outputs:
       - tasks/current/slices/*.yaml
       - tasks/current/plan.md
+      - tasks/current/acceptance_coverage_matrix.md
     triggers:
       - feature is larger than one safe coding step
       - work spans multiple modules
       - user asks for implementation planning
     quality_gates:
       - tasks are vertical slices
+      - every slice maps to acceptance criteria
+      - every acceptance criterion is covered by at least one slice
       - each slice is independently testable
       - dependencies and stop conditions are explicit
       - no slice requires unrelated refactors
     templates:
       - task_slice_template.yaml
       - plan_template.md
+      - acceptance_coverage_matrix_template.md
+      - acceptance_coverage_matrix_template.json
     context_budget:
       default: read specs and output slice contracts, not full source files
 
@@ -135,6 +140,8 @@ skills:
       - allowed paths
     outputs:
       - implementation_record.md
+      - codex/slices/<slice_id>/slice_trace.json
+      - implementation_completion_gate.md
       - changed files
       - test evidence
     triggers:
@@ -143,12 +150,16 @@ skills:
       - rollback-friendly progress is required
     quality_gates:
       - one slice is completed before the next begins
+      - slice trace is updated before moving to the next slice
+      - acceptance coverage remains consistent with completed slices
       - tests are run after each meaningful step
       - unrelated changes are rejected
       - diff remains reviewable
     templates:
       - slice_loop_template.md
       - implementation_record_template.md
+      - slice_loop_trace_template.json
+      - implementation_completion_gate_template.md
     context_budget:
       default: load one slice and its immediate context only
 

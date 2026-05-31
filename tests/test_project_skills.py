@@ -20,11 +20,21 @@ EXPECTED_SKILLS = {
     },
     "planning_and_task_breakdown": {
         "dir": "skills/20_plan/planning_and_task_breakdown",
-        "templates": ["task_slice_template.yaml", "plan_template.md"],
+        "templates": [
+            "task_slice_template.yaml",
+            "plan_template.md",
+            "acceptance_coverage_matrix_template.md",
+            "acceptance_coverage_matrix_template.json",
+        ],
     },
     "incremental_implementation": {
         "dir": "skills/40_execution/incremental_implementation",
-        "templates": ["slice_loop_template.md", "implementation_record_template.md"],
+        "templates": [
+            "slice_loop_template.md",
+            "implementation_record_template.md",
+            "slice_loop_trace_template.json",
+            "implementation_completion_gate_template.md",
+        ],
     },
     "test_driven_development": {
         "dir": "skills/30_engineering/test_driven_development",
@@ -173,6 +183,10 @@ class ProjectSkillsTests(unittest.TestCase):
             self.assertIn("skills/registry.yaml", text)
             self.assertIn("Project Skills", text)
             self.assertIn(EXPECTED_ORDER, text)
+            self.assertIn("coverage-driven slice planning", text)
+
+        self.assertIn("implementation completion gate", readme_text)
+        self.assertIn("per-slice trace", readme_text)
 
     def test_old_first_batch_skills_are_not_active_directories(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -184,3 +198,67 @@ class ProjectSkillsTests(unittest.TestCase):
         for skill_id, spec in EXPECTED_SKILLS.items():
             self.assertRegex(skill_id, r"^[a-z0-9]+(_[a-z0-9]+)*$")
             self.assertEqual(Path(spec["dir"]).name, skill_id)
+
+    def test_slice_planning_skill_requires_acceptance_coverage(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        skill_dir = root / EXPECTED_SKILLS["planning_and_task_breakdown"]["dir"]
+        skill_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        slice_template = (skill_dir / "task_slice_template.yaml").read_text(encoding="utf-8")
+        matrix_md = (skill_dir / "acceptance_coverage_matrix_template.md").read_text(encoding="utf-8")
+        matrix_json = (skill_dir / "acceptance_coverage_matrix_template.json").read_text(encoding="utf-8")
+
+        for phrase in (
+            "acceptance criteria coverage",
+            "orphan slice",
+            "orphan acceptance criterion",
+        ):
+            self.assertIn(phrase, skill_text)
+
+        for field in (
+            "acceptance_criteria_ids:",
+            "verification_commands:",
+            "expected_artifacts:",
+            "stop_conditions:",
+            "depends_on:",
+        ):
+            self.assertIn(field, slice_template)
+
+        self.assertIn("Acceptance Coverage Matrix", matrix_md)
+        self.assertIn("all_acceptance_criteria_have_slices", matrix_json)
+
+    def test_incremental_implementation_skill_defines_slice_loop_observability(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        skill_dir = root / EXPECTED_SKILLS["incremental_implementation"]["dir"]
+        skill_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        loop_template = (skill_dir / "slice_loop_template.md").read_text(encoding="utf-8")
+        trace_template = (skill_dir / "slice_loop_trace_template.json").read_text(encoding="utf-8")
+        gate_template = (skill_dir / "implementation_completion_gate_template.md").read_text(encoding="utf-8")
+
+        for phrase in (
+            "slice-loop",
+            "one slice at a time",
+            "codex/slices/<slice_id>/slice_trace.json",
+        ):
+            self.assertIn(phrase, skill_text)
+
+        for phrase in (
+            "overall goal",
+            "completed slices",
+            "pending slices",
+            "current diff",
+            "allowed paths",
+            "verification commands",
+        ):
+            self.assertIn(phrase, loop_template)
+
+        self.assertIn('"schema_version": 1', trace_template)
+        self.assertIn('"acceptance_coverage"', trace_template)
+        for gate in (
+            "all_slices_completed",
+            "all_acceptance_criteria_covered",
+            "required_tests_passed",
+            "no_open_blockers",
+            "no_unrelated_changes",
+            "final_report_mentions_coverage",
+        ):
+            self.assertIn(gate, gate_template)

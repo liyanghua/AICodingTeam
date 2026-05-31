@@ -115,6 +115,7 @@
   },
   "agents": {
     "orchestrator": "任务统筹",
+    "requirements": "需求分析",
     "product": "产品方案",
     "architect": "技术方案",
     "ux": "体验方案",
@@ -143,13 +144,36 @@
       "passed": "本次变更可被人工采纳。",
       "blocked": "当前还不能采纳，需要先处理阻塞。"
     },
-    "ci_gate": {"title": "CI 检查", "planned": "后续接入 GitHub Actions。"},
-    "deploy_gate": {"title": "部署检查", "planned": "后续接入 staging 部署。"},
+    "ci_gate": {
+      "title": "CI 检查",
+      "planned": "等待 GitHub PR / CI 接入。",
+      "passed": "PR checks 已通过。",
+      "warning": "CI 尚未完成或状态未知。",
+      "blocked": "CI 未通过，需要处理。"
+    },
+    "deploy_gate": {
+      "title": "Staging 检查",
+      "planned": "等待生成 Staging 准备判断。",
+      "passed": "已满足进入 staging 的判断条件。",
+      "warning": "CI 或发布条件尚未完全就绪。",
+      "blocked": "当前暂不能进入 staging。"
+    },
     "human_release_gate": {"title": "人工发布确认", "planned": "后续接入生产发布审批。"}
   },
   "artifacts": {
     "task.yaml": {"title": "任务包", "description": "系统拆解出的任务入口。"},
     "context.md": {"title": "上下文说明", "description": "需求背景和约束。"},
+    "requirements/brief_analysis.json": {"title": "需求理解分析", "description": "对 brief 的复杂度、假设、问题和推荐 skills 的结构化分析。"},
+    "requirements/requirement_quality_report.json": {"title": "需求质量报告", "description": "阻塞问题、验收标准可测试性和上下文污染检查结果。"},
+    "requirements/clarification.md": {"title": "需求澄清", "description": "强 LLM 候选理解的澄清通道，仅作为草稿参考。"},
+    "requirements/acceptance_criteria.draft.md": {"title": "草稿验收标准", "description": "强 LLM 候选验收标准，未通过规则校验前不作为事实来源。"},
+    "requirements/open_questions.md": {"title": "开放问题", "description": "阻塞性问题和需要人工补充的信息。"},
+    "requirements/assumptions.md": {"title": "需求假设", "description": "尚未被当作事实的上下文假设。"},
+    "acceptance_criteria.md": {"title": "验收标准", "description": "通过 deterministic Gate 后的正式验收标准。"},
+    "context_pack.md": {"title": "上下文包", "description": "面向后续规划和实现的边界化上下文。"},
+    "planning/acceptance_coverage_matrix.md": {"title": "验收覆盖矩阵", "description": "验收标准到 slices 和验证命令的映射。"},
+    "planning/acceptance_coverage_matrix.json": {"title": "验收覆盖矩阵数据", "description": "可审计的 AC / slice 覆盖结构化数据。"},
+    "planning/planning_quality_report.json": {"title": "规划质量报告", "description": "orphan AC、orphan slice 和可验证性检查结果。"},
     "prd.md": {"title": "PRD", "description": "产品目标、范围和验收。"},
     "tech_spec.md": {"title": "技术方案", "description": "实现边界和技术设计。"},
     "architecture_diagram.md": {"title": "架构图", "description": "系统结构和关键流转占位。"},
@@ -157,6 +181,9 @@
     "eval.md": {"title": "验收标准", "description": "测试和评估口径。"},
     "coding_prompt.md": {"title": "实现任务书", "description": "交给 AI coding 的执行说明。"},
     "codex/implementation_trace.json": {"title": "AI 实现流程", "description": "AI coding 的执行步骤、证据和当前卡点。"},
+    "codex/slice_loop_state.json": {"title": "Slice 执行状态", "description": "Codex slice-loop 的当前 slice、完成情况和连续性状态。"},
+    "implementation_completion_gate.md": {"title": "整体完成判断", "description": "判断所有 slices 与验收标准是否支撑进入 Review/Test。"},
+    "implementation_completion_gate.json": {"title": "整体完成判断数据", "description": "实现完成 Gate 的结构化检查结果。"},
     "review_report.md": {"title": "评审报告", "description": "代码评审结果。"},
     "test_report.md": {"title": "测试报告", "description": "验证命令和结果。"},
     "final_report.md": {"title": "最终报告", "description": "交付摘要和下一步建议。"},
@@ -167,6 +194,8 @@
     "github_pr.json": {"title": "GitHub Draft PR 数据", "description": "Draft PR 状态的结构化记录。"},
     "ci_status.md": {"title": "CI 状态", "description": "PR checks 的业务友好摘要。"},
     "ci_status.json": {"title": "CI 状态数据", "description": "PR checks 的结构化状态。"},
+    "staging_readiness.md": {"title": "Staging 准备报告", "description": "判断本次 run 是否可以进入 staging。"},
+    "staging_readiness.json": {"title": "Staging 准备数据", "description": "Staging Gate、CI 证据、阻塞和下一步的结构化结果。"},
     "codex/diff.patch": {"title": "代码差异", "description": "AI 实现产生的变更证据。"}
   },
   "events": {
@@ -199,6 +228,46 @@
     "matches": "相似历史任务",
     "noSkills": "暂无推荐 skill。",
     "noMatches": "暂无相似历史任务。"
+  },
+  "complexTask": {
+    "title": "复杂任务能力",
+    "requirementTitle": "需求理解",
+    "coverageTitle": "验收覆盖矩阵",
+    "sliceLoopTitle": "Slice 执行",
+    "completionTitle": "整体完成判断",
+    "requirementEmpty": "暂无需求理解结果。",
+    "coverageEmpty": "暂无验收覆盖矩阵。",
+    "sliceLoopEmpty": "尚未启用 slice-loop。",
+    "completionEmpty": "暂无整体完成判断。",
+    "coverageSummary": "已覆盖 {covered}/{total} 条验收标准，规划 {slices} 个 slice。",
+    "sliceLoopSummary": "已完成 {completed} 个 slice，待处理 {pending} 个 slice。",
+    "statusLabel": "状态",
+    "complexity": "复杂度",
+    "planningMode": "规划模式",
+    "llmDraft": "强 LLM 草稿通道",
+    "blockingQuestion": "阻塞问题",
+    "blocker": "阻塞",
+    "warning": "提示",
+    "skills": "推荐 Skills",
+    "acceptanceCriteria": "验收标准覆盖",
+    "slices": "Slices",
+    "ready": "是否可执行",
+    "orphanCriteria": "未覆盖 AC",
+    "executionStrategy": "执行策略",
+    "currentSlice": "当前 Slice",
+    "completedSlices": "已完成 Slice",
+    "pendingSlices": "待处理 Slice",
+    "nextAction": "下一步",
+    "status": {
+      "not_generated": "尚未生成",
+      "passed": "已通过",
+      "completed": "已完成",
+      "running": "处理中",
+      "pending": "等待中",
+      "failed": "需要处理",
+      "warning": "有提示",
+      "unknown": "未知"
+    }
   },
   "releaseReadiness": {
     "title": "发布准备",
@@ -253,6 +322,29 @@
       "passed": "CI 已通过",
       "failed": "CI 未通过",
       "unknown": "CI 状态未知"
+    }
+  },
+  "stagingReadiness": {
+    "title": "Staging 准备",
+    "generateButton": "生成 Staging 准备判断",
+    "generating": "生成中",
+    "empty": "Draft PR 和 CI 状态齐备后，可判断是否可以进入 staging。",
+    "readyToGenerate": "已具备 PR/CI 证据，可以生成 Staging 准备判断。",
+    "decision": "Staging 判断",
+    "gates": "Staging Gates",
+    "evidence": "判断证据",
+    "nextActions": "下一步",
+    "noGates": "尚未生成 Staging Gate。",
+    "prUrl": "PR 链接",
+    "ciStatus": "CI 状态",
+    "ciSummary": "CI 摘要",
+    "warning": "提示",
+    "blocker": "阻塞",
+    "decisions": {
+      "not_generated": "尚未生成",
+      "ready_for_staging": "可以进入 staging",
+      "waiting_for_ci": "等待 CI 完成",
+      "blocked": "暂不能进入 staging"
     }
   },
   "stageDetail": {

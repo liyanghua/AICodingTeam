@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "task_id": "",
+  "status": "planned",
+  "acceptance_criteria": [
+    {
+      "id": "AC-001",
+      "description": "User-visible behavior to prove.",
+      "covering_slice_ids": ["slice-001"],
+      "verification_commands": ["python3 -m unittest discover -s tests -v"],
+      "status": "planned"
+    }
+  ],
+  "slices": [
+    {
+      "id": "slice-001",
+      "title": "Example vertical slice",
+      "acceptance_criteria_ids": ["AC-001"],
+      "verification_commands": ["python3 -m unittest discover -s tests -v"],
+      "status": "planned"
+    }
+  ],
+  "quality_gates": {
+    "all_acceptance_criteria_have_slices": false,
+    "all_slices_have_acceptance_criteria": false,
+    "all_slices_are_verifiable": false,
+    "no_orphan_slice": false,
+    "no_orphan_acceptance_criterion": false
+  },
+  "blockers": [],
+  "next_action": ""
+}

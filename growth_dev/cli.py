@@ -87,6 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     team_run.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
     team_run.add_argument("--env-file", default=".env")
     team_run.add_argument("--repo-root", default=".")
+    _add_complex_task_args(team_run)
     team_run.set_defaults(func=_cmd_team_run)
 
     team_status = team_sub.add_parser("status", help="Show a team run record status")
@@ -126,6 +127,11 @@ def _build_parser() -> argparse.ArgumentParser:
     team_release_readiness.add_argument("--repo-root", default=".")
     team_release_readiness.add_argument("--json", action="store_true", dest="json_output")
     team_release_readiness.set_defaults(func=_cmd_team_release_readiness)
+    team_release_staging = team_release_sub.add_parser("staging-readiness", help="Generate staging readiness gate artifacts")
+    team_release_staging.add_argument("--run-id", required=True)
+    team_release_staging.add_argument("--runs-dir", default="runs")
+    team_release_staging.add_argument("--json", action="store_true", dest="json_output")
+    team_release_staging.set_defaults(func=_cmd_team_release_staging_readiness)
 
     team_pr = team_sub.add_parser("pr", help="Create GitHub draft PRs and observe CI checks")
     team_pr_sub = team_pr.add_subparsers(dest="pr_command", required=True)
@@ -189,6 +195,7 @@ def _build_parser() -> argparse.ArgumentParser:
     team_dashboard.add_argument("--model", default="gpt-5.3-codex")
     team_dashboard.add_argument("--reasoning-effort", default="medium")
     team_dashboard.add_argument("--executor", choices=["deterministic", "codex"], default="codex")
+    _add_complex_task_args(team_dashboard)
     team_dashboard.add_argument("--open-browser", action="store_true")
     team_dashboard.set_defaults(func=_cmd_team_serve_dashboard)
 
@@ -228,7 +235,14 @@ def _add_team_run_args(command: argparse.ArgumentParser) -> None:
     command.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
     command.add_argument("--env-file", default=".env")
     command.add_argument("--repo-root", default=".")
+    _add_complex_task_args(command)
     command.add_argument("--foreground", action="store_true")
+
+
+def _add_complex_task_args(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--planning-mode", choices=["deterministic", "llm_assisted", "auto"], default="auto")
+    command.add_argument("--requirements-model", default="")
+    command.add_argument("--requirements-reasoning-effort", choices=["low", "medium", "high"], default="medium")
 
 
 def _load_task(path_value: str | None) -> TaskSpec:
@@ -373,6 +387,9 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
         codex_reasoning_effort=args.reasoning_effort,
         codex_provider=args.codex_provider,
         codex_env_file=Path(args.env_file),
+        planning_mode=args.planning_mode,
+        requirements_model=args.requirements_model,
+        requirements_reasoning_effort=args.requirements_reasoning_effort,
     )
     record = runtime.run(args.brief, inputs=inputs, run_id=args.run_id)
     print(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))
@@ -473,6 +490,12 @@ def _background_team_run_command(args: argparse.Namespace, run_id: str) -> list[
         args.env_file,
         "--repo-root",
         args.repo_root,
+        "--planning-mode",
+        args.planning_mode,
+        "--requirements-model",
+        args.requirements_model,
+        "--requirements-reasoning-effort",
+        args.requirements_reasoning_effort,
     ]
     return command
 
@@ -655,6 +678,21 @@ def _cmd_team_release_readiness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_team_release_staging_readiness(args: argparse.Namespace) -> int:
+    from .team.release import format_staging_readiness, generate_staging_readiness
+
+    try:
+        result = generate_staging_readiness(str(args.run_id), runs_dir=Path(args.runs_dir))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_staging_readiness(result), end="")
+    return 0
+
+
 def _cmd_team_pr_draft(args: argparse.Namespace) -> int:
     from .team.github_pr import create_draft_pr, format_pr_status
 
@@ -722,6 +760,9 @@ def _cmd_team_serve_dashboard(args: argparse.Namespace) -> int:
         model=args.model,
         reasoning_effort=args.reasoning_effort,
         executor=args.executor,
+        planning_mode=args.planning_mode,
+        requirements_model=args.requirements_model,
+        requirements_reasoning_effort=args.requirements_reasoning_effort,
     )
     run_dashboard_server(config, open_browser=args.open_browser)
     return 0

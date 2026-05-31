@@ -6,9 +6,35 @@
   }
 })(typeof self !== "undefined" ? self : this, function () {
   const STAGE_GROUPS = [
-    { id: "requirement", agents: ["orchestrator"], artifactPaths: ["task.yaml", "context.md"] },
-    { id: "design", agents: ["product", "architect", "ux", "qa"], artifactPaths: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md"] },
-    { id: "implementation", agents: ["coder"], artifactPaths: ["coding_prompt.md", "codex/implementation_trace.json", "codex/diff.patch"] },
+    {
+      id: "requirement",
+      agents: ["orchestrator", "requirements"],
+      artifactPaths: [
+        "task.yaml",
+        "context.md",
+        "requirements/brief_analysis.json",
+        "requirements/requirement_quality_report.json",
+        "acceptance_criteria.md",
+        "context_pack.md",
+      ],
+    },
+    {
+      id: "design",
+      agents: ["product", "architect", "ux", "qa"],
+      artifactPaths: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/planning_quality_report.json"],
+    },
+    {
+      id: "implementation",
+      agents: ["coder"],
+      artifactPaths: [
+        "coding_prompt.md",
+        "codex/implementation_trace.json",
+        "codex/slice_loop_state.json",
+        "implementation_completion_gate.md",
+        "implementation_completion_gate.json",
+        "codex/diff.patch",
+      ],
+    },
     { id: "quality", agents: ["reviewer", "verifier"], artifactPaths: ["review_report.md", "test_report.md"] },
     { id: "delivery", agents: ["publisher"], artifactPaths: ["final_report.md"] },
   ];
@@ -26,8 +52,13 @@
       health: buildHealth(run, i18n),
       artifactQuality: buildArtifactQuality(run, i18n),
       memoryRecall: buildMemoryRecall(run, i18n),
+      requirementUnderstanding: buildRequirementUnderstanding(run, i18n),
+      acceptanceCoverage: buildAcceptanceCoverage(run, i18n),
+      sliceLoop: buildSliceLoop(run, i18n),
+      completionGate: buildCompletionGate(run, i18n),
       releaseReadiness: buildReleaseReadiness(run, i18n),
       githubPr: buildGithubPr(run, i18n),
+      stagingReadiness: buildStagingReadiness(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
       recommendedArtifact: recommendedArtifact(run, i18n),
@@ -91,6 +122,91 @@
     };
   }
 
+  function buildRequirementUnderstanding(run, i18n) {
+    const payload = run.requirement_understanding || {};
+    const analysis = payload.brief_analysis || {};
+    const quality = payload.quality_report || {};
+    const blockers = Array.isArray(quality.blockers) ? quality.blockers : [];
+    const warnings = Array.isArray(quality.warnings) ? quality.warnings : [];
+    const skills = Array.isArray(analysis.recommended_skills) ? analysis.recommended_skills : [];
+    const status = quality.status || (Object.keys(analysis).length ? "unknown" : "not_generated");
+    return {
+      status,
+      statusLabel: lookup(i18n, `complexTask.status.${status}`, status),
+      summary: quality.summary || lookup(i18n, "complexTask.requirementEmpty", ""),
+      complexity: analysis.complexity || "",
+      planningMode: analysis.planning_mode || "",
+      llmDraftRequested: Boolean(analysis.llm_draft_requested),
+      blockingQuestions: analysis.blocking_questions || [],
+      assumptions: analysis.assumptions || [],
+      recommendedSkills: skills,
+      blockers,
+      warnings,
+      draftArtifacts: payload.draft_artifacts || {},
+    };
+  }
+
+  function buildAcceptanceCoverage(run, i18n) {
+    const coverage = run.acceptance_coverage || {};
+    const criteria = Array.isArray(coverage.acceptance_criteria) ? coverage.acceptance_criteria : [];
+    const slices = Array.isArray(coverage.slices) ? coverage.slices : [];
+    const covered = criteria.filter((item) => (item.covering_slice_ids || []).length);
+    const orphanCriteria = criteria.filter((item) => !(item.covering_slice_ids || []).length);
+    const orphanSlices = slices.filter((item) => !(item.acceptance_criteria_ids || []).length);
+    return {
+      summary: criteria.length
+        ? lookup(i18n, "complexTask.coverageSummary", "")
+            .replace("{covered}", String(covered.length))
+            .replace("{total}", String(criteria.length))
+            .replace("{slices}", String(slices.length))
+        : lookup(i18n, "complexTask.coverageEmpty", ""),
+      criteria,
+      slices,
+      coveredCount: covered.length,
+      totalCriteria: criteria.length,
+      sliceCount: slices.length,
+      orphanCriteria,
+      orphanSlices,
+      ready: Boolean(criteria.length) && !orphanCriteria.length && !orphanSlices.length,
+    };
+  }
+
+  function buildSliceLoop(run, i18n) {
+    const loop = run.slice_loop || {};
+    const status = loop.status || (loop.enabled ? "unknown" : "not_generated");
+    return {
+      status,
+      statusLabel: lookup(i18n, `complexTask.status.${status}`, status),
+      summary: loop.enabled
+        ? lookup(i18n, "complexTask.sliceLoopSummary", "")
+            .replace("{completed}", String((loop.completed_slice_ids || []).length))
+            .replace("{pending}", String((loop.pending_slice_ids || []).length))
+        : lookup(i18n, "complexTask.sliceLoopEmpty", ""),
+      executionStrategy: loop.execution_strategy || "",
+      currentSliceId: loop.current_slice_id || "",
+      completedSliceIds: loop.completed_slice_ids || [],
+      pendingSliceIds: loop.pending_slice_ids || [],
+      slices: loop.slices || [],
+      blockers: loop.blockers || [],
+      riskEvents: loop.risk_events || [],
+      nextAction: loop.next_action || "",
+    };
+  }
+
+  function buildCompletionGate(run, i18n) {
+    const gate = run.implementation_completion_gate || {};
+    const status = gate.status || "not_generated";
+    return {
+      status,
+      statusLabel: lookup(i18n, `complexTask.status.${status}`, status),
+      summary: gate.summary || lookup(i18n, "complexTask.completionEmpty", ""),
+      checks: Array.isArray(gate.checks) ? gate.checks : [],
+      evidence: gate.evidence || {},
+      blockers: gate.blockers || [],
+      nextAction: gate.next_action || "",
+    };
+  }
+
   function buildReleaseReadiness(run, i18n) {
     const readiness = run.release_readiness || {};
     const gates = Array.isArray(readiness.gates) ? readiness.gates : [];
@@ -126,6 +242,22 @@
       warnings: [...(githubPr.warnings || []), ...(ciStatus.warnings || [])],
       blockers: [...(githubPr.blockers || []), ...(ciStatus.blockers || [])],
       nextAction: ciStatus.next_action || githubPr.next_action || "",
+    };
+  }
+
+  function buildStagingReadiness(run, i18n) {
+    const readiness = run.staging_readiness || {};
+    const decision = readiness.staging_decision || "not_generated";
+    return {
+      decision,
+      decisionLabel: lookup(i18n, `stagingReadiness.decisions.${decision}`, decision),
+      summary: readiness.summary || lookup(i18n, "stagingReadiness.empty", ""),
+      gates: Array.isArray(readiness.gates) ? readiness.gates : [],
+      blockers: readiness.blockers || [],
+      warnings: readiness.warnings || [],
+      nextActions: readiness.next_actions || [],
+      evidence: readiness.evidence || {},
+      generatedAt: readiness.generated_at || "",
     };
   }
 
@@ -166,7 +298,8 @@
       return "needs_attention";
     }
     const agentMap = new Map((run.stages || []).map((stage) => [stage.id, stage]));
-    const agents = group.agents.map((id) => agentMap.get(id)).filter(Boolean);
+    const rawAgents = group.agents.map((id) => agentMap.get(id)).filter(Boolean);
+    const agents = group.id === "requirement" ? rawAgents.filter((agent) => agent.status !== "not_run") : rawAgents;
     if (group.id === "delivery") {
       const deliveryStatus = acceptanceDeliveryStatus(run);
       if (deliveryStatus) {
@@ -178,6 +311,9 @@
     }
     if (agents.some((agent) => isRunning(agent.status))) {
       return "processing";
+    }
+    if (group.id === "requirement" && agents.length && agents.every((agent) => agent.status === "completed")) {
+      return "completed";
     }
     if (agents.length === group.agents.length && agents.every((agent) => agent.status === "completed")) {
       return "completed";
@@ -260,7 +396,7 @@
 
   function recommendedArtifact(run, i18n) {
     const artifacts = buildArtifacts(run, i18n).filter((artifact) => artifact.exists);
-    const priority = ["github_pr.md", "ci_status.md", "pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
+    const priority = ["staging_readiness.md", "github_pr.md", "ci_status.md", "pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
     for (const path of priority) {
       const found = artifacts.find((artifact) => artifact.path === path);
       if (found) return found;

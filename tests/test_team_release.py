@@ -163,6 +163,57 @@ def _write_ready_run(runs_dir: Path, run_id: str = "release-run-1") -> Path:
     return run_dir
 
 
+def _write_github_pr_status(run_dir: Path, *, status: str = "created") -> None:
+    (run_dir / "github_pr.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_dir.name,
+                "status": status,
+                "generated_at": "2026-05-28T00:06:00+00:00",
+                "pr": {
+                    "number": 42,
+                    "url": "https://github.com/example/project/pull/42",
+                    "title": "demo",
+                    "state": "OPEN",
+                    "is_draft": True,
+                    "base": "main",
+                    "head": "feature/demo",
+                },
+                "release_decision": "ready_for_pr_ci",
+                "warnings": [],
+                "blockers": [],
+                "commands": [],
+                "next_action": "刷新 PR/CI 状态。",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_ci_status(run_dir: Path, *, status: str = "passed") -> None:
+    checks = [{"name": "Python unittest", "workflow": "CI", "status": "SUCCESS", "conclusion": "pass", "url": "https://github.com/example/project/actions/runs/1"}] if status == "passed" else []
+    blockers = ["CI checks failed: Python unittest"] if status == "failed" else []
+    warnings = ["CI checks 仍在运行。"] if status in {"running", "pending"} else ["尚未发现 CI checks，可能是仓库没有 workflow 或 GitHub 尚未生成 checks。"] if status == "unknown" else []
+    (run_dir / "ci_status.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_dir.name,
+                "status": status,
+                "generated_at": "2026-05-28T00:07:00+00:00",
+                "pr_url": "https://github.com/example/project/pull/42",
+                "checks": checks,
+                "summary": "1 个 CI check 已通过。" if status == "passed" else "存在失败的 CI check，需要处理后再进入合并。" if status == "failed" else "CI 正在运行，请稍后刷新。" if status == "running" else "尚未发现可用 CI checks。",
+                "warnings": warnings,
+                "blockers": blockers,
+                "next_action": "可以进行人工 Review。" if status == "passed" else "处理 CI 状态后重试。",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 class TeamReleaseTests(unittest.TestCase):
     def test_release_readiness_ready_for_pr_ci_when_acceptance_review_tests_and_diff_are_clean(self) -> None:
         from growth_dev.team.release import generate_release_readiness
@@ -220,6 +271,129 @@ class TeamReleaseTests(unittest.TestCase):
         self.assertEqual(result["release_decision"], "blocked")
         self.assertTrue(any("acceptance" in blocker for blocker in result["blockers"]))
         self.assertTrue(any(gate["id"] == "acceptance_tests" and gate["status"] == "blocked" for gate in result["gates"]))
+
+    def test_release_readiness_adds_ci_gate_and_blocks_only_failed_ci(self) -> None:
+        from growth_dev.team.release import generate_release_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            passed_run = _write_ready_run(runs_dir, "ci-passed-run")
+            failed_run = _write_ready_run(runs_dir, "ci-failed-run")
+            unknown_run = _write_ready_run(runs_dir, "ci-unknown-run")
+            for run_dir in (passed_run, failed_run, unknown_run):
+                (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+                (repo_root / "tests" / "test_dashboard.py").write_text(
+                    "def test_existing():\n    assert True\n\ndef test_delivery_done():\n    assert True\n",
+                    encoding="utf-8",
+                )
+            _write_ci_status(passed_run, status="passed")
+            _write_ci_status(failed_run, status="failed")
+            _write_ci_status(unknown_run, status="unknown")
+
+            passed = generate_release_readiness("ci-passed-run", runs_dir=runs_dir, repo_root=repo_root)
+            failed = generate_release_readiness("ci-failed-run", runs_dir=runs_dir, repo_root=repo_root)
+            unknown = generate_release_readiness("ci-unknown-run", runs_dir=runs_dir, repo_root=repo_root)
+
+        self.assertTrue(any(gate["id"] == "ci_status" and gate["status"] == "passed" for gate in passed["gates"]))
+        self.assertEqual(passed["evidence"]["ci_status"], "passed")
+        self.assertEqual(failed["release_decision"], "blocked")
+        self.assertTrue(any(gate["id"] == "ci_status" and gate["status"] == "blocked" for gate in failed["gates"]))
+        self.assertTrue(any("CI" in blocker for blocker in failed["blockers"]))
+        self.assertNotEqual(unknown["release_decision"], "blocked")
+        self.assertTrue(any(gate["id"] == "ci_status" and gate["status"] == "warning" for gate in unknown["gates"]))
+
+    def test_staging_readiness_requires_pr_and_passed_ci(self) -> None:
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+            (repo_root / "tests" / "test_dashboard.py").write_text(
+                "def test_existing():\n    assert True\n\ndef test_delivery_done():\n    assert True\n",
+                encoding="utf-8",
+            )
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="passed")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+
+            result = generate_staging_readiness("release-run-1", runs_dir=runs_dir)
+            artifact = json.loads((run_dir / "staging_readiness.json").read_text(encoding="utf-8"))
+            note = (run_dir / "staging_readiness.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["staging_decision"], "ready_for_staging")
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(result["evidence"]["ci_status"], "passed")
+        self.assertTrue(any(gate["id"] == "ci_passed" and gate["status"] == "passed" for gate in result["gates"]))
+        self.assertEqual(artifact["staging_decision"], "ready_for_staging")
+        self.assertIn("# Staging Readiness", note)
+
+    def test_staging_readiness_waits_for_running_or_unknown_ci_and_blocks_failed_ci(self) -> None:
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            running_run = _write_ready_run(runs_dir, "ci-running-run")
+            failed_run = _write_ready_run(runs_dir, "ci-failed-run")
+            for run_dir in (running_run, failed_run):
+                (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+                (repo_root / "tests" / "test_dashboard.py").write_text(
+                    "def test_existing():\n    assert True\n\ndef test_delivery_done():\n    assert True\n",
+                    encoding="utf-8",
+                )
+                _write_github_pr_status(run_dir)
+            _write_ci_status(running_run, status="running")
+            _write_ci_status(failed_run, status="failed")
+            generate_release_readiness("ci-running-run", runs_dir=runs_dir, repo_root=repo_root)
+            generate_release_readiness("ci-failed-run", runs_dir=runs_dir, repo_root=repo_root)
+
+            running = generate_staging_readiness("ci-running-run", runs_dir=runs_dir)
+            failed = generate_staging_readiness("ci-failed-run", runs_dir=runs_dir)
+
+        self.assertEqual(running["staging_decision"], "waiting_for_ci")
+        self.assertTrue(any(gate["id"] == "ci_passed" and gate["status"] == "warning" for gate in running["gates"]))
+        self.assertEqual(failed["staging_decision"], "blocked")
+        self.assertTrue(any(gate["id"] == "ci_passed" and gate["status"] == "blocked" for gate in failed["gates"]))
+
+    def test_staging_readiness_blocks_missing_pr_or_release_readiness(self) -> None:
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            no_pr_run = _write_ready_run(runs_dir, "no-pr-run")
+            no_release_run = _write_ready_run(runs_dir, "no-release-run")
+            (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+            (repo_root / "tests" / "test_dashboard.py").write_text(
+                "def test_existing():\n    assert True\n\ndef test_delivery_done():\n    assert True\n",
+                encoding="utf-8",
+            )
+            _write_ci_status(no_pr_run, status="passed")
+            generate_release_readiness("no-pr-run", runs_dir=runs_dir, repo_root=repo_root)
+
+            missing_pr = generate_staging_readiness("no-pr-run", runs_dir=runs_dir)
+            missing_release = generate_staging_readiness("no-release-run", runs_dir=runs_dir)
+
+        self.assertEqual(missing_pr["staging_decision"], "blocked")
+        self.assertTrue(any("Draft PR" in blocker for blocker in missing_pr["blockers"]))
+        self.assertEqual(missing_release["staging_decision"], "blocked")
+        self.assertTrue(any("release_readiness" in blocker for blocker in missing_release["blockers"]))
 
     def test_release_readiness_blocks_on_risk_events_or_implementation_blockers(self) -> None:
         from growth_dev.team.release import generate_release_readiness
@@ -353,6 +527,37 @@ class TeamReleaseTests(unittest.TestCase):
         self.assertIn("ready_for_pr_ci", stdout.getvalue())
         self.assertEqual(json_exit, 0)
         self.assertEqual(parsed["release_decision"], "ready_for_pr_ci")
+
+    def test_cli_staging_readiness_generates_artifacts_and_json_output(self) -> None:
+        from growth_dev.cli import main
+        from growth_dev.team.release import generate_release_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+            (repo_root / "tests" / "test_dashboard.py").write_text(
+                "def test_existing():\n    assert True\n\ndef test_delivery_done():\n    assert True\n",
+                encoding="utf-8",
+            )
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="passed")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+
+            with _captured_output() as (stdout, stderr):
+                exit_code = main(["team", "release", "staging-readiness", "--run-id", "release-run-1", "--runs-dir", str(runs_dir), "--json"])
+            staging_json_exists = (runs_dir / "release-run-1" / "staging_readiness.json").exists()
+            staging_md_exists = (runs_dir / "release-run-1" / "staging_readiness.md").exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["staging_decision"], "ready_for_staging")
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertTrue(staging_json_exists)
+        self.assertTrue(staging_md_exists)
 
     def test_cli_release_readiness_reports_missing_run(self) -> None:
         from growth_dev.cli import main

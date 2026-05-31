@@ -1,19 +1,28 @@
 slice_id: example_vertical_slice
 title: Example vertical slice
 type: coding
-blocked_by: []
-covers:
-  - acceptance_criterion_id
+depends_on: []
+acceptance_criteria_ids:
+  - AC-001
+coverage_goal: User-visible outcome this slice proves.
 vertical_path:
   - schema
   - service
   - ui_or_cli
   - tests
-allowed_paths: []
-verification_commands: []
-acceptance:
-  - User-visible behavior is implemented.
-  - Regression test proves the behavior.
+allowed_paths:
+  - growth_dev/
+  - tests/
+expected_artifacts:
+  - changed files
+  - tests or verification evidence
+verification_commands:
+  - python3 -m unittest discover -s tests -v
+completion_evidence:
+  - Acceptance criterion is demonstrably covered.
+  - Regression test or deterministic verification proves behavior.
 stop_conditions:
   - Required artifact is missing.
   - Scope expands beyond allowed paths.
+  - Slice no longer maps to a named acceptance criterion.
+risk_notes: []

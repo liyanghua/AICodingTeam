@@ -111,6 +111,84 @@ console.log(JSON.stringify(vm));
         (run_dir / "ui_spec.md").write_text("# UI Spec\n", encoding="utf-8")
         (run_dir / "eval.md").write_text("# Eval\n", encoding="utf-8")
         (run_dir / "final_report.md").write_text("# Final Report\n", encoding="utf-8")
+        requirements_dir = run_dir / "requirements"
+        planning_dir = run_dir / "planning"
+        slices_dir = run_dir / "slices"
+        requirements_dir.mkdir(parents=True, exist_ok=True)
+        planning_dir.mkdir(parents=True, exist_ok=True)
+        slices_dir.mkdir(parents=True, exist_ok=True)
+        (requirements_dir / "brief_analysis.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "domain_id": "web_monitoring",
+                    "brief": "给 dashboard 增加可视化闭环",
+                    "planning_mode": "auto",
+                    "requirements_model": "gpt-5.3",
+                    "complexity": "complex",
+                    "llm_draft_requested": True,
+                    "blocking_questions": [],
+                    "assumptions": ["使用 web_monitoring 作为任务边界。"],
+                    "recommended_skills": ["spec_driven_development", "context_engineering", "planning_and_task_breakdown"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (requirements_dir / "requirement_quality_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "passed",
+                    "summary": "Requirement understanding is ready for planning.",
+                    "blockers": [],
+                    "warnings": ["llm_draft_channel_used_but_not_promoted"],
+                    "checks": [{"id": "stable_acceptance_ids", "status": "passed"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (requirements_dir / "clarification.md").write_text("# Requirement Clarification\n", encoding="utf-8")
+        (requirements_dir / "acceptance_criteria.draft.md").write_text("# Draft Acceptance Criteria\n", encoding="utf-8")
+        (requirements_dir / "open_questions.md").write_text("# Open Questions\n", encoding="utf-8")
+        (requirements_dir / "assumptions.md").write_text("# Assumptions\n", encoding="utf-8")
+        (run_dir / "acceptance_criteria.md").write_text("# Acceptance Criteria\n\n- `AC-001` 覆盖 Dashboard 可视化闭环。\n", encoding="utf-8")
+        (run_dir / "context_pack.md").write_text("# Context Pack\n", encoding="utf-8")
+        (planning_dir / "acceptance_coverage_matrix.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "acceptance_criteria": [
+                        {
+                            "id": "AC-001",
+                            "description": "覆盖 Dashboard 可视化闭环。",
+                            "covering_slice_ids": ["slice-001"],
+                            "status": "planned",
+                        }
+                    ],
+                    "slices": [
+                        {
+                            "id": "slice-001",
+                            "title": "展示复杂任务闭环",
+                            "acceptance_criteria_ids": ["AC-001"],
+                            "verification_commands": ["python3 -m unittest tests.test_dashboard -v"],
+                            "status": "planned",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (planning_dir / "acceptance_coverage_matrix.md").write_text("# Acceptance Coverage Matrix\n", encoding="utf-8")
+        (planning_dir / "planning_quality_report.json").write_text(
+            json.dumps({"schema_version": 1, "status": "passed", "summary": "Planning is ready for implementation.", "blockers": []}),
+            encoding="utf-8",
+        )
+        (slices_dir / "slice-001.yaml").write_text(
+            "slice_id: slice-001\ntitle: 展示复杂任务闭环\nacceptance_criteria_ids:\n  - AC-001\nverification_commands:\n  - python3 -m unittest tests.test_dashboard -v\n",
+            encoding="utf-8",
+        )
         (run_dir / "memory_recall.json").write_text(
             json.dumps(
                 {
@@ -181,6 +259,70 @@ console.log(JSON.stringify(vm));
             ),
             encoding="utf-8",
         )
+        (codex_dir / "slice_loop_state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "stage": "coder",
+                    "enabled": True,
+                    "status": "completed",
+                    "execution_strategy": "single_codex_pass_over_planned_slices_v1",
+                    "completed_slice_ids": ["slice-001"],
+                    "pending_slice_ids": [],
+                    "slices": [
+                        {
+                            "id": "slice-001",
+                            "title": "展示复杂任务闭环",
+                            "status": "completed",
+                            "acceptance_criteria_ids": ["AC-001"],
+                            "verification_commands": ["python3 -m unittest tests.test_dashboard -v"],
+                        }
+                    ],
+                    "blockers": [],
+                    "risk_events": [],
+                    "next_action": "Ready for review.",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (codex_dir / "slices" / "slice-001").mkdir(parents=True, exist_ok=True)
+        (codex_dir / "slices" / "slice-001" / "slice_trace.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "slice_id": "slice-001",
+                    "status": "completed",
+                    "acceptance_criteria_ids": ["AC-001"],
+                    "evidence": {"changed_files": ["dashboard/app.js"], "tests_run": ["python3 -m unittest tests.test_dashboard -v"]},
+                    "blockers": [],
+                    "risk_events": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "implementation_completion_gate.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "passed",
+                    "summary": "Implementation is ready for review.",
+                    "checks": [{"id": "all_slices_completed", "status": "passed", "reason": "Check passed.", "evidence": ["slice-001"]}],
+                    "evidence": {
+                        "completed_slice_ids": ["slice-001"],
+                        "covered_acceptance_criteria_ids": ["AC-001"],
+                        "changed_files": ["dashboard/app.js"],
+                        "tests_run": ["python3 -m unittest tests.test_dashboard -v"],
+                    },
+                    "blockers": [],
+                    "next_action": "Proceed to review and verifier.",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "implementation_completion_gate.md").write_text("# Implementation Completion Gate\n", encoding="utf-8")
         (codex_dir / "stdout.jsonl").write_text("coding started\ncoding finished\n", encoding="utf-8")
         (codex_dir / "stderr.log").write_text("provider warning\n", encoding="utf-8")
         (codex_dir / "diff.patch").write_text(
@@ -273,6 +415,32 @@ console.log(JSON.stringify(vm));
         )
         (run_dir / "github_pr.md").write_text("# GitHub Draft PR\n", encoding="utf-8")
         (run_dir / "ci_status.md").write_text("# CI Status\n", encoding="utf-8")
+        (run_dir / "staging_readiness.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "generated_at": "2026-05-23T00:05:00+00:00",
+                    "staging_decision": "ready_for_staging",
+                    "summary": "PR 和 CI 已通过，可以进入 staging。",
+                    "gates": [{"id": "ci_passed", "status": "passed", "reason": "CI passed.", "evidence": ["ci.status=passed"]}],
+                    "evidence": {
+                        "release_decision": "ready_for_pr_ci",
+                        "pr_url": "https://github.com/example/project/pull/42",
+                        "ci_status": "passed",
+                        "ci_summary": "1 个 CI check 已通过。",
+                        "checks": [{"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS", "url": ""}],
+                        "acceptance_status": "completed",
+                        "changed_files": ["dashboard/app.js"],
+                    },
+                    "blockers": [],
+                    "warnings": [],
+                    "next_actions": ["人工确认 staging 环境。"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "staging_readiness.md").write_text("# Staging Readiness\n", encoding="utf-8")
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -290,6 +458,7 @@ console.log(JSON.stringify(vm));
         gate_ids = [gate["id"] for gate in state["gates"]]
         self.assertEqual(state["run_id"], "dashboard-run-1")
         self.assertIn("orchestrator", stage_ids)
+        self.assertIn("requirements", stage_ids)
         self.assertIn("human_approval", stage_ids)
         self.assertIn("before_coding", gate_ids)
         self.assertIn("ci_gate", gate_ids)
@@ -301,7 +470,9 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["release_readiness"]["release_decision"], "ready_for_pr_ci")
         self.assertEqual(state["github_pr"]["status"], "created")
         self.assertEqual(state["ci_status"]["status"], "passed")
+        self.assertEqual(state["staging_readiness"]["staging_decision"], "ready_for_staging")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/requirement_quality_report.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "retrospective.md" for item in state["artifacts"]))
@@ -313,6 +484,8 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "github_pr.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "ci_status.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "ci_status.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "staging_readiness.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "staging_readiness.json" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -448,8 +621,17 @@ console.log(JSON.stringify(vm));
                 request.do_POST()
                 status_payload = request._send_json.call_args.args[0]
 
+            with mock.patch("growth_dev.team.dashboard.generate_staging_readiness") as staging_mock:
+                staging_mock.return_value = {"staging_decision": "ready_for_staging"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/staging-readiness"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                staging_payload = request._send_json.call_args.args[0]
+
         self.assertEqual(draft_payload["status"], "created")
         self.assertEqual(status_payload["status"], "passed")
+        self.assertEqual(staging_payload["staging_decision"], "ready_for_staging")
 
     def test_dashboard_acceptance_rejects_run_id_path_escape(self) -> None:
         from growth_dev.team.dashboard import start_dashboard_acceptance
@@ -500,7 +682,7 @@ console.log(JSON.stringify(vm));
 
         payload = json.loads(i18n_path.read_text(encoding="utf-8"))
 
-        for section in ("app", "status", "stages", "agents", "gates", "artifacts", "events", "actions", "memoryRecall", "releaseReadiness"):
+        for section in ("app", "status", "stages", "agents", "gates", "artifacts", "events", "actions", "memoryRecall", "releaseReadiness", "stagingReadiness"):
             self.assertIn(section, payload)
         for status in ("not_started", "processing", "completed", "needs_attention", "waiting_confirmation", "planned"):
             self.assertIn(status, payload["status"])
@@ -516,6 +698,8 @@ console.log(JSON.stringify(vm));
             self.assertIn(acceptance_key, payload["acceptance"])
         for readiness_key in ("title", "generateButton", "empty", "decision", "gates", "prDraft", "nextActions"):
             self.assertIn(readiness_key, payload["releaseReadiness"])
+        for staging_key in ("title", "generateButton", "empty", "decision", "gates", "nextActions"):
+            self.assertIn(staging_key, payload["stagingReadiness"])
         for stage in ("requirement", "design", "implementation", "quality", "delivery"):
             self.assertIn(stage, payload["stages"])
             self.assertIn("title", payload["stages"][stage])
@@ -766,6 +950,23 @@ console.log(JSON.stringify(vm));
         for key in ("title", "createDraftButton", "refreshCiButton", "notReady", "noPr"):
             self.assertIn(key, i18n["githubPr"])
 
+    def test_dashboard_staging_readiness_frontend_exposes_card_endpoint_and_i18n(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn('id="staging-readiness-panel"', html)
+        self.assertIn('id="staging-readiness-action"', html)
+        self.assertIn("renderStagingReadiness", app_js)
+        self.assertIn("startStagingReadiness", app_js)
+        self.assertIn('/staging-readiness"', app_js)
+        self.assertIn("stagingReadiness", i18n)
+        for key in ("title", "generateButton", "empty", "decision", "gates", "nextActions"):
+            self.assertIn(key, i18n["stagingReadiness"])
+        self.assertLess(html.index('id="github-pr-panel"'), html.index('id="staging-readiness-panel"'))
+        self.assertLess(html.index('id="staging-readiness-panel"'), html.index('id="deliverables-panel"'))
+
     def test_dashboard_pr_ci_empty_state_explains_draft_pr_next_step(self) -> None:
         root = Path(__file__).resolve().parents[1]
         i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
@@ -880,6 +1081,48 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
         self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
         self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
+
+    def test_business_view_model_marks_requirement_stage_failed_from_requirement_gate(self) -> None:
+        run = {
+            "run_id": "blocked-requirement-run",
+            "brief": "需求还有阻塞问题",
+            "status": "failed",
+            "stages": [
+                {"id": "orchestrator", "status": "completed", "outputs": ["task.yaml", "context.md"]},
+                {
+                    "id": "requirements",
+                    "status": "failed",
+                    "outputs": ["requirements/brief_analysis.json", "requirements/requirement_quality_report.json"],
+                },
+            ],
+            "gates": [{"id": "requirement_quality", "status": "failed", "missing_artifacts": ["blocking_questions_present"]}],
+            "requirement_understanding": {
+                "brief_analysis": {"blocking_questions": ["请补充目标用户。"], "planning_mode": "auto"},
+                "quality_report": {
+                    "status": "failed",
+                    "summary": "Requirement understanding needs more input.",
+                    "blockers": ["blocking_questions_present"],
+                },
+            },
+            "artifacts": [
+                {"label": "Requirement Analysis", "path": "requirements/brief_analysis.json", "scope": "run", "exists": True},
+                {
+                    "label": "Requirement Quality Report",
+                    "path": "requirements/requirement_quality_report.json",
+                    "scope": "run",
+                    "exists": True,
+                },
+            ],
+            "risk_events": ["blocking_questions_present"],
+        }
+
+        vm = self._business_view_model(run)
+        requirement_stage = vm["stages"][0]
+
+        self.assertEqual(vm["status"], "needs_attention")
+        self.assertEqual(requirement_stage["status"], "needs_attention")
+        self.assertEqual(requirement_stage["statusLabel"], "需要处理")
+        self.assertTrue(any(artifact["path"] == "requirements/brief_analysis.json" for artifact in requirement_stage["artifacts"]))
 
     def test_business_view_model_marks_delivery_completed_after_acceptance_success(self) -> None:
         run = {
@@ -1047,6 +1290,8 @@ console.log(JSON.stringify(vm));
         self.assertEqual(response["run_id"], "posted-run-1")
         self.assertTrue(record_exists)
         self.assertEqual(process["run_id"], "posted-run-1")
+        self.assertIn("--planning-mode", process["command"])
+        self.assertIn("auto", process["command"])
         self.assertNotIn(".env", json.dumps(process, ensure_ascii=False))
 
     def test_dashboard_start_run_uses_absolute_paths_in_process_record_and_command(self) -> None:

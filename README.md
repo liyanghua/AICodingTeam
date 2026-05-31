@@ -69,7 +69,15 @@ Current call order:
 using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality
 ```
 
-This phase is documentation/registry only; the runtime does not auto-execute these skills yet. Skills are not better because there are more of them: the active registry keeps only 8 P0 skills, defaults to one primary skill per phase, and allows at most one companion skill when a gate needs it.
+Skills are not better because there are more of them: the active registry keeps only 8 P0 skills, defaults to one primary skill per phase, and allows at most one companion skill when a gate needs it.
+
+For complex tasks, the runtime now writes a deterministic requirement and planning layer before coding, using coverage-driven slice planning as the Project Skills method. `--planning-mode auto` keeps simple briefs on the deterministic path and prepares a draft-only strong-LLM channel for complex briefs; `--planning-mode llm_assisted` always prepares that draft channel. Official artifacts are promoted only after deterministic gates pass. The intended验收 path is:
+
+```text
+brief analysis -> official acceptance criteria -> coverage matrix -> slices -> per-slice trace -> implementation completion gate
+```
+
+The source of truth remains `runs/<run_id>/`: `requirements/brief_analysis.json`, `acceptance_criteria.md`, `context_pack.md`, `planning/acceptance_coverage_matrix.*`, `slices/*.yaml`, `codex/slices/*/slice_trace.json`, and `implementation_completion_gate.*`. Codex continuity must come from those run artifacts, current diff, blockers, and verification evidence rather than chat history.
 
 ## Codex executor
 
@@ -164,6 +172,15 @@ python -m growth_dev.cli team pr status --run-id <run-id> --json
 This writes `github_pr.json`, `github_pr.md`, `ci_status.json`, and `ci_status.md`. It uses the GitHub CLI (`gh`) and never merges, deploys, or auto-fixes CI. If `gh` is missing, not authenticated, or the repo/branch is not ready, the failure is recorded as a run artifact.
 
 The repository includes a minimal GitHub Actions workflow at `.github/workflows/ci.yml`. It runs the full local unittest command on PRs and pushes to `main`, so Dashboard PR/CI checks come from the same verification path used by local acceptance.
+
+After PR/CI status is available, generate the local staging readiness judgment:
+
+```bash
+python -m growth_dev.cli team release staging-readiness --run-id <run-id>
+python -m growth_dev.cli team release staging-readiness --run-id <run-id> --json
+```
+
+This writes `staging_readiness.json` and `staging_readiness.md`. The decision is one of `ready_for_staging`, `waiting_for_ci`, or `blocked`. Staging readiness requires accepted local changes, non-blocked release readiness, a created Draft PR, passed CI checks, and no uncleared risks. This layer only creates an auditable judgment; it does not deploy, merge, or auto-fix CI.
 
 ### Obsidian project memory
 
