@@ -228,7 +228,7 @@
     "notReady": "先生成发布准备报告，且不能存在硬阻塞。",
     "blockedByReadiness": "发布准备存在硬阻塞，暂不能创建 Draft PR。",
     "readyToCreate": "发布准备已通过，可推送当前分支并创建 GitHub Draft PR。",
-    "noPr": "尚未创建 GitHub Draft PR。",
+    "noPr": "尚未创建 GitHub Draft PR。发布准备通过后，可以推送当前分支并创建 GitHub Draft PR。",
     "noChecks": "尚未发现 CI checks。",
     "prInfo": "Draft PR",
     "ciInfo": "CI Checks",

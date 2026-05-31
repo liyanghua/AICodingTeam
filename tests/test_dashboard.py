@@ -766,6 +766,15 @@ console.log(JSON.stringify(vm));
         for key in ("title", "createDraftButton", "refreshCiButton", "notReady", "noPr"):
             self.assertIn(key, i18n["githubPr"])
 
+    def test_dashboard_pr_ci_empty_state_explains_draft_pr_next_step(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn(
+            "发布准备通过后，可以推送当前分支并创建 GitHub Draft PR",
+            i18n["githubPr"]["noPr"],
+        )
+
     def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
         root = Path(__file__).resolve().parents[1]
         i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"

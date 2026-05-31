@@ -163,6 +163,8 @@ python -m growth_dev.cli team pr status --run-id <run-id> --json
 
 This writes `github_pr.json`, `github_pr.md`, `ci_status.json`, and `ci_status.md`. It uses the GitHub CLI (`gh`) and never merges, deploys, or auto-fixes CI. If `gh` is missing, not authenticated, or the repo/branch is not ready, the failure is recorded as a run artifact.
 
+The repository includes a minimal GitHub Actions workflow at `.github/workflows/ci.yml`. It runs the full local unittest command on PRs and pushes to `main`, so Dashboard PR/CI checks come from the same verification path used by local acceptance.
+
 ### Obsidian project memory
 
 The first memory layer is a manual Markdown export for Obsidian. It reads existing `runs/<run_id>/` artifacts and writes business-friendly project evolution notes into the selected vault without changing runtime behavior or injecting memory into future Codex prompts.
