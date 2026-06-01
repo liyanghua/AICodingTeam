@@ -395,6 +395,197 @@ class TeamReleaseTests(unittest.TestCase):
         self.assertEqual(missing_release["staging_decision"], "blocked")
         self.assertTrue(any("release_readiness" in blocker for blocker in missing_release["blockers"]))
 
+    def test_staging_rehearsal_completes_when_ready_and_full_tests_pass(self) -> None:
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+        from growth_dev.team.staging import run_staging_rehearsal
+
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            if command[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(command, 0, stdout=" M dashboard/app.js\n", stderr="")
+            if command[:3] == ["python3", "-m", "unittest"]:
+                return subprocess.CompletedProcess(command, 0, stdout="OK\n.env sk-should-not-leak api_key=secret\n", stderr="")
+            raise AssertionError(f"unexpected command: {command}")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+            (repo_root / "tests" / "test_dashboard.py").write_text(
+                "def test_existing():\n    assert True\n\ndef test_delivery_done():\n    assert True\n",
+                encoding="utf-8",
+            )
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="passed")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+            generate_staging_readiness("release-run-1", runs_dir=runs_dir)
+
+            result = run_staging_rehearsal("release-run-1", runs_dir=runs_dir, repo_root=repo_root, command_runner=fake_run)
+            artifact = json.loads((run_dir / "staging_rehearsal.json").read_text(encoding="utf-8"))
+            note = (run_dir / "staging_rehearsal.md").read_text(encoding="utf-8")
+            stdout_log = (run_dir / "staging_rehearsal" / "tests_stdout.log").read_text(encoding="utf-8")
+
+        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["staging_readiness_decision"], "ready_for_staging")
+        self.assertTrue(any(step["id"] == "readiness" and step["status"] == "passed" for step in result["steps"]))
+        self.assertTrue(any(step["id"] == "full_tests" and step["status"] == "completed" and step["exit_code"] == 0 for step in result["steps"]))
+        self.assertIn("dashboard/app.js", result["evidence"]["changed_files"])
+        self.assertIn(["git", "status", "--short"], calls)
+        self.assertIn(["python3", "-m", "unittest", "discover", "-s", "tests", "-v"], calls)
+        self.assertEqual(artifact["status"], "completed")
+        self.assertIn("# Staging Rehearsal", note)
+        payload = json.dumps(result, ensure_ascii=False) + note + stdout_log
+        self.assertNotIn("sk-should-not-leak", payload)
+        self.assertNotIn("api_key=secret", payload)
+        self.assertNotIn(".env", payload)
+
+    def test_staging_rehearsal_blocks_when_readiness_is_not_ready_and_skips_tests(self) -> None:
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+        from growth_dev.team.staging import run_staging_rehearsal
+
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            if command[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if command[:3] == ["python3", "-m", "unittest"]:
+                raise AssertionError("full tests should be skipped when staging readiness is not ready")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="running")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+            generate_staging_readiness("release-run-1", runs_dir=runs_dir)
+
+            result = run_staging_rehearsal("release-run-1", runs_dir=runs_dir, repo_root=repo_root, command_runner=fake_run)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["staging_readiness_decision"], "waiting_for_ci")
+        self.assertTrue(any(step["id"] == "full_tests" and step["status"] == "skipped" for step in result["steps"]))
+        self.assertFalse(any(command[:3] == ["python3", "-m", "unittest"] for command in calls))
+
+    def test_staging_rehearsal_fails_when_full_tests_fail(self) -> None:
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+        from growth_dev.team.staging import run_staging_rehearsal
+
+        def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if command[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if command[:3] == ["python3", "-m", "unittest"]:
+                return subprocess.CompletedProcess(command, 1, stdout="Ran 1 test\n", stderr="FAILED\n")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="passed")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+            generate_staging_readiness("release-run-1", runs_dir=runs_dir)
+
+            result = run_staging_rehearsal("release-run-1", runs_dir=runs_dir, repo_root=repo_root, command_runner=fake_run)
+            stderr_log = (run_dir / "staging_rehearsal" / "tests_stderr.log").read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any(step["id"] == "full_tests" and step["status"] == "failed" and step["exit_code"] == 1 for step in result["steps"]))
+        self.assertTrue(any("全量测试" in blocker for blocker in result["blockers"]))
+        self.assertIn("FAILED", stderr_log)
+
+    def test_staging_rehearsal_generates_missing_readiness(self) -> None:
+        from growth_dev.team.release import generate_release_readiness
+        from growth_dev.team.staging import run_staging_rehearsal
+
+        def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if command[:2] == ["git", "status"]:
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if command[:3] == ["python3", "-m", "unittest"]:
+                return subprocess.CompletedProcess(command, 0, stdout="OK\n", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="passed")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+            self.assertFalse((run_dir / "staging_readiness.json").exists())
+
+            result = run_staging_rehearsal("release-run-1", runs_dir=runs_dir, repo_root=repo_root, command_runner=fake_run)
+            staging_readiness_exists = (run_dir / "staging_readiness.json").exists()
+
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(staging_readiness_exists)
+        self.assertEqual(result["staging_readiness_decision"], "ready_for_staging")
+
+    def test_cli_staging_rehearsal_generates_artifacts_and_json_output(self) -> None:
+        from growth_dev.cli import main
+        from growth_dev.team.release import generate_release_readiness, generate_staging_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            _init_git_repo(repo_root)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            (repo_root / "dashboard" / "app.js").write_text("const oldValue = false;\n", encoding="utf-8")
+            (repo_root / "tests" / "test_dashboard.py").write_text(
+                "import unittest\n\nclass DemoTest(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            _write_github_pr_status(run_dir)
+            _write_ci_status(run_dir, status="passed")
+            generate_release_readiness("release-run-1", runs_dir=runs_dir, repo_root=repo_root)
+            generate_staging_readiness("release-run-1", runs_dir=runs_dir)
+
+            with _captured_output() as (stdout, stderr):
+                exit_code = main(
+                    [
+                        "team",
+                        "release",
+                        "staging-rehearsal",
+                        "--run-id",
+                        "release-run-1",
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--repo-root",
+                        str(repo_root),
+                        "--json",
+                    ]
+                )
+            payload = json.loads(stdout.getvalue())
+            rehearsal_json_exists = (run_dir / "staging_rehearsal.json").exists()
+            rehearsal_md_exists = (run_dir / "staging_rehearsal.md").exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(payload["status"], "completed")
+        self.assertTrue(rehearsal_json_exists)
+        self.assertTrue(rehearsal_md_exists)
+
     def test_release_readiness_blocks_on_risk_events_or_implementation_blockers(self) -> None:
         from growth_dev.team.release import generate_release_readiness
 

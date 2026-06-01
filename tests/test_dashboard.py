@@ -441,6 +441,38 @@ console.log(JSON.stringify(vm));
             encoding="utf-8",
         )
         (run_dir / "staging_readiness.md").write_text("# Staging Readiness\n", encoding="utf-8")
+        (run_dir / "staging_rehearsal.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "completed",
+                    "generated_at": "2026-05-23T00:06:00+00:00",
+                    "summary": "Staging 本地演练已完成，全量测试通过。",
+                    "staging_readiness_decision": "ready_for_staging",
+                    "steps": [
+                        {"id": "readiness", "status": "passed", "reason": "ready_for_staging"},
+                        {
+                            "id": "full_tests",
+                            "status": "completed",
+                            "command": "python3 -m unittest discover -s tests -v",
+                            "exit_code": 0,
+                        },
+                    ],
+                    "evidence": {
+                        "changed_files": ["dashboard/app.js"],
+                        "git_status": [" M dashboard/app.js"],
+                        "tests_stdout_log": "staging_rehearsal/tests_stdout.log",
+                        "tests_stderr_log": "staging_rehearsal/tests_stderr.log",
+                    },
+                    "blockers": [],
+                    "warnings": [],
+                    "next_actions": ["可以进入真实 staging 前人工审批。"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "staging_rehearsal.md").write_text("# Staging Rehearsal\n", encoding="utf-8")
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -471,6 +503,7 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["github_pr"]["status"], "created")
         self.assertEqual(state["ci_status"]["status"], "passed")
         self.assertEqual(state["staging_readiness"]["staging_decision"], "ready_for_staging")
+        self.assertEqual(state["staging_rehearsal"]["status"], "completed")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_quality_report.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
@@ -486,6 +519,8 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "ci_status.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "staging_readiness.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "staging_readiness.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "staging_rehearsal.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "staging_rehearsal.json" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -629,9 +664,18 @@ console.log(JSON.stringify(vm));
                 request.do_POST()
                 staging_payload = request._send_json.call_args.args[0]
 
+            with mock.patch("growth_dev.team.dashboard.run_staging_rehearsal") as rehearsal_mock:
+                rehearsal_mock.return_value = {"status": "completed"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/staging-rehearsal"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                rehearsal_payload = request._send_json.call_args.args[0]
+
         self.assertEqual(draft_payload["status"], "created")
         self.assertEqual(status_payload["status"], "passed")
         self.assertEqual(staging_payload["staging_decision"], "ready_for_staging")
+        self.assertEqual(rehearsal_payload["status"], "completed")
 
     def test_dashboard_acceptance_rejects_run_id_path_escape(self) -> None:
         from growth_dev.team.dashboard import start_dashboard_acceptance
@@ -925,12 +969,19 @@ console.log(JSON.stringify(vm));
         i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
 
         self.assertIn('id="staging-readiness-action"', html)
+        self.assertIn('id="staging-rehearsal-action"', html)
         self.assertIn("renderStagingReadiness", app_js)
+        self.assertIn("renderStagingRehearsal", app_js)
         self.assertIn("startStagingReadiness", app_js)
+        self.assertIn("startStagingRehearsal", app_js)
         self.assertIn('/staging-readiness"', app_js)
+        self.assertIn('/staging-rehearsal"', app_js)
         self.assertIn("stagingReadiness", i18n)
+        self.assertIn("stagingRehearsal", i18n)
         for key in ("title", "generateButton", "empty", "decision", "gates", "nextActions"):
             self.assertIn(key, i18n["stagingReadiness"])
+        for key in ("title", "runButton", "empty", "status", "logs", "nextActions"):
+            self.assertIn(key, i18n["stagingRehearsal"])
         self.assertIn('id="flow-node-detail"', html)
 
     def test_dashboard_pr_ci_empty_state_explains_draft_pr_next_step(self) -> None:
@@ -1063,6 +1114,7 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(action["id"] == "github_pr" for action in github_node["actions"]))
         self.assertTrue(any(action["id"] == "github_ci" for action in github_node["actions"]))
         self.assertTrue(any(action["id"] == "staging_readiness" for action in staging_node["actions"]))
+        self.assertTrue(any(action["id"] == "staging_rehearsal" for action in staging_node["actions"]))
         self.assertIn("engineeringEvidence", vm["flowNodes"][2])
         self.assertTrue(vm["flowNodes"][2]["engineeringEvidence"]["events"])
 

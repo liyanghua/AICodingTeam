@@ -17,6 +17,7 @@ const RELEASE_READINESS_ENDPOINT_SUFFIX = "/release/readiness";
 const GITHUB_PR_DRAFT_ENDPOINT_SUFFIX = "/pr/draft";
 const GITHUB_PR_STATUS_ENDPOINT_SUFFIX = "/pr/status";
 const STAGING_READINESS_ENDPOINT_SUFFIX = "/staging-readiness";
+const STAGING_REHEARSAL_ENDPOINT_SUFFIX = "/staging-rehearsal";
 
 function t(path, fallback = "") {
   return view.lookup(state.i18n, path, fallback || view.lookup(state.i18n, "app.unknown", "未知项"));
@@ -118,6 +119,7 @@ function renderBusinessRun(vm) {
   renderReleaseReadiness(vm);
   renderGithubPrCi(vm);
   renderStagingReadiness(vm);
+  renderStagingRehearsal(vm);
   renderFlowTimeline(vm);
   ensureSelectedFlowNode(vm);
   renderSelectedFlowNode(vm);
@@ -293,6 +295,7 @@ function renderFlowNodeActions(node) {
     github_pr: () => container.appendChild(flowActionButton("github-pr-action", startGithubDraftPr)),
     github_ci: () => container.appendChild(flowActionButton("github-ci-action", refreshGithubCi, "ghost")),
     staging_readiness: () => container.appendChild(flowActionButton("staging-readiness-action", startStagingReadiness)),
+    staging_rehearsal: () => container.appendChild(flowActionButton("staging-rehearsal-action", startStagingRehearsal, "ghost")),
   };
   for (const id of actionIds) {
     if (renderers[id]) renderers[id]();
@@ -460,6 +463,13 @@ function renderFlowNodeSpecifics(node, vm) {
       vm.stagingReadiness.summary,
       vm.stagingReadiness.evidence && vm.stagingReadiness.evidence.ci_summary ? `${t("stagingReadiness.ciSummary")}: ${vm.stagingReadiness.evidence.ci_summary}` : "",
       ...(vm.stagingReadiness.blockers || []).slice(0, 3).map((item) => `${t("stagingReadiness.blocker")}: ${item}`),
+    ]);
+    renderFlowNodeSpecificRows(container, t("stagingRehearsal.title"), [
+      `${t("stagingRehearsal.status")}: ${vm.stagingRehearsal.statusLabel || t("stagingRehearsal.statuses.not_started")}`,
+      vm.stagingRehearsal.summary,
+      ...(vm.stagingRehearsal.steps || []).slice(0, 3).map((step) => `${step.id || t("app.unknown")}: ${step.status || ""}${step.exit_code == null ? "" : ` · ${t("acceptance.exitCode")}: ${step.exit_code}`}`),
+      ...(vm.stagingRehearsal.blockers || []).slice(0, 3).map((item) => `${t("stagingRehearsal.blocker")}: ${item}`),
+      ...(vm.stagingRehearsal.nextActions || []).slice(0, 2).map((item) => `${t("stagingRehearsal.nextActions")}: ${item}`),
     ]);
   }
 }
@@ -1051,6 +1061,47 @@ async function startStagingReadiness() {
   action.disabled = true;
   action.textContent = t("stagingReadiness.generating");
   await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${STAGING_READINESS_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderStagingRehearsal(vm) {
+  const rehearsal = vm.stagingRehearsal || {};
+  const staging = vm.stagingReadiness || {};
+  const action = $("staging-rehearsal-action");
+  const summary = $("staging-rehearsal-summary");
+  const details = $("staging-rehearsal-details");
+  if (!action || !summary || !details) return;
+
+  const canRun = staging.decision === "ready_for_staging" && rehearsal.status !== "running";
+  action.disabled = !canRun;
+  action.textContent = rehearsal.status === "running" ? t("stagingRehearsal.running") : t("stagingRehearsal.runButton");
+  action.onclick = startStagingRehearsal;
+  summary.textContent = rehearsal.summary || (canRun ? t("stagingRehearsal.readyToRun") : t("stagingRehearsal.empty"));
+
+  details.textContent = "";
+  const rows = [];
+  rows.push(`${t("stagingRehearsal.status")}: ${rehearsal.statusLabel || t("stagingRehearsal.statuses.not_started")}`);
+  if (rehearsal.stagingReadinessDecision) rows.push(`${t("stagingReadiness.decision")}: ${rehearsal.stagingReadinessDecision}`);
+  for (const step of rehearsal.steps || []) {
+    rows.push(`${step.id || t("app.unknown")}: ${step.status || ""}${step.command ? ` · ${step.command}` : ""}${step.exit_code == null ? "" : ` · ${t("acceptance.exitCode")}: ${step.exit_code}`}`);
+    for (const line of [...(step.stdout_tail || []), ...(step.stderr_tail || [])].slice(-4)) rows.push(`${t("stagingRehearsal.logs")}: ${line}`);
+  }
+  for (const blocker of rehearsal.blockers || []) rows.push(`${t("stagingRehearsal.blocker")}: ${blocker}`);
+  for (const warning of rehearsal.warnings || []) rows.push(`${t("stagingRehearsal.warning")}: ${warning}`);
+  for (const item of (rehearsal.nextActions || []).slice(0, 3)) rows.push(`${t("stagingRehearsal.nextActions")}: ${item}`);
+  renderCompactRows(details, rows, t("stagingRehearsal.empty"));
+}
+
+async function startStagingRehearsal() {
+  if (!state.selectedRunId) return;
+  const action = $("staging-rehearsal-action");
+  action.disabled = true;
+  action.textContent = t("stagingRehearsal.running");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${STAGING_REHEARSAL_ENDPOINT_SUFFIX}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

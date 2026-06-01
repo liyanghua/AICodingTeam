@@ -196,6 +196,8 @@
     "ci_status.json": {"title": "CI 状态数据", "description": "PR checks 的结构化状态。"},
     "staging_readiness.md": {"title": "Staging 准备报告", "description": "判断本次 run 是否可以进入 staging。"},
     "staging_readiness.json": {"title": "Staging 准备数据", "description": "Staging Gate、CI 证据、阻塞和下一步的结构化结果。"},
+    "staging_rehearsal.md": {"title": "Staging 本地演练", "description": "进入真实 staging 前的本地复核、全量测试和证据记录。"},
+    "staging_rehearsal.json": {"title": "Staging 本地演练数据", "description": "本地演练步骤、测试结果、Git 状态、阻塞和下一步的结构化结果。"},
     "codex/diff.patch": {"title": "代码差异", "description": "AI 实现产生的变更证据。"}
   },
   "events": {
@@ -373,6 +375,26 @@
       "ready_for_staging": "可以进入 staging",
       "waiting_for_ci": "等待 CI 完成",
       "blocked": "暂不能进入 staging"
+    }
+  },
+  "stagingRehearsal": {
+    "title": "Staging 本地演练",
+    "runButton": "运行 Staging 本地演练",
+    "running": "演练运行中",
+    "empty": "Staging 准备判断通过后，可运行本地演练复核全量测试和 Git 状态。",
+    "readyToRun": "Staging 准备已通过，可以运行最后一轮本地演练。",
+    "status": "演练状态",
+    "steps": "演练步骤",
+    "logs": "日志片段",
+    "nextActions": "下一步",
+    "blocker": "阻塞",
+    "warning": "提示",
+    "statuses": {
+      "not_started": "尚未演练",
+      "running": "演练中",
+      "completed": "演练通过",
+      "failed": "演练未通过",
+      "blocked": "演练被阻塞"
     }
   },
   "stageDetail": {

@@ -59,7 +59,7 @@
     delivery: ["final_report.md"],
     release: ["release_readiness.md", "release_readiness.json", "pr_draft.md"],
     github_pr_ci: ["github_pr.md", "github_pr.json", "ci_status.md", "ci_status.json"],
-    staging: ["staging_readiness.md", "staging_readiness.json"],
+    staging: ["staging_readiness.md", "staging_readiness.json", "staging_rehearsal.md", "staging_rehearsal.json"],
   };
   const FLOW_NODE_GATES = {
     requirement: ["requirement_quality"],
@@ -102,6 +102,7 @@
       releaseReadiness: buildReleaseReadiness(run, i18n),
       githubPr: buildGithubPr(run, i18n),
       stagingReadiness: buildStagingReadiness(run, i18n),
+      stagingRehearsal: buildStagingRehearsal(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
       recommendedArtifact: recommendedArtifact(run, i18n),
@@ -307,6 +308,23 @@
     };
   }
 
+  function buildStagingRehearsal(run, i18n) {
+    const rehearsal = run.staging_rehearsal || {};
+    const status = rehearsal.status || "not_started";
+    return {
+      status,
+      statusLabel: lookup(i18n, `stagingRehearsal.statuses.${status}`, status),
+      summary: rehearsal.summary || lookup(i18n, "stagingRehearsal.empty", ""),
+      stagingReadinessDecision: rehearsal.staging_readiness_decision || "",
+      steps: Array.isArray(rehearsal.steps) ? rehearsal.steps : [],
+      evidence: rehearsal.evidence || {},
+      blockers: rehearsal.blockers || [],
+      warnings: rehearsal.warnings || [],
+      nextActions: rehearsal.next_actions || [],
+      generatedAt: rehearsal.generated_at || "",
+    };
+  }
+
   function buildStage(run, i18n, group) {
     const status = stageStatus(run, group);
     const copy = lookup(i18n, `stages.${group.id}`, {});
@@ -401,7 +419,7 @@
     if (id === "delivery") return [{ id: "acceptance" }];
     if (id === "release") return [{ id: "release_readiness" }];
     if (id === "github_pr_ci") return [{ id: "github_pr" }, { id: "github_ci" }];
-    if (id === "staging") return [{ id: "staging_readiness" }];
+    if (id === "staging") return [{ id: "staging_readiness" }, { id: "staging_rehearsal" }];
     return [];
   }
 
@@ -423,6 +441,9 @@
       return "not_started";
     }
     if (id === "staging") {
+      if (vm.stagingRehearsal.status === "failed" || vm.stagingRehearsal.status === "blocked") return "needs_attention";
+      if (vm.stagingRehearsal.status === "running") return "processing";
+      if (vm.stagingRehearsal.status === "completed") return "completed";
       const decision = vm.stagingReadiness.decision || "not_generated";
       if (decision === "ready_for_staging") return "completed";
       if (decision === "blocked") return "needs_attention";
@@ -436,6 +457,7 @@
   function flowNodeSummary(id, status, run, i18n, vm, copy, stage) {
     if (id === "release" && vm.releaseReadiness.summary) return vm.releaseReadiness.summary;
     if (id === "github_pr_ci" && vm.githubPr.summary) return vm.githubPr.summary;
+    if (id === "staging" && vm.stagingRehearsal.summary) return vm.stagingRehearsal.summary;
     if (id === "staging" && vm.stagingReadiness.summary) return vm.stagingReadiness.summary;
     return lookup(copy, `summary.${status}`, (stage && stage.summary) || lookup(i18n, `status.${status}.description`, ""));
   }
@@ -492,6 +514,8 @@
     if (id === "staging") {
       return [
         `${lookup(i18n, "stagingReadiness.decision", "Staging 判断")}: ${vm.stagingReadiness.decisionLabel || ""}`,
+        `${lookup(i18n, "stagingRehearsal.title", "Staging 本地演练")}: ${vm.stagingRehearsal.statusLabel || ""}`,
+        vm.stagingRehearsal.summary || "",
         vm.stagingReadiness.evidence && vm.stagingReadiness.evidence.ci_summary ? vm.stagingReadiness.evidence.ci_summary : "",
       ].filter(Boolean);
     }

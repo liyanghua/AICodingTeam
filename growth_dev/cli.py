@@ -132,6 +132,12 @@ def _build_parser() -> argparse.ArgumentParser:
     team_release_staging.add_argument("--runs-dir", default="runs")
     team_release_staging.add_argument("--json", action="store_true", dest="json_output")
     team_release_staging.set_defaults(func=_cmd_team_release_staging_readiness)
+    team_release_rehearsal = team_release_sub.add_parser("staging-rehearsal", help="Run local staging rehearsal after staging readiness")
+    team_release_rehearsal.add_argument("--run-id", required=True)
+    team_release_rehearsal.add_argument("--runs-dir", default="runs")
+    team_release_rehearsal.add_argument("--repo-root", default=".")
+    team_release_rehearsal.add_argument("--json", action="store_true", dest="json_output")
+    team_release_rehearsal.set_defaults(func=_cmd_team_release_staging_rehearsal)
 
     team_pr = team_sub.add_parser("pr", help="Create GitHub draft PRs and observe CI checks")
     team_pr_sub = team_pr.add_subparsers(dest="pr_command", required=True)
@@ -691,6 +697,21 @@ def _cmd_team_release_staging_readiness(args: argparse.Namespace) -> int:
     else:
         print(format_staging_readiness(result), end="")
     return 0
+
+
+def _cmd_team_release_staging_rehearsal(args: argparse.Namespace) -> int:
+    from .team.staging import format_staging_rehearsal, run_staging_rehearsal
+
+    try:
+        result = run_staging_rehearsal(str(args.run_id), runs_dir=Path(args.runs_dir), repo_root=Path(args.repo_root))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_staging_rehearsal(result), end="")
+    return 0 if result.get("status") == "completed" else 1
 
 
 def _cmd_team_pr_draft(args: argparse.Namespace) -> int:

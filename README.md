@@ -182,6 +182,15 @@ python -m growth_dev.cli team release staging-readiness --run-id <run-id> --json
 
 This writes `staging_readiness.json` and `staging_readiness.md`. The decision is one of `ready_for_staging`, `waiting_for_ci`, or `blocked`. Staging readiness requires accepted local changes, non-blocked release readiness, a created Draft PR, passed CI checks, and no uncleared risks. This layer only creates an auditable judgment; it does not deploy, merge, or auto-fix CI.
 
+When staging readiness is `ready_for_staging`, run the local staging rehearsal before any real deploy decision:
+
+```bash
+python -m growth_dev.cli team release staging-rehearsal --run-id <run-id>
+python -m growth_dev.cli team release staging-rehearsal --run-id <run-id> --json
+```
+
+This writes `staging_rehearsal.json`, `staging_rehearsal.md`, and test logs under `runs/<run_id>/staging_rehearsal/`. It rechecks staging readiness, records git status, reruns `python3 -m unittest discover -s tests -v`, and summarizes blockers, warnings, and next actions. It still does not merge, deploy, push, or mutate any remote environment.
+
 ### Obsidian project memory
 
 The first memory layer is a manual Markdown export for Obsidian. It reads existing `runs/<run_id>/` artifacts and writes business-friendly project evolution notes into the selected vault without changing runtime behavior or injecting memory into future Codex prompts.

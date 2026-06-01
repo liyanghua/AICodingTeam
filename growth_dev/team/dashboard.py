@@ -20,6 +20,7 @@ from .models import TeamRunRecord
 from .quality import evaluate_run_quality, summarize_run_health, summarize_run_logs
 from .release import generate_release_readiness, generate_staging_readiness
 from .github_pr import create_draft_pr, refresh_ci_status
+from .staging import run_staging_rehearsal
 
 
 _DASHBOARD_PROCESSES: list[subprocess.Popen] = []
@@ -168,6 +169,7 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "github_pr": _read_github_pr(run_dir),
         "ci_status": ci_status,
         "staging_readiness": staging_readiness,
+        "staging_rehearsal": _read_staging_rehearsal(run_dir),
         "acceptance": _read_acceptance_status(run_dir),
         "artifacts": _build_artifact_view(run_dir, repo_root, record),
         "events": events[-50:],
@@ -541,6 +543,19 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
                     self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "staging-rehearsal":
+                try:
+                    self._send_json(
+                        run_staging_rehearsal(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
+                        status=HTTPStatus.OK,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
             if parsed.path != "/api/runs":
                 self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -735,6 +750,8 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("ci_status.json", "CI Status JSON", "run"),
         ("staging_readiness.md", "Staging Readiness", "run"),
         ("staging_readiness.json", "Staging Readiness JSON", "run"),
+        ("staging_rehearsal.md", "Staging Rehearsal", "run"),
+        ("staging_rehearsal.json", "Staging Rehearsal JSON", "run"),
     ]
     seen: set[tuple[str, str]] = set()
     artifacts: list[dict[str, Any]] = []
@@ -886,6 +903,14 @@ def _read_staging_readiness(run_dir: Path) -> dict[str, Any]:
         return {}
     payload = _safe_read_json(path)
     return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_staging_rehearsal(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "staging_rehearsal.json"
+    if not path.exists():
+        return {"schema_version": 1, "status": "not_started", "steps": [], "blockers": [], "warnings": [], "next_actions": []}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "steps": [], "blockers": [], "warnings": [], "next_actions": []}
 
 
 def _ci_gate_view(ci_status: dict[str, Any]) -> dict[str, str]:
