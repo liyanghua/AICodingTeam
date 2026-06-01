@@ -34,9 +34,7 @@ HOME_PAGE_MARKERS = ("首页", "发现", "关注", "推荐")
 NON_HOME_PAGE_MARKERS = (
     "取消",
     "搜索历史",
-    "综合",
-    "用户",
-    "商品",
+    "搜索小红书",
     "search_edit",
     "searchEdit",
     "android.widget.EditText",
@@ -46,23 +44,15 @@ NON_HOME_PAGE_MARKERS = (
     "全部照片",
     "最近项目",
     "允许访问",
-    "RecyclerView",
-    "GridView",
     "输入关于图片的问题",
     "图片分析中",
     "试试单击图片任意位置搜索",
     "图搜",
-    "结果",
-    "相关",
-    "相似",
     "搜索结果",
     "AI回答",
     "AI 回答",
-    "评论",
     "说点什么",
-    "点赞",
-    "收藏",
-    "分享",
+    "保存图片",
 )
 SEARCH_PAGE_MARKERS = (
     "取消",
@@ -1336,10 +1326,35 @@ def _is_xhs_home_page(hierarchy: str) -> bool:
         return False
     if any(marker in hierarchy for marker in NON_HOME_PAGE_MARKERS):
         return False
-    if "首页" in hierarchy:
+    if all(marker in hierarchy for marker in ("综合", "用户", "商品")):
+        return False
+    if "首页" not in hierarchy:
+        return False
+    if (
+        ('content-desc="搜索"' in hierarchy or "content-desc='搜索'" in hierarchy)
+        and (
+            _selected_home_marker_is_present(hierarchy)
+            or any(marker in hierarchy for marker in ("发现", "关注"))
+        )
+    ):
         return True
     home_marker_count = sum(1 for marker in HOME_PAGE_MARKERS if marker in hierarchy)
     return home_marker_count >= 2
+
+
+def _selected_home_marker_is_present(hierarchy: str) -> bool:
+    if "selected=\"true\"" not in hierarchy and "selected='true'" not in hierarchy:
+        return False
+    return bool(
+        re.search(
+            r"<node\b[^>]*(?:text|content-desc)=(['\"])首页\1[^>]*selected=(['\"])true\2",
+            hierarchy,
+        )
+        or re.search(
+            r"<node\b[^>]*selected=(['\"])true\1[^>]*(?:text|content-desc)=(['\"])首页\2",
+            hierarchy,
+        )
+    )
 
 
 def _hierarchy_has_album_confirm_marker(hierarchy: str) -> bool:

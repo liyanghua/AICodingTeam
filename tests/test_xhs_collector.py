@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -2928,6 +2929,22 @@ class XhsCollectorTests(unittest.TestCase):
         self.assertFalse(_is_xhs_home_page("取消 搜索历史 推荐 搜索小红书"))
         self.assertFalse(_is_xhs_home_page("推荐"))
         self.assertTrue(_is_xhs_home_page("首页 发现 推荐"))
+
+    def test_xhs_home_page_detection_accepts_real_home_feed(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            _is_xhs_home_page,
+        )
+
+        hierarchy = """
+        <hierarchy>
+          <node class="androidx.recyclerview.widget.RecyclerView" />
+          <node text="发现" selected="true" />
+          <node text="首页" content-desc="首页" selected="true" />
+          <node content-desc="搜索" bounds="[630,76][702,148]" />
+        </hierarchy>
+        """
+
+        self.assertTrue(_is_xhs_home_page(hierarchy))
 
     def test_deterministic_flow_stops_when_image_search_button_never_opens_album(
         self,
@@ -7111,6 +7128,32 @@ class XhsCollectorTests(unittest.TestCase):
 
         self.assertEqual(event["event"], "device_input_permission_required")
         self.assertIn("INJECT_EVENTS", event["reason"])
+
+    def test_adb_shell_failure_includes_stderr_for_input_permission_diagnosis(
+        self,
+    ) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_device import (
+            DeterministicAdbDevice,
+        )
+
+        stderr = (
+            "java.lang.SecurityException: Injecting input events requires the caller "
+            "to have the INJECT_EVENTS permission"
+        )
+        with mock.patch(
+            "third_party.xhs_collector.xhs_collector.deterministic_device.subprocess.run",
+            side_effect=subprocess.CalledProcessError(
+                255,
+                ["adb", "shell", "input tap 1 1"],
+                output="",
+                stderr=stderr,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                DeterministicAdbDevice(serial="device-1").shell("input tap 1 1")
+
+        self.assertIn("INJECT_EVENTS", str(raised.exception))
+        self.assertIn("input tap 1 1", str(raised.exception))
 
     def test_manifest_status_is_failed_when_every_item_failed_without_downloads(self) -> None:
         from third_party.xhs_collector.xhs_collector.models import ItemResult

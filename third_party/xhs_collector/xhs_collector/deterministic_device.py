@@ -275,13 +275,17 @@ class DeterministicAdbDevice:
         self.serial = serial
 
     def shell(self, command: str) -> str:
-        result = subprocess.run(
-            self._adb_args(["shell", command]),
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        args = self._adb_args(["shell", command])
+        try:
+            result = subprocess.run(
+                args,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(_format_adb_error(args, exc)) from exc
         return result.stdout
 
     def push(self, local: str, remote: str) -> None:
@@ -305,3 +309,14 @@ def _validate_ratio(value: float) -> None:
 def _is_input_injection_error(exc: Exception) -> bool:
     text = str(exc)
     return "INJECT_EVENTS" in text or "Injecting input events" in text
+
+
+def _format_adb_error(args: list[str], exc: subprocess.CalledProcessError) -> str:
+    details = str(exc)
+    stderr = (exc.stderr or "").strip()
+    stdout = (exc.stdout or "").strip()
+    if stderr:
+        details = f"{details}\nstderr: {stderr}"
+    if stdout:
+        details = f"{details}\nstdout: {stdout}"
+    return f"adb command failed: {' '.join(shlex.quote(arg) for arg in args)}\n{details}"
