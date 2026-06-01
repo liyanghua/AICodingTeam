@@ -8,20 +8,92 @@
   </head>
   <body>
     <main class="shell">
-      <section class="hero" aria-label="需求提交">
-        <div class="hero-copy">
-          <p class="eyebrow">AI-native</p>
-          <h1 data-i18n="app.title">AI 团队工作台</h1>
-          <p data-i18n="app.subtitle">输入一个业务需求，让 AI 团队完成理解、方案、实现、检查和交付。</p>
-        </div>
-        <form id="run-form" class="run-form">
-          <label class="brief-label" for="brief" data-i18n="app.briefLabel">你想让 AI 团队完成什么？</label>
-          <textarea id="brief" name="brief" rows="3" data-i18n-placeholder="app.briefPlaceholder"></textarea>
-          <div class="form-actions">
-            <button type="submit" data-i18n="app.startButton">交给 AI 团队处理</button>
-            <details id="advanced-settings" class="advanced-settings">
-              <summary data-i18n="app.advancedTitle">高级设置</summary>
-              <div class="advanced-grid">
+      <section class="workspace">
+        <aside class="task-list">
+          <div class="panel-header">
+            <h2 data-i18n="app.taskRecords">任务记录</h2>
+            <button id="refresh-runs" type="button" class="ghost" data-i18n="app.refresh">刷新</button>
+          </div>
+          <div id="runs"></div>
+        </aside>
+
+        <section class="flow-main">
+          <div class="summary-band">
+            <div>
+              <p class="eyebrow" data-i18n="app.currentTask">当前任务</p>
+              <h2 id="current-task" data-i18n="app.emptySelection">选择或新建一个任务</h2>
+              <p id="task-headline" class="summary-text"></p>
+            </div>
+            <div id="status-pill" class="status-pill status-muted" data-i18n="status.not_started.label">未开始</div>
+          </div>
+
+          <section id="flow-node-detail" class="flow-node-detail" tabindex="-1">
+            <div class="flow-detail-header">
+              <div>
+                <p class="eyebrow" id="flow-node-kicker" data-i18n="flow.detailTitle">流程详情</p>
+                <h2 id="flow-node-title" data-i18n="app.emptySelection">选择或新建一个任务</h2>
+                <p id="flow-node-summary" class="summary-text"></p>
+              </div>
+              <span id="flow-node-status" class="mini-status status-muted" data-i18n="status.not_started.label">未开始</span>
+            </div>
+
+            <div class="flow-detail-grid">
+              <section class="flow-detail-card">
+                <h3 data-i18n="flow.insights">关键进展</h3>
+                <div id="flow-node-insights" class="quality-list"></div>
+              </section>
+
+              <section class="flow-detail-card">
+                <h3 data-i18n="flow.gates">关联关卡</h3>
+                <div id="flow-node-gates" class="quality-list"></div>
+              </section>
+
+              <section class="flow-detail-card flow-actions-card">
+                <h3 data-i18n="flow.actions">可执行动作</h3>
+                <div id="flow-node-actions" class="button-group"></div>
+              </section>
+            </div>
+
+            <section id="flow-node-specifics" class="flow-node-specifics"></section>
+
+            <section class="flow-artifact-card">
+              <div class="panel-header">
+                <h3 data-i18n="flow.artifacts">节点产物</h3>
+                <button id="flow-all-artifacts-action" type="button" class="ghost small" data-i18n="flow.all_artifacts">全部产物</button>
+              </div>
+              <div class="flow-artifact-grid">
+                <div id="flow-artifact-actions" class="artifact-list"></div>
+                <div class="flow-artifact-preview-pane">
+                  <div class="selected-artifact">
+                    <div>
+                      <h3 id="selected-artifact-title" data-i18n="actions.noDeliverables">暂无可查看产物</h3>
+                      <p id="selected-artifact-description" class="meta"></p>
+                    </div>
+                    <span id="selected-artifact-status" class="mini-status status-muted" data-i18n="actions.artifactPending">未生成</span>
+                  </div>
+                  <div id="flow-artifact-preview" class="artifact-preview"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="flow-engineering-evidence">
+              <div class="panel-header">
+                <h3 data-i18n="flow.engineeringEvidence">工程证据</h3>
+              </div>
+              <div id="flow-engineering-evidence" class="flow-evidence-grid"></div>
+            </section>
+          </section>
+
+          <section class="request-panel" aria-label="需求提交">
+            <div class="request-copy">
+              <p class="eyebrow">AI native</p>
+              <h1 data-i18n="app.title">AI 团队工作台</h1>
+              <p data-i18n="app.subtitle">输入一个业务需求，让 AI 团队完成理解、方案、实现、检查和交付。</p>
+            </div>
+            <form id="run-form" class="run-form">
+              <label class="brief-label" for="brief" data-i18n="app.briefLabel">你想让 AI 团队完成什么？</label>
+              <textarea id="brief" name="brief" rows="3" data-i18n-placeholder="app.briefPlaceholder"></textarea>
+              <div class="config-grid">
                 <label>
                   <span data-i18n="advanced.domain">任务类型</span>
                   <input id="domain" name="domain" value="web_monitoring" />
@@ -45,220 +117,39 @@
                   <input id="model" name="model" value="gpt-5.5" />
                 </label>
               </div>
-            </details>
+              <div class="form-actions">
+                <button type="submit" data-i18n="app.startButton">交给 AI 团队处理</button>
+              </div>
+            </form>
+          </section>
+
+          <div class="flow-hidden-actions" hidden>
+            <button id="acceptance-action" type="button" data-i18n="acceptance.confirmButton">确认采纳并运行验收</button>
+            <div id="acceptance-summary" data-i18n="acceptance.notStarted">确认后会应用本次代码变更，并自动运行全量测试。</div>
+            <div id="acceptance-steps"></div>
+            <div id="acceptance-next-action"></div>
+            <button id="release-readiness-action" type="button" data-i18n="releaseReadiness.generateButton">生成发布准备报告</button>
+            <div id="release-readiness-summary"></div>
+            <div id="release-readiness-gates"></div>
+            <div id="release-readiness-pr"></div>
+            <button id="github-pr-action" type="button" data-i18n="githubPr.createDraftButton">推送当前分支并创建 Draft PR</button>
+            <button id="github-ci-action" type="button" data-i18n="githubPr.refreshCiButton">刷新 PR/CI 状态</button>
+            <div id="github-pr-summary"></div>
+            <div id="github-pr-info"></div>
+            <div id="github-ci-info"></div>
+            <button id="staging-readiness-action" type="button" data-i18n="stagingReadiness.generateButton">生成 Staging 准备判断</button>
+            <div id="staging-readiness-summary"></div>
+            <div id="staging-readiness-gates"></div>
+            <div id="staging-readiness-evidence"></div>
+            <div id="next-actions"></div>
           </div>
-        </form>
-      </section>
-
-      <section class="workspace">
-        <aside class="task-list">
-          <div class="panel-header">
-            <h2 data-i18n="app.taskRecords">任务记录</h2>
-            <button id="refresh-runs" type="button" class="ghost" data-i18n="app.refresh">刷新</button>
-          </div>
-          <div id="runs"></div>
-        </aside>
-
-        <section class="main-panel">
-          <div class="summary-band">
-            <div>
-              <p class="eyebrow" data-i18n="app.currentTask">当前任务</p>
-              <h2 id="current-task" data-i18n="app.emptySelection">选择或新建一个任务</h2>
-              <p id="task-headline" class="summary-text"></p>
-            </div>
-            <div id="status-pill" class="status-pill status-muted" data-i18n="status.not_started.label">未开始</div>
-          </div>
-
-          <section class="panel">
-            <div class="panel-header">
-              <h2 data-i18n="app.businessProgress">任务进展</h2>
-              <span id="brief-label"></span>
-            </div>
-            <div id="business-stages" class="business-stage-list"></div>
-            <div id="stage-detail-panel" class="stage-detail-panel" hidden></div>
-          </section>
-
-          <section class="panel two-column">
-            <div>
-              <div class="panel-header">
-                <h2 data-i18n="app.observabilityHealth">可观测健康</h2>
-              </div>
-              <p id="health-summary" class="summary-text"></p>
-              <div id="health-details" class="quality-list"></div>
-            </div>
-            <div>
-              <div class="panel-header">
-                <h2 data-i18n="app.fileQuality">文件质量</h2>
-              </div>
-              <p id="artifact-quality-summary" class="summary-text"></p>
-              <div id="artifact-quality-checks" class="quality-list"></div>
-            </div>
-          </section>
-
-          <section id="memory-recall-panel" class="panel memory-recall-panel">
-            <div class="panel-header">
-              <h2 data-i18n="memoryRecall.title">历史参考 / Skill 推荐</h2>
-            </div>
-            <p id="memory-recall-summary" class="summary-text" data-i18n="memoryRecall.empty">暂无历史任务召回。</p>
-            <div class="two-column compact-panel-grid">
-              <div>
-                <h3 data-i18n="memoryRecall.skills">推荐 Project Skills</h3>
-                <div id="memory-recall-skills" class="quality-list"></div>
-              </div>
-              <div>
-                <h3 data-i18n="memoryRecall.matches">相似历史任务</h3>
-                <div id="memory-recall-matches" class="quality-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <section id="complex-task-panel" class="panel complex-task-panel">
-            <div class="panel-header">
-              <h2 data-i18n="complexTask.title">复杂任务能力</h2>
-            </div>
-            <div class="complex-task-grid">
-              <article class="complex-task-card">
-                <h3 data-i18n="complexTask.requirementTitle">需求理解</h3>
-                <p id="requirement-understanding-summary" class="summary-text" data-i18n="complexTask.requirementEmpty">暂无需求理解结果。</p>
-                <div id="requirement-understanding-details" class="quality-list"></div>
-              </article>
-              <article class="complex-task-card">
-                <h3 data-i18n="complexTask.coverageTitle">验收覆盖矩阵</h3>
-                <p id="acceptance-coverage-summary" class="summary-text" data-i18n="complexTask.coverageEmpty">暂无验收覆盖矩阵。</p>
-                <div id="acceptance-coverage-details" class="quality-list"></div>
-              </article>
-              <article class="complex-task-card">
-                <h3 data-i18n="complexTask.sliceLoopTitle">Slice 执行</h3>
-                <p id="slice-loop-summary" class="summary-text" data-i18n="complexTask.sliceLoopEmpty">尚未启用 slice-loop。</p>
-                <div id="slice-loop-details" class="quality-list"></div>
-              </article>
-              <article class="complex-task-card">
-                <h3 data-i18n="complexTask.completionTitle">整体完成判断</h3>
-                <p id="completion-gate-summary" class="summary-text" data-i18n="complexTask.completionEmpty">暂无整体完成判断。</p>
-                <div id="completion-gate-details" class="quality-list"></div>
-              </article>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div>
-              <div class="panel-header">
-                <h2 data-i18n="app.qualityChecks">质量关卡</h2>
-              </div>
-              <div id="quality-gates" class="gate-list"></div>
-            </div>
-          </section>
-
-          <section id="acceptance-panel" class="panel acceptance-panel">
-            <div class="panel-header">
-              <h2 data-i18n="acceptance.title">采纳验收</h2>
-              <button id="acceptance-action" type="button" data-i18n="acceptance.confirmButton">确认采纳并运行验收</button>
-            </div>
-            <p id="acceptance-summary" class="summary-text" data-i18n="acceptance.notStarted">确认后会应用本次代码变更，并自动运行全量测试</p>
-            <div id="acceptance-steps" class="acceptance-steps"></div>
-            <div id="acceptance-next-action" class="action-row meta"></div>
-          </section>
-
-          <section id="release-readiness-panel" class="panel release-readiness-panel">
-            <div class="panel-header">
-              <h2 data-i18n="releaseReadiness.title">发布准备</h2>
-              <button id="release-readiness-action" type="button" data-i18n="releaseReadiness.generateButton">生成发布准备报告</button>
-            </div>
-            <p id="release-readiness-summary" class="summary-text" data-i18n="releaseReadiness.empty">采纳验收通过后，可生成本地发布准备报告和 PR draft。</p>
-            <div class="two-column compact-panel-grid">
-              <div>
-                <h3 data-i18n="releaseReadiness.gates">发布关卡</h3>
-                <div id="release-readiness-gates" class="quality-list"></div>
-              </div>
-              <div>
-                <h3 data-i18n="releaseReadiness.prDraft">PR Draft 摘要</h3>
-                <div id="release-readiness-pr" class="quality-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <section id="github-pr-panel" class="panel github-pr-panel">
-            <div class="panel-header">
-              <h2 data-i18n="githubPr.title">GitHub PR / CI</h2>
-              <div class="button-group">
-                <button id="github-pr-action" type="button" data-i18n="githubPr.createDraftButton">推送当前分支并创建 Draft PR</button>
-                <button id="github-ci-action" type="button" class="ghost" data-i18n="githubPr.refreshCiButton">刷新 PR/CI 状态</button>
-              </div>
-            </div>
-            <p id="github-pr-summary" class="summary-text" data-i18n="githubPr.notReady">先生成发布准备报告，且不能存在硬阻塞。</p>
-            <div class="two-column compact-panel-grid">
-              <div>
-                <h3 data-i18n="githubPr.prInfo">Draft PR</h3>
-                <div id="github-pr-info" class="quality-list"></div>
-              </div>
-              <div>
-                <h3 data-i18n="githubPr.ciInfo">CI Checks</h3>
-                <div id="github-ci-info" class="quality-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <section id="staging-readiness-panel" class="panel staging-readiness-panel">
-            <div class="panel-header">
-              <h2 data-i18n="stagingReadiness.title">Staging 准备</h2>
-              <button id="staging-readiness-action" type="button" data-i18n="stagingReadiness.generateButton">生成 Staging 准备判断</button>
-            </div>
-            <p id="staging-readiness-summary" class="summary-text" data-i18n="stagingReadiness.empty">Draft PR 和 CI 状态齐备后，可判断是否可以进入 staging。</p>
-            <div class="two-column compact-panel-grid">
-              <div>
-                <h3 data-i18n="stagingReadiness.gates">Staging 关卡</h3>
-                <div id="staging-readiness-gates" class="quality-list"></div>
-              </div>
-              <div>
-                <h3 data-i18n="stagingReadiness.evidence">判断证据</h3>
-                <div id="staging-readiness-evidence" class="quality-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <section id="deliverables-panel" class="panel deliverables-panel">
-            <div class="panel-header">
-              <h2 data-i18n="app.deliverables">产物与验收</h2>
-            </div>
-            <div class="deliverables-grid">
-              <div class="deliverables-list-pane">
-                <div id="artifact-actions" class="artifact-list"></div>
-                <div id="next-actions" class="action-list"></div>
-              </div>
-              <div class="deliverables-preview-pane">
-                <div class="selected-artifact">
-                  <div>
-                    <h3 id="selected-artifact-title" data-i18n="actions.noDeliverables">暂无可查看产物</h3>
-                    <p id="selected-artifact-description" class="meta"></p>
-                  </div>
-                  <span id="selected-artifact-status" class="mini-status status-muted" data-i18n="actions.artifactPending">未生成</span>
-                </div>
-                <div id="artifact-preview" class="artifact-preview"></div>
-              </div>
-            </div>
-          </section>
         </section>
 
-        <aside class="engineering-rail" tabindex="-1">
+        <aside class="flow-timeline" tabindex="-1">
           <div class="panel-header">
-            <h2 data-i18n="app.engineeringDetails">工程详情</h2>
+            <h2 data-i18n="flow.timelineTitle">任务进展</h2>
           </div>
-          <section class="engineering-card">
-            <h3 data-i18n="app.engineeringRun">运行标识</h3>
-            <pre id="engineering-run" class="detail-box"></pre>
-          </section>
-          <section class="engineering-card">
-            <h3 data-i18n="app.engineeringEvents">过程事件</h3>
-            <pre id="engineering-events" class="detail-box"></pre>
-          </section>
-          <section class="engineering-card">
-            <h3 data-i18n="app.engineeringLog">运行日志</h3>
-            <pre id="engineering-logs" class="detail-box"></pre>
-          </section>
-          <section class="engineering-card">
-            <h3 data-i18n="app.engineeringDiff">代码差异</h3>
-            <pre id="engineering-diff" class="detail-box"></pre>
-          </section>
+          <div id="flow-nodes" class="flow-node-list"></div>
         </aside>
       </section>
     </main>

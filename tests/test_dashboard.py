@@ -709,146 +709,118 @@ console.log(JSON.stringify(vm));
         html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
         i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
 
-        expected = "确认后会应用本次代码变更，并自动运行全量测试"
+        expected = "确认后会应用本次代码变更，并自动运行全量测试。"
 
         self.assertEqual(i18n["acceptance"]["notStarted"], expected)
         self.assertIn(expected, html)
 
-    def test_dashboard_html_contains_memory_recall_panel_before_quality_gates(self) -> None:
+    def test_dashboard_html_uses_three_column_flow_workspace(self) -> None:
         root = Path(__file__).resolve().parents[1]
         html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('id="memory-recall-panel"', html)
-        self.assertIn('id="memory-recall-summary"', html)
-        self.assertIn('id="memory-recall-skills"', html)
-        self.assertIn('id="memory-recall-matches"', html)
-        self.assertLess(html.index('id="artifact-quality-checks"'), html.index('id="memory-recall-panel"'))
-        self.assertLess(html.index('id="memory-recall-panel"'), html.index('id="quality-gates"'))
-
-    def test_dashboard_html_contains_release_readiness_panel_after_acceptance(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-        self.assertIn('id="release-readiness-panel"', html)
-        self.assertIn('id="release-readiness-action"', html)
-        self.assertIn('id="release-readiness-summary"', html)
-        self.assertIn('id="release-readiness-gates"', html)
-        self.assertIn('id="release-readiness-pr"', html)
-        self.assertLess(html.index('id="acceptance-panel"'), html.index('id="release-readiness-panel"'))
-        self.assertLess(html.index('id="release-readiness-panel"'), html.index('id="deliverables-panel"'))
+        self.assertIn('class="workspace"', html)
+        self.assertIn('class="task-list"', html)
+        self.assertIn('class="flow-main"', html)
+        self.assertIn('class="flow-timeline"', html)
+        self.assertLess(html.index('class="task-list"'), html.index('class="flow-main"'))
+        self.assertLess(html.index('class="flow-main"'), html.index('class="flow-timeline"'))
+        self.assertLess(html.index('class="summary-band"'), html.index('id="flow-node-detail"'))
+        self.assertLess(html.index('id="flow-node-detail"'), html.index('class="request-panel"'))
+        self.assertIn('id="flow-nodes"', html)
+        self.assertIn('id="flow-node-detail"', html)
+        self.assertIn('id="flow-artifact-actions"', html)
+        self.assertIn('id="flow-artifact-preview"', html)
+        self.assertIn('id="flow-engineering-evidence"', html)
 
     def test_dashboard_html_defaults_to_business_copy_and_hides_engineering_controls(self) -> None:
         root = Path(__file__).resolve().parents[1]
         html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
 
         self.assertIn("data-i18n", html)
-        self.assertIn("advanced-settings", html)
-        self.assertIn('id="deliverables-panel"', html)
-        self.assertIn('id="acceptance-panel"', html)
+        self.assertNotIn("advanced-settings", html)
+        self.assertIn('class="config-grid"', html)
         self.assertIn('id="acceptance-action"', html)
-        self.assertIn('id="acceptance-steps"', html)
-        self.assertIn('id="stage-detail-panel"', html)
-        self.assertIn('class="panel deliverables-panel"', html)
-        self.assertIn('class="deliverables-grid"', html)
-        self.assertIn('class="engineering-rail"', html)
+        self.assertIn('id="flow-node-detail"', html)
+        self.assertNotIn('id="deliverables-panel"', html)
+        self.assertNotIn('id="acceptance-panel"', html)
+        self.assertNotIn('class="engineering-rail"', html)
         self.assertNotIn('app.acceptanceSummary', html)
         self.assertNotIn('app.acceptanceSummaryHint', html)
         self.assertNotIn("engineering-panel", html)
-        self.assertLess(html.index('id="artifact-actions"'), html.index('id="artifact-preview"'))
-        self.assertEqual(html.count('id="deliverables"'), 0)
-        self.assertLess(html.index('id="business-stages"'), html.index('id="stage-detail-panel"'))
-        self.assertLess(html.index('id="stage-detail-panel"'), html.index('id="health-summary"'))
+        self.assertNotIn('id="business-stages"', html)
+        self.assertNotIn('id="health-summary"', html)
+        self.assertNotIn('id="quality-gates"', html)
         for engineering_copy in ("Pipeline", "Gates", "Logs", "Artifacts", "Executor", "Provider", "Model"):
             self.assertNotIn(engineering_copy, html)
 
-    def test_dashboard_engineering_details_are_third_column_cards(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-        rail_start = html.index('class="engineering-rail"')
-        for engineering_id in ("engineering-run", "engineering-events", "engineering-logs", "engineering-diff"):
-            self.assertGreater(html.index(f'id="{engineering_id}"'), rail_start)
-        self.assertEqual(html.count('class="engineering-card"'), 4)
-
-    def test_dashboard_deliverables_panel_uses_list_and_preview_columns(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-        panel_start = html.index('id="deliverables-panel"')
-        list_start = html.index('class="deliverables-list-pane"', panel_start)
-        preview_start = html.index('class="deliverables-preview-pane"', panel_start)
-        self.assertLess(list_start, preview_start)
-        self.assertGreater(html.index('id="artifact-actions"', list_start), list_start)
-        self.assertGreater(html.index('id="next-actions"', list_start), list_start)
-        self.assertGreater(html.index('id="artifact-preview"', preview_start), preview_start)
-
-    def test_dashboard_quality_gates_use_compact_two_column_grid(self) -> None:
+    def test_dashboard_flow_detail_uses_compact_artifact_and_evidence_layout(self) -> None:
         root = Path(__file__).resolve().parents[1]
         css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
 
-        self.assertIn(".gate-list", css)
-        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", css)
-        self.assertIn(".gate-card p {\n  grid-column: 1 / -1;", css)
+        self.assertIn(".flow-main", css)
+        self.assertIn(".flow-timeline", css)
+        self.assertIn(".flow-node-detail", css)
+        self.assertIn(".flow-detail-grid", css)
+        self.assertIn(".flow-artifact-grid", css)
+        self.assertIn(".flow-engineering-evidence", css)
+        self.assertIn(".flow-node-button.selected", css)
+        self.assertIn(".task-list {\n  position: sticky;", css)
+        self.assertIn("#runs {\n  overflow: auto;", css)
+        self.assertIn(".flow-main {\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr) auto;", css)
+        self.assertIn(".request-panel {\n  position: sticky;", css)
 
-    def test_dashboard_stage_detail_has_i18n_and_render_helpers(self) -> None:
+    def test_dashboard_flow_detail_has_i18n_and_render_helpers(self) -> None:
         root = Path(__file__).resolve().parents[1]
         app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
         i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
 
-        self.assertIn("selectedStageDetail", app_js)
-        self.assertIn("renderStageDetail", app_js)
-        self.assertIn("renderStageDeliverables", app_js)
-        self.assertIn("renderStageEngineering", app_js)
+        self.assertIn("selectedFlowNodeId", app_js)
+        self.assertIn("renderFlowTimeline", app_js)
+        self.assertIn("renderSelectedFlowNode", app_js)
+        self.assertIn("renderFlowNodeArtifacts", app_js)
+        self.assertIn("renderFlowNodeEngineering", app_js)
         self.assertIn("renderImplementationFlow", app_js)
-        self.assertIn("filterEngineeringForStage", app_js)
         self.assertIn("loadArtifactContent", app_js)
-        self.assertIn("stageDetail", i18n)
+        self.assertIn("flow", i18n)
         self.assertIn("implementationFlow", i18n)
         for key in (
-            "deliverablesSuffix",
-            "engineeringSuffix",
-            "emptyDeliverables",
-            "emptyEngineering",
-            "openGlobalDeliverables",
-            "openGlobalEngineering",
+            "timelineTitle",
+            "detailTitle",
+            "artifacts",
+            "engineeringEvidence",
+            "allArtifacts",
+            "emptyArtifacts",
         ):
-            self.assertIn(key, i18n["stageDetail"])
+            self.assertIn(key, i18n["flow"])
 
     def test_dashboard_stage_detail_content_is_bounded_inside_card(self) -> None:
         root = Path(__file__).resolve().parents[1]
         app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
         css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
 
-        self.assertIn('body.className = `stage-detail-body ${selection.mode === "engineering" ? "engineering-mode" : "deliverables-mode"}`', app_js)
-        self.assertIn('list.className = "stage-detail-list"', app_js)
-        self.assertIn(".stage-detail-panel {\n  display: grid;", css)
-        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", css)
-        self.assertIn("max-height: min(620px, 72vh);", css)
-        self.assertIn(".stage-detail-body.engineering-mode {\n  display: flex;\n  flex-direction: column;", css)
-        self.assertIn("overflow: auto;", css)
-        self.assertIn("align-items: stretch;", css)
-        self.assertIn(".implementation-flow", css)
+        self.assertIn('list.className = "flow-evidence-list"', app_js)
+        self.assertIn(".flow-node-detail {\n  display: grid;", css)
+        self.assertIn("grid-template-columns: minmax(0, 1fr);", css)
         self.assertIn("max-height: none;", css)
-        self.assertIn("min-height: auto;", css)
-        self.assertIn("overflow: visible;", css)
-        self.assertIn(".stage-detail-body.engineering-mode > .stage-detail-block", css)
+        self.assertIn(".flow-detail-grid", css)
+        self.assertIn("overflow: auto;", css)
+        self.assertIn(".implementation-flow", css)
+        self.assertIn(".flow-evidence-list li", css)
         self.assertIn("width: 100%;", css)
-        self.assertIn("white-space: nowrap;", css)
-        self.assertIn(".stage-detail-list li", css)
         self.assertIn("overflow-wrap: anywhere;", css)
 
-    def test_dashboard_stage_detail_scroll_is_preserved_during_polling_refresh(self) -> None:
+    def test_dashboard_flow_detail_scroll_is_preserved_during_polling_refresh(self) -> None:
         root = Path(__file__).resolve().parents[1]
         app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn("stageDetailScroll", app_js)
-        self.assertIn("function stageDetailKey", app_js)
-        self.assertIn("function captureStageDetailScroll", app_js)
-        self.assertIn("function restoreStageDetailScroll", app_js)
-        self.assertIn("captureStageDetailScroll();", app_js)
-        self.assertIn('body.addEventListener("scroll"', app_js)
-        self.assertIn("restoreStageDetailScroll(body);", app_js)
-        self.assertIn('state.stageDetailScroll = { key: "", top: 0 };', app_js)
+        self.assertIn("flowDetailScroll", app_js)
+        self.assertIn("function flowDetailKey", app_js)
+        self.assertIn("function captureFlowDetailScroll", app_js)
+        self.assertIn("function restoreFlowDetailScroll", app_js)
+        self.assertIn("captureFlowDetailScroll();", app_js)
+        self.assertIn('detail.addEventListener("scroll"', app_js)
+        self.assertIn("restoreFlowDetailScroll(detail);", app_js)
+        self.assertIn('state.flowDetailScroll = { key: "", top: 0 };', app_js)
 
     def test_dashboard_frontend_display_copy_comes_from_i18n(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -878,10 +850,9 @@ console.log(JSON.stringify(vm));
         self.assertIn(".slice(0, 3)", app_js)
         self.assertIn("raw_warnings", app_js)
         self.assertIn("rawWarningsLabel", app_js)
-        self.assertIn('focusSection("deliverables-panel")', app_js)
-        self.assertIn('focusSection("engineering-rail")', app_js)
-        self.assertIn('toggleStageDetail(stage, "deliverables")', app_js)
-        self.assertIn('toggleStageDetail(stage, "engineering")', app_js)
+        self.assertIn("renderFlowNodeEngineering", app_js)
+        self.assertIn("renderAllArtifactsNode", app_js)
+        self.assertIn("selectFlowNode", app_js)
         self.assertNotIn("for (const warning of health.warnings", app_js)
 
     def test_dashboard_diff_view_uses_file_grouped_codex_style_preview(self) -> None:
@@ -925,9 +896,7 @@ console.log(JSON.stringify(vm));
         self.assertIn("acceptance-action", app_js)
         self.assertIn("release-readiness-action", app_js)
         self.assertIn("acceptance-step", app_js)
-        self.assertIn(".acceptance-panel", css)
         self.assertIn(".acceptance-step", css)
-        self.assertIn(".release-readiness-panel", css)
         self.assertIn(".release-gate-row", css)
 
     def test_dashboard_pr_ci_frontend_exposes_button_renderer_and_i18n(self) -> None:
@@ -937,7 +906,6 @@ console.log(JSON.stringify(vm));
         css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
         i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
 
-        self.assertIn('id="github-pr-panel"', html)
         self.assertIn('id="github-pr-action"', html)
         self.assertIn('id="github-ci-action"', html)
         self.assertIn("renderGithubPrCi", app_js)
@@ -945,7 +913,7 @@ console.log(JSON.stringify(vm));
         self.assertIn("refreshGithubCi", app_js)
         self.assertIn('/pr/draft"', app_js)
         self.assertIn('/pr/status"', app_js)
-        self.assertIn(".github-pr-panel", css)
+        self.assertIn(".github-check", css)
         self.assertIn("githubPr", i18n)
         for key in ("title", "createDraftButton", "refreshCiButton", "notReady", "noPr"):
             self.assertIn(key, i18n["githubPr"])
@@ -956,7 +924,6 @@ console.log(JSON.stringify(vm));
         app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
         i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
 
-        self.assertIn('id="staging-readiness-panel"', html)
         self.assertIn('id="staging-readiness-action"', html)
         self.assertIn("renderStagingReadiness", app_js)
         self.assertIn("startStagingReadiness", app_js)
@@ -964,8 +931,7 @@ console.log(JSON.stringify(vm));
         self.assertIn("stagingReadiness", i18n)
         for key in ("title", "generateButton", "empty", "decision", "gates", "nextActions"):
             self.assertIn(key, i18n["stagingReadiness"])
-        self.assertLess(html.index('id="github-pr-panel"'), html.index('id="staging-readiness-panel"'))
-        self.assertLess(html.index('id="staging-readiness-panel"'), html.index('id="deliverables-panel"'))
+        self.assertIn('id="flow-node-detail"', html)
 
     def test_dashboard_pr_ci_empty_state_explains_draft_pr_next_step(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -976,7 +942,7 @@ console.log(JSON.stringify(vm));
             i18n["githubPr"]["noPr"],
         )
 
-    def test_business_view_model_translates_run_to_five_business_stages(self) -> None:
+    def test_business_view_model_translates_run_to_extended_flow_nodes(self) -> None:
         root = Path(__file__).resolve().parents[1]
         i18n_path = root / "dashboard" / "i18n" / "zh-CN.json"
         module_path = root / "dashboard" / "business_view.js"
@@ -1060,6 +1026,11 @@ console.log(JSON.stringify(vm));
         completed = subprocess.run(["node", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
         vm = json.loads(completed.stdout)
 
+        self.assertEqual(
+            [node["id"] for node in vm["flowNodes"]],
+            ["requirement", "design", "implementation", "quality", "delivery", "release", "github_pr_ci", "staging"],
+        )
+        self.assertEqual(vm["recommendedFlowNodeId"], "delivery")
         self.assertEqual([stage["id"] for stage in vm["stages"]], ["requirement", "design", "implementation", "quality", "delivery"])
         self.assertEqual(vm["stages"][0]["title"], "需求理解")
         self.assertEqual(vm["stages"][1]["statusLabel"], "已完成")
@@ -1081,6 +1052,19 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
         self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
         self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
+        delivery_node = vm["flowNodes"][4]
+        release_node = vm["flowNodes"][5]
+        github_node = vm["flowNodes"][6]
+        staging_node = vm["flowNodes"][7]
+        self.assertEqual(delivery_node["status"], "waiting_confirmation")
+        self.assertTrue(any(action["id"] == "acceptance" for action in delivery_node["actions"]))
+        self.assertTrue(any(artifact["path"] == "final_report.md" for artifact in delivery_node["artifacts"]))
+        self.assertTrue(any(action["id"] == "release_readiness" for action in release_node["actions"]))
+        self.assertTrue(any(action["id"] == "github_pr" for action in github_node["actions"]))
+        self.assertTrue(any(action["id"] == "github_ci" for action in github_node["actions"]))
+        self.assertTrue(any(action["id"] == "staging_readiness" for action in staging_node["actions"]))
+        self.assertIn("engineeringEvidence", vm["flowNodes"][2])
+        self.assertTrue(vm["flowNodes"][2]["engineeringEvidence"]["events"])
 
     def test_business_view_model_marks_requirement_stage_failed_from_requirement_gate(self) -> None:
         run = {
@@ -1120,6 +1104,7 @@ console.log(JSON.stringify(vm));
         requirement_stage = vm["stages"][0]
 
         self.assertEqual(vm["status"], "needs_attention")
+        self.assertEqual(vm["recommendedFlowNodeId"], "requirement")
         self.assertEqual(requirement_stage["status"], "needs_attention")
         self.assertEqual(requirement_stage["statusLabel"], "需要处理")
         self.assertTrue(any(artifact["path"] == "requirements/brief_analysis.json" for artifact in requirement_stage["artifacts"]))

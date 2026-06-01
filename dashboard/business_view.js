@@ -38,11 +38,54 @@
     { id: "quality", agents: ["reviewer", "verifier"], artifactPaths: ["review_report.md", "test_report.md"] },
     { id: "delivery", agents: ["publisher"], artifactPaths: ["final_report.md"] },
   ];
+  const FLOW_NODE_IDS = ["requirement", "design", "implementation", "quality", "delivery", "release", "github_pr_ci", "staging"];
+  const FLOW_NODE_ARTIFACTS = {
+    requirement: [
+      "task.yaml",
+      "context.md",
+      "requirements/brief_analysis.json",
+      "requirements/requirement_quality_report.json",
+      "requirements/clarification.md",
+      "requirements/open_questions.md",
+      "requirements/assumptions.md",
+      "memory_recall.md",
+      "memory_recall.json",
+      "acceptance_criteria.md",
+      "context_pack.md",
+    ],
+    design: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/acceptance_coverage_matrix.json", "planning/planning_quality_report.json"],
+    implementation: ["coding_prompt.md", "codex/implementation_trace.json", "codex/slice_loop_state.json", "implementation_completion_gate.md", "implementation_completion_gate.json", "codex/diff.patch"],
+    quality: ["review_report.md", "test_report.md"],
+    delivery: ["final_report.md"],
+    release: ["release_readiness.md", "release_readiness.json", "pr_draft.md"],
+    github_pr_ci: ["github_pr.md", "github_pr.json", "ci_status.md", "ci_status.json"],
+    staging: ["staging_readiness.md", "staging_readiness.json"],
+  };
+  const FLOW_NODE_GATES = {
+    requirement: ["requirement_quality"],
+    design: ["planning_quality", "before_coding", "complex_task_ready"],
+    implementation: ["complex_task_ready"],
+    quality: ["before_publish"],
+    delivery: ["apply_gate"],
+    release: [],
+    github_pr_ci: ["ci_gate"],
+    staging: ["deploy_gate", "human_release_gate"],
+  };
+  const FLOW_NODE_AGENTS = {
+    requirement: ["orchestrator", "requirements"],
+    design: ["product", "architect", "ux", "qa"],
+    implementation: ["coder"],
+    quality: ["reviewer", "verifier"],
+    delivery: ["publisher"],
+    release: [],
+    github_pr_ci: ["ci"],
+    staging: ["deploy", "human_approval"],
+  };
 
   function toBusinessViewModel(run, i18n) {
     const status = overallStatus(run);
     const stages = STAGE_GROUPS.map((group) => buildStage(run, i18n, group));
-    return {
+    const baseVm = {
       runId: run.run_id || "",
       brief: run.brief || "",
       status,
@@ -79,6 +122,9 @@
         qualityReport: run.quality_report || {},
       },
     };
+    baseVm.flowNodes = buildFlowNodes(run, i18n, baseVm);
+    baseVm.recommendedFlowNodeId = recommendedFlowNodeId(baseVm.flowNodes);
+    return baseVm;
   }
 
   function buildHealth(run, i18n) {
@@ -293,6 +339,201 @@
     };
   }
 
+  function buildFlowNodes(run, i18n, vm) {
+    const stageById = new Map((vm.stages || []).map((stage) => [stage.id, stage]));
+    return FLOW_NODE_IDS.map((id) => buildFlowNode(id, run, i18n, vm, stageById));
+  }
+
+  function buildFlowNode(id, run, i18n, vm, stageById) {
+    const stage = stageById.get(id);
+    const status = stage ? stage.status : flowNodeStatus(id, run, vm);
+    const copy = lookup(i18n, `flow.nodes.${id}`, {});
+    const artifacts = artifactsForFlowNode(id, vm.deliverables || []);
+    return {
+      id,
+      title: copy.title || (stage && stage.title) || id,
+      description: copy.description || (stage && stage.description) || "",
+      status,
+      statusLabel: statusLabel(i18n, status),
+      tone: lookup(i18n, `status.${status}.tone`, "muted"),
+      summary: flowNodeSummary(id, status, run, i18n, vm, copy, stage),
+      artifacts,
+      gates: gatesForFlowNode(id, vm, run),
+      actions: actionsForFlowNode(id, run, vm),
+      insights: insightsForFlowNode(id, run, vm, i18n),
+      engineeringEvidence: engineeringForFlowNode(id, run, vm),
+      agentIds: FLOW_NODE_AGENTS[id] || [],
+    };
+  }
+
+  function artifactsForFlowNode(id, artifacts) {
+    const allowed = FLOW_NODE_ARTIFACTS[id] || [];
+    return artifacts.filter((artifact) => allowed.includes(artifact.path));
+  }
+
+  function gatesForFlowNode(id, vm, run) {
+    const allowed = FLOW_NODE_GATES[id] || [];
+    const gates = (vm.qualityGates || []).filter((gate) => allowed.includes(gate.id));
+    if (id === "release" && (vm.releaseReadiness.gates || []).length) {
+      return (vm.releaseReadiness.gates || []).map((gate) => ({
+        id: gate.id || "release_gate",
+        title: gate.id || "release_gate",
+        status: gate.status === "passed" ? "completed" : gate.status === "blocked" ? "needs_attention" : "waiting_confirmation",
+        statusLabel: gate.status || "",
+        tone: gate.status === "passed" ? "green" : gate.status === "blocked" ? "red" : "amber",
+        detail: gate.reason || "",
+      }));
+    }
+    if (id === "staging" && (vm.stagingReadiness.gates || []).length) {
+      return (vm.stagingReadiness.gates || []).map((gate) => ({
+        id: gate.id || "staging_gate",
+        title: gate.id || "staging_gate",
+        status: gate.status === "passed" ? "completed" : gate.status === "blocked" ? "needs_attention" : "waiting_confirmation",
+        statusLabel: gate.status || "",
+        tone: gate.status === "passed" ? "green" : gate.status === "blocked" ? "red" : "amber",
+        detail: gate.reason || "",
+      }));
+    }
+    return gates;
+  }
+
+  function actionsForFlowNode(id, run, vm) {
+    if (id === "delivery") return [{ id: "acceptance" }];
+    if (id === "release") return [{ id: "release_readiness" }];
+    if (id === "github_pr_ci") return [{ id: "github_pr" }, { id: "github_ci" }];
+    if (id === "staging") return [{ id: "staging_readiness" }];
+    return [];
+  }
+
+  function flowNodeStatus(id, run, vm) {
+    if (id === "release") {
+      const decision = vm.releaseReadiness.decision || "not_generated";
+      if (decision === "blocked") return "needs_attention";
+      if (decision === "ready_for_pr_ci" || decision === "ready_with_warnings") return "completed";
+      if ((vm.acceptance || {}).status === "completed") return "waiting_confirmation";
+      return "not_started";
+    }
+    if (id === "github_pr_ci") {
+      const prStatus = vm.githubPr.status || "not_started";
+      const ciStatus = vm.githubPr.ciStatus || "not_started";
+      if (prStatus === "failed" || ciStatus === "failed") return "needs_attention";
+      if (ciStatus === "passed") return "completed";
+      if (prStatus === "running" || ciStatus === "running" || ciStatus === "pending") return "processing";
+      if (prStatus === "created" || vm.releaseReadiness.decision === "ready_for_pr_ci" || vm.releaseReadiness.decision === "ready_with_warnings") return "waiting_confirmation";
+      return "not_started";
+    }
+    if (id === "staging") {
+      const decision = vm.stagingReadiness.decision || "not_generated";
+      if (decision === "ready_for_staging") return "completed";
+      if (decision === "blocked") return "needs_attention";
+      if (decision === "waiting_for_ci") return "waiting_confirmation";
+      if ((vm.githubPr || {}).ciStatus === "passed") return "waiting_confirmation";
+      return "not_started";
+    }
+    return "not_started";
+  }
+
+  function flowNodeSummary(id, status, run, i18n, vm, copy, stage) {
+    if (id === "release" && vm.releaseReadiness.summary) return vm.releaseReadiness.summary;
+    if (id === "github_pr_ci" && vm.githubPr.summary) return vm.githubPr.summary;
+    if (id === "staging" && vm.stagingReadiness.summary) return vm.stagingReadiness.summary;
+    return lookup(copy, `summary.${status}`, (stage && stage.summary) || lookup(i18n, `status.${status}.description`, ""));
+  }
+
+  function insightsForFlowNode(id, run, vm, i18n) {
+    if (id === "requirement") {
+      return [
+        `${lookup(i18n, "complexTask.statusLabel", "状态")}: ${vm.requirementUnderstanding.statusLabel || ""}`,
+        vm.requirementUnderstanding.complexity ? `${lookup(i18n, "complexTask.complexity", "复杂度")}: ${vm.requirementUnderstanding.complexity}` : "",
+        vm.requirementUnderstanding.planningMode ? `${lookup(i18n, "complexTask.planningMode", "规划模式")}: ${vm.requirementUnderstanding.planningMode}` : "",
+        ...(vm.requirementUnderstanding.blockingQuestions || []).map((item) => `${lookup(i18n, "complexTask.blockingQuestion", "阻塞问题")}: ${item}`),
+        ...(vm.memoryRecall.recommendedSkills || []).slice(0, 3).map((item) => `${lookup(i18n, "memoryRecall.skills", "推荐 Project Skills")}: ${item.id || ""}`),
+      ].filter(Boolean);
+    }
+    if (id === "design") {
+      return [
+        vm.acceptanceCoverage.summary,
+        `${lookup(i18n, "complexTask.ready", "是否可执行")}: ${vm.acceptanceCoverage.ready ? lookup(i18n, "githubPr.yes", "是") : lookup(i18n, "githubPr.no", "否")}`,
+      ].filter(Boolean);
+    }
+    if (id === "implementation") {
+      return [
+        vm.implementationFlow.status ? `${lookup(i18n, "complexTask.statusLabel", "状态")}: ${vm.implementationFlow.status}` : "",
+        vm.sliceLoop.summary,
+        vm.completionGate.summary,
+      ].filter(Boolean);
+    }
+    if (id === "quality") {
+      return [
+        vm.artifactQuality.summary,
+        ...(vm.risks || []).slice(0, 3).map((item) => `${lookup(i18n, "stageDetail.riskEvents", "风险")}: ${item}`),
+      ].filter(Boolean);
+    }
+    if (id === "delivery") {
+      return [
+        (vm.acceptance || {}).conclusion || lookup(i18n, "acceptance.notStarted", ""),
+        (vm.applyGate || {}).reason || "",
+      ].filter(Boolean);
+    }
+    if (id === "release") {
+      return [
+        `${lookup(i18n, "releaseReadiness.decision", "发布判断")}: ${vm.releaseReadiness.decisionLabel || ""}`,
+        ...(vm.releaseReadiness.blockers || []).map((item) => `${lookup(i18n, "githubPr.blocker", "阻塞")}: ${item}`),
+        ...(vm.releaseReadiness.warnings || []).map((item) => `${lookup(i18n, "githubPr.warning", "提示")}: ${item}`),
+      ].filter(Boolean);
+    }
+    if (id === "github_pr_ci") {
+      return [
+        `${lookup(i18n, "githubPr.prInfo", "Draft PR")}: ${vm.githubPr.statusLabel || ""}`,
+        `${lookup(i18n, "githubPr.ciInfo", "CI Checks")}: ${vm.githubPr.ciStatusLabel || ""}`,
+        vm.githubPr.nextAction || "",
+      ].filter(Boolean);
+    }
+    if (id === "staging") {
+      return [
+        `${lookup(i18n, "stagingReadiness.decision", "Staging 判断")}: ${vm.stagingReadiness.decisionLabel || ""}`,
+        vm.stagingReadiness.evidence && vm.stagingReadiness.evidence.ci_summary ? vm.stagingReadiness.evidence.ci_summary : "",
+      ].filter(Boolean);
+    }
+    return [];
+  }
+
+  function engineeringForFlowNode(id, run, vm) {
+    const agentIds = FLOW_NODE_AGENTS[id] || [];
+    const events = (vm.engineering.events || []).filter((event) => {
+      const text = JSON.stringify(event);
+      return agentIds.length ? agentIds.some((agentId) => text.includes(agentId)) : false;
+    });
+    const relatedStages = (run.stages || []).filter((stage) => agentIds.includes(stage.id));
+    const fallbackEvents = events.length ? events : relatedStages.map((stage) => ({
+      agent_id: stage.id,
+      status: stage.status,
+      outputs: stage.outputs || [],
+    }));
+    const logs = (vm.engineering.logs || []).filter((line) => agentIds.some((agentId) => String(line).includes(agentId)));
+    return {
+      agentIds,
+      events: fallbackEvents,
+      logs: logs.length ? logs : (vm.engineering.logs || []).slice(0, 3),
+      diffSummary: id === "implementation" || id === "quality" || id === "release" ? vm.engineering.diffSummary : {},
+      run: {
+        runId: vm.engineering.runId,
+        status: vm.engineering.status,
+        executor: vm.engineering.executor,
+      },
+    };
+  }
+
+  function recommendedFlowNodeId(nodes) {
+    const order = ["needs_attention", "processing", "waiting_confirmation"];
+    for (const status of order) {
+      const found = nodes.find((node) => node.status === status);
+      if (found) return found.id;
+    }
+    const completed = [...nodes].reverse().find((node) => node.status === "completed");
+    return (completed || nodes[0] || {}).id || "";
+  }
+
   function stageStatus(run, group) {
     if ((run.failure_category || "") === "permission_error" && group.id === "implementation") {
       return "needs_attention";
@@ -384,7 +625,26 @@
   }
 
   function buildArtifacts(run, i18n) {
-    return (run.artifacts || []).map((artifact) => {
+    const seen = new Set();
+    const artifacts = [];
+    for (const artifact of run.artifacts || []) {
+      if (!artifact || !artifact.path || seen.has(artifact.path)) continue;
+      seen.add(artifact.path);
+      artifacts.push(artifact);
+    }
+    for (const stage of run.stages || []) {
+      for (const path of [...(stage.outputs || []), ...(stage.output_paths || [])]) {
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        artifacts.push({
+          label: path,
+          path,
+          scope: "run",
+          exists: stage.status === "completed" || stage.status === "running",
+        });
+      }
+    }
+    return artifacts.map((artifact) => {
       const copy = artifactCopy(i18n, artifact);
       return {
         ...artifact,

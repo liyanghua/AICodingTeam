@@ -155,10 +155,9 @@ h3 {
   margin: 14px auto;
 }
 
-.hero,
+.request-panel,
 .task-list,
 .panel,
-.engineering-rail,
 .summary-band,
 .engineering-card {
   border: var(--component-card-border);
@@ -167,15 +166,18 @@ h3 {
   box-shadow: var(--elevation-panel);
 }
 
-.hero {
+.request-panel {
+  position: sticky;
+  bottom: 14px;
   display: grid;
-  grid-template-columns: minmax(240px, 390px) minmax(0, 1fr);
-  gap: 22px;
+  gap: 14px;
+  grid-template-columns: minmax(160px, 0.28fr) minmax(0, 1fr);
   align-items: start;
   padding: 18px;
+  z-index: 2;
 }
 
-.hero-copy p:last-child {
+.request-copy p:last-child {
   margin-bottom: 0;
 }
 
@@ -212,59 +214,254 @@ h3 {
   align-items: flex-start;
 }
 
-.advanced-settings {
-  min-width: min(100%, 580px);
-  color: var(--color-text-muted);
-}
-
-.advanced-settings summary {
-  min-height: var(--component-button-height);
-  width: fit-content;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  color: var(--color-text);
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-}
-
-.advanced-grid {
+.config-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(130px, 1fr));
   gap: 10px;
-  margin-top: 10px;
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-subtle);
 }
 
 .workspace {
   display: grid;
-  grid-template-columns: 260px minmax(620px, 1fr) 320px;
+  grid-template-columns: 260px minmax(620px, 1fr) 360px;
   gap: 14px;
-  margin-top: 14px;
   align-items: start;
+  min-height: calc(100vh - 28px);
 }
 
 .task-list,
-.engineering-rail {
+.flow-timeline {
   min-height: calc(100vh - 176px);
   padding: var(--space-3);
 }
 
-.engineering-rail {
+.task-list {
   position: sticky;
   top: 14px;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 28px);
+  overflow: hidden;
+}
+
+#runs {
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.flow-timeline {
+  position: sticky;
+  top: 14px;
+  display: grid;
+  align-content: start;
   gap: var(--space-3);
   max-height: calc(100vh - 28px);
   overflow: auto;
 }
 
-.main-panel {
+.flow-main {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
+  min-height: calc(100vh - 28px);
+  max-height: calc(100vh - 28px);
+  min-width: 0;
+}
+
+.flow-node-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.flow-node-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: start;
+  width: 100%;
+  min-height: 62px;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 10px;
+  text-align: left;
+}
+
+.flow-node-button:hover,
+.flow-node-button.selected {
+  border-color: var(--color-action);
+  background: #eef6fb;
+}
+
+.flow-node-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 7px;
+  border-radius: var(--radius-pill);
+}
+
+.flow-node-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.flow-node-body strong,
+.flow-node-body span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-node-body span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+  white-space: nowrap;
+}
+
+.flow-node-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  border: var(--component-card-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  box-shadow: var(--elevation-panel);
+  padding: 14px;
+}
+
+.flow-detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.flow-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.flow-detail-card,
+.flow-artifact-card,
+.flow-engineering-evidence {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  border: var(--component-card-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-subtle);
+  padding: 12px;
+}
+
+.flow-actions-card .button-group,
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.flow-artifact-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.32fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.flow-artifact-preview-pane {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.flow-artifact-card .artifact-list {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+}
+
+.flow-engineering-evidence {
+  background: var(--color-surface);
+}
+
+.flow-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.flow-evidence-card {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  border: var(--component-card-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-subtle);
+  padding: 10px;
+}
+
+.flow-evidence-card strong {
+  font-size: var(--font-size-meta);
+}
+
+.flow-evidence-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
+.flow-evidence-list li {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.flow-node-specifics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.flow-specific-card {
+  background: var(--color-surface);
+}
+
+.flow-specific-block {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  border: var(--component-card-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  padding: 10px;
+}
+
+.flow-specific-block strong {
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+.flow-specific-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
+.flow-specific-block p,
+.flow-specific-list li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.flow-hidden-actions {
+  display: none;
 }
 
 .summary-band {
@@ -300,7 +497,6 @@ h3 {
 .task-card,
 .artifact-button,
 .gate-card,
-.business-stage-card,
 .action-row {
   border: var(--component-card-border);
   border-radius: var(--radius-control);
@@ -325,133 +521,6 @@ h3 {
 
 .task-card strong {
   overflow-wrap: anywhere;
-}
-
-.business-stage-list {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.business-stage-card {
-  display: grid;
-  gap: 10px;
-  min-height: 235px;
-  padding: var(--space-3);
-}
-
-.stage-detail-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: var(--space-3);
-  border: var(--component-card-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-subtle);
-  padding: var(--space-3);
-  max-height: min(620px, 72vh);
-  min-width: 0;
-  overflow: hidden;
-}
-
-.stage-detail-panel[hidden] {
-  display: none;
-}
-
-.stage-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.stage-detail-header h3 {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.stage-detail-body {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.32fr) minmax(0, 1fr);
-  gap: var(--space-3);
-  align-items: start;
-  min-height: 0;
-  min-width: 0;
-  overflow: auto;
-  padding-right: var(--space-1);
-}
-
-.stage-detail-body.engineering-mode {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  overflow: auto;
-}
-
-.stage-detail-body.deliverables-mode {
-  overflow: auto;
-}
-
-.stage-artifact-list,
-.stage-detail-preview,
-.stage-detail-block {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.stage-artifact-list {
-  max-height: 420px;
-  overflow: auto;
-}
-
-.stage-detail-preview {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.stage-artifact-preview {
-  min-height: 180px;
-  max-height: min(360px, 46vh);
-  margin: 0;
-  overflow: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-code-background);
-  color: var(--color-code-text);
-  padding: var(--space-3);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-meta);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.stage-detail-block ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-meta);
-  line-height: var(--line-height-body);
-}
-
-.stage-detail-block p,
-.stage-detail-list li {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.stage-detail-body.engineering-mode > .stage-detail-block,
-.implementation-flow > .stage-detail-block {
-  border: var(--component-card-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  padding: 10px;
-}
-
-.stage-detail-block strong {
-  display: block;
-  margin-bottom: var(--space-1);
 }
 
 .implementation-flow {
@@ -533,48 +602,6 @@ h3 {
   border-color: #efc7c7;
 }
 
-.card-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.stage-summary {
-  min-height: 40px;
-  margin-bottom: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-meta);
-  line-height: 1.5;
-}
-
-.stage-rows {
-  display: grid;
-  gap: 7px;
-  margin-bottom: 0;
-}
-
-.stage-rows dt {
-  color: var(--color-text);
-  font-size: var(--font-size-meta);
-  font-weight: 700;
-}
-
-.stage-rows dd {
-  margin-left: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-meta);
-  line-height: var(--line-height-body);
-  overflow-wrap: anywhere;
-}
-
-.card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  align-self: end;
-}
-
 .status-pill,
 .mini-status {
   display: inline-flex;
@@ -613,12 +640,6 @@ h3 {
   color: var(--color-status-muted);
 }
 
-.two-column {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 14px;
-}
-
 .compact-panel-grid {
   margin-top: var(--space-3);
 }
@@ -654,62 +675,6 @@ h3 {
 
 .gate-card p {
   grid-column: 1 / -1;
-}
-
-.acceptance-panel {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.acceptance-panel .panel-header,
-.release-readiness-panel .panel-header,
-.github-pr-panel .panel-header,
-.staging-readiness-panel .panel-header {
-  margin-bottom: 0;
-}
-
-.release-readiness-panel,
-.github-pr-panel,
-.staging-readiness-panel {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.complex-task-panel {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.complex-task-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-
-.complex-task-card {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-  border: var(--component-card-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  padding: 10px;
-}
-
-.complex-task-card h3,
-.complex-task-card p {
-  margin-bottom: 0;
-}
-
-.complex-task-card .quality-row {
-  overflow-wrap: anywhere;
-}
-
-.github-pr-panel .button-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  justify-content: flex-end;
 }
 
 .github-check {
@@ -842,24 +807,6 @@ h3 {
   margin-top: var(--space-3);
 }
 
-.deliverables-grid {
-  display: grid;
-  grid-template-columns: minmax(190px, 0.34fr) minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.deliverables-list-pane,
-.deliverables-preview-pane {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.deliverables-list-pane {
-  max-height: 620px;
-  overflow: auto;
-}
-
 .selected-artifact {
   display: flex;
   align-items: flex-start;
@@ -875,7 +822,7 @@ h3 {
   margin-bottom: 0;
 }
 
-.deliverables-panel .artifact-preview {
+.flow-artifact-card .artifact-preview {
   min-height: 460px;
   max-height: min(62vh, 720px);
   margin-top: 0;
@@ -991,13 +938,6 @@ h3 {
   color: #9fb4c5;
 }
 
-.engineering-card {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  box-shadow: var(--elevation-none);
-}
-
 .artifact-button.selected {
   border-color: var(--color-action);
   background: #eef6fb;
@@ -1030,18 +970,12 @@ h3 {
   color: var(--color-status-completed);
 }
 
-@media (max-width: 1320px) {
-  .business-stage-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 240px minmax(0, 1fr);
   }
 
-  .engineering-rail {
+  .flow-timeline {
     grid-column: 1 / -1;
     min-height: auto;
     position: static;
@@ -1050,21 +984,29 @@ h3 {
 }
 
 @media (max-width: 980px) {
-  .hero,
   .workspace,
-  .two-column,
   .diff-body,
-  .deliverables-grid,
-  .advanced-grid {
+  .flow-detail-grid,
+  .flow-artifact-grid,
+  .flow-evidence-grid,
+  .config-grid {
     grid-template-columns: 1fr;
   }
 
-  .task-list {
+  .task-list,
+  .flow-timeline {
+    position: static;
     min-height: auto;
+    max-height: none;
   }
 
-  .business-stage-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .flow-main {
+    max-height: none;
+  }
+
+  .request-panel {
+    position: static;
+    grid-template-columns: 1fr;
   }
 
   .gate-list {
@@ -1075,9 +1017,6 @@ h3 {
     grid-template-columns: 1fr;
   }
 
-  .stage-detail-body {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {
@@ -1092,7 +1031,4 @@ h3 {
     flex-direction: column;
   }
 
-  .business-stage-list {
-    grid-template-columns: 1fr;
-  }
 }

@@ -220,6 +220,34 @@
     "unknownSummary": "暂时没有文件质量评估。",
     "noChecks": "暂无质量检查结果。"
   },
+  "flow": {
+    "timelineTitle": "任务进展",
+    "detailTitle": "流程详情",
+    "insights": "关键进展",
+    "gates": "关联关卡",
+    "actions": "可执行动作",
+    "artifacts": "节点产物",
+    "engineeringEvidence": "工程证据",
+    "allArtifacts": "全部产物",
+    "all_artifacts": "全部产物",
+    "allArtifactsHint": "查看本次 run 生成的完整产物清单。",
+    "emptyInsights": "暂无该节点的进展摘要。",
+    "emptyGates": "暂无关联关卡。",
+    "emptyActions": "当前节点没有可执行动作。",
+    "emptyArtifacts": "当前节点暂无可查看产物。",
+    "emptyEngineering": "暂无关联工程证据。",
+    "runIdentity": "运行标识",
+    "nodes": {
+      "requirement": {"title": "需求理解", "description": "确认目标、范围和上下文。"},
+      "design": {"title": "方案设计", "description": "沉淀方案、验收标准和覆盖矩阵。"},
+      "implementation": {"title": "AI 实现", "description": "跟踪 Codex 实现、slice-loop 和代码差异。"},
+      "quality": {"title": "质量检查", "description": "查看 Review、Test、风险和交付前关卡。"},
+      "delivery": {"title": "交付验收", "description": "确认最终交付并执行采纳验收。"},
+      "release": {"title": "发布准备", "description": "判断是否值得进入 PR/CI，并生成 PR draft。"},
+      "github_pr_ci": {"title": "GitHub PR / CI", "description": "创建 Draft PR 并观察 CI checks。"},
+      "staging": {"title": "Staging 准备", "description": "判断是否可以进入 staging。"}
+    }
+  },
   "memoryRecall": {
     "title": "历史参考 / Skill 推荐",
     "empty": "暂无历史任务召回。",
@@ -396,7 +424,7 @@
     "running": "执行中",
     "completed": "已采纳且测试通过。",
     "failed": "采纳验收未通过，请查看失败原因。",
-    "notStarted": "确认后会应用本次代码变更，并自动运行全量测试",
+    "notStarted": "确认后会应用本次代码变更，并自动运行全量测试。",
     "blocked": "当前还不能采纳，请先处理质量关卡或风险阻塞。",
     "pending": "等待中",
     "queued": "已排队",

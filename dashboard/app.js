@@ -2,8 +2,8 @@ const state = {
   selectedRunId: "",
   selectedArtifactPath: "",
   selectedDiffFilePath: "",
-  selectedStageDetail: null,
-  stageDetailScroll: { key: "", top: 0 },
+  selectedFlowNodeId: "",
+  flowDetailScroll: { key: "", top: 0 },
   timer: null,
   i18n: null,
   currentRun: null,
@@ -93,8 +93,8 @@ async function selectRun(runId) {
   state.selectedRunId = runId;
   state.selectedArtifactPath = "";
   state.selectedDiffFilePath = "";
-  state.selectedStageDetail = null;
-  state.stageDetailScroll = { key: "", top: 0 };
+  state.selectedFlowNodeId = "";
+  state.flowDetailScroll = { key: "", top: 0 };
   await refreshRun();
 }
 
@@ -108,31 +108,378 @@ async function refreshRun() {
 
 function renderBusinessRun(vm) {
   $("current-task").textContent = vm.brief || t("app.emptySelection");
-  $("brief-label").textContent = vm.runId ? `${t("app.currentTask")} ${vm.runId}` : "";
   $("task-headline").textContent = vm.headline || "";
 
   const pill = $("status-pill");
   pill.className = `status-pill ${statusClass(view.lookup(state.i18n, `status.${vm.status}.tone`, "muted"))}`;
   pill.textContent = vm.statusLabel;
 
-  renderStages(vm.stages || []);
-  renderStageDetail(vm);
-  renderHealth(vm.health || {});
-  renderArtifactQuality(vm.artifactQuality || {});
-  renderMemoryRecall(vm.memoryRecall || {});
-  renderComplexTask(vm);
-  renderGates(vm.qualityGates || []);
   renderAcceptance(vm);
   renderReleaseReadiness(vm);
   renderGithubPrCi(vm);
   renderStagingReadiness(vm);
-  renderArtifactActions(vm.deliverables || []);
-  ensureSelectedArtifact(vm);
-  renderNextActions(vm.nextActions || []);
-  renderEngineering(vm);
+  renderFlowTimeline(vm);
+  ensureSelectedFlowNode(vm);
+  renderSelectedFlowNode(vm);
+}
+
+function renderFlowTimeline(vm) {
+  const container = $("flow-nodes");
+  if (!container) return;
+  container.textContent = "";
+  for (const node of vm.flowNodes || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = node.id === state.selectedFlowNodeId ? "flow-node-button selected" : "flow-node-button";
+    button.addEventListener("click", () => selectFlowNode(node.id));
+
+    const dot = document.createElement("span");
+    dot.className = `flow-node-dot ${statusClass(node.tone)}`;
+    const body = document.createElement("span");
+    body.className = "flow-node-body";
+    const title = document.createElement("strong");
+    title.textContent = node.title || node.id;
+    const summary = document.createElement("span");
+    summary.textContent = node.summary || "";
+    const status = document.createElement("span");
+    status.className = `mini-status ${statusClass(node.tone)}`;
+    status.textContent = node.statusLabel || "";
+    body.append(title, summary);
+    button.append(dot, body, status);
+    container.appendChild(button);
+  }
+
+  const all = document.createElement("button");
+  all.type = "button";
+  all.className = state.selectedFlowNodeId === "all_artifacts" ? "flow-node-button selected" : "flow-node-button";
+  all.addEventListener("click", () => selectFlowNode("all_artifacts"));
+  const dot = document.createElement("span");
+  dot.className = "flow-node-dot status-muted";
+  const body = document.createElement("span");
+  body.className = "flow-node-body";
+  const title = document.createElement("strong");
+  title.textContent = t("flow.allArtifacts");
+  const summary = document.createElement("span");
+  summary.textContent = t("flow.allArtifactsHint");
+  body.append(title, summary);
+  all.append(dot, body);
+  container.appendChild(all);
+}
+
+function ensureSelectedFlowNode(vm) {
+  const nodes = vm.flowNodes || [];
+  if (state.selectedFlowNodeId === "all_artifacts") return;
+  if (nodes.some((node) => node.id === state.selectedFlowNodeId)) return;
+  state.selectedFlowNodeId = vm.recommendedFlowNodeId || (nodes[0] || {}).id || "";
+  state.flowDetailScroll = { key: "", top: 0 };
+}
+
+function selectFlowNode(nodeId) {
+  captureFlowDetailScroll();
+  state.selectedFlowNodeId = nodeId;
+  state.selectedArtifactPath = "";
+  state.selectedDiffFilePath = "";
+  state.flowDetailScroll = { key: flowDetailKey(), top: 0 };
+  renderFlowTimeline(state.currentVm || {});
+  renderSelectedFlowNode(state.currentVm || {});
+}
+
+function flowDetailKey() {
+  return `${state.selectedRunId || ""}:${state.selectedFlowNodeId || ""}`;
+}
+
+function captureFlowDetailScroll() {
+  const detail = $("flow-node-detail");
+  if (!detail || !state.selectedFlowNodeId) return;
+  state.flowDetailScroll = { key: flowDetailKey(), top: detail.scrollTop || 0 };
+}
+
+function restoreFlowDetailScroll(detail) {
+  if (!detail || state.flowDetailScroll.key !== flowDetailKey()) return;
+  const top = Math.min(state.flowDetailScroll.top || 0, Math.max(0, detail.scrollHeight - detail.clientHeight));
+  detail.scrollTop = top;
+}
+
+function renderSelectedFlowNode(vm) {
+  const detail = $("flow-node-detail");
+  if (!detail) return;
+  captureFlowDetailScroll();
+  const node = state.selectedFlowNodeId === "all_artifacts"
+    ? renderAllArtifactsNode(vm)
+    : (vm.flowNodes || []).find((item) => item.id === state.selectedFlowNodeId);
+  if (!node) return;
+
+  $("flow-node-kicker").textContent = t("flow.detailTitle");
+  $("flow-node-title").textContent = node.title || "";
+  $("flow-node-summary").textContent = node.summary || "";
+  const status = $("flow-node-status");
+  status.className = `mini-status ${statusClass(node.tone)}`;
+  status.textContent = node.statusLabel || "";
+
+  renderFlowRows($("flow-node-insights"), node.insights || [], t("flow.emptyInsights"));
+  renderFlowGates($("flow-node-gates"), node.gates || []);
+  renderFlowNodeActions(node);
+  renderFlowNodeSpecifics(node, vm);
+  renderFlowNodeArtifacts(node);
+  renderFlowNodeEngineering(node);
+
+  detail.addEventListener("scroll", () => {
+    state.flowDetailScroll = { key: flowDetailKey(), top: detail.scrollTop || 0 };
+  }, { once: true });
+  restoreFlowDetailScroll(detail);
+}
+
+function renderAllArtifactsNode(vm) {
+  return {
+    id: "all_artifacts",
+    title: t("flow.allArtifacts"),
+    summary: t("flow.allArtifactsHint"),
+    status: "completed",
+    statusLabel: t("status.completed.label"),
+    tone: "green",
+    insights: vm.nextActions || [],
+    gates: [],
+    actions: [],
+    artifacts: vm.deliverables || [],
+    engineeringEvidence: (vm.flowNodes || []).find((node) => node.id === "implementation")?.engineeringEvidence || {},
+  };
+}
+
+function renderFlowRows(container, rows, emptyText) {
+  if (!container) return;
+  container.textContent = "";
+  const items = (rows || []).filter(Boolean).slice(0, 8);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+  for (const text of items) {
+    const row = document.createElement("div");
+    row.className = "quality-row";
+    row.textContent = typeof text === "string" ? text : JSON.stringify(text);
+    container.appendChild(row);
+  }
+}
+
+function renderFlowGates(container, gates) {
+  if (!container) return;
+  container.textContent = "";
+  if (!gates.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("flow.emptyGates");
+    container.appendChild(empty);
+    return;
+  }
+  for (const gate of gates.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = `quality-row release-gate-row release-gate-${gate.status || "unknown"}`;
+    row.textContent = `${gate.title || gate.id || t("app.unknown")}: ${gate.statusLabel || gate.status || ""} · ${gate.detail || ""}`;
+    container.appendChild(row);
+  }
+}
+
+function renderFlowNodeActions(node) {
+  const container = $("flow-node-actions");
+  if (!container) return;
+  container.textContent = "";
+  const actionIds = (node.actions || []).map((action) => action.id);
+  const renderers = {
+    acceptance: () => container.appendChild(flowActionButton("acceptance-action", startAcceptance)),
+    release_readiness: () => container.appendChild(flowActionButton("release-readiness-action", startReleaseReadiness)),
+    github_pr: () => container.appendChild(flowActionButton("github-pr-action", startGithubDraftPr)),
+    github_ci: () => container.appendChild(flowActionButton("github-ci-action", refreshGithubCi, "ghost")),
+    staging_readiness: () => container.appendChild(flowActionButton("staging-readiness-action", startStagingReadiness)),
+  };
+  for (const id of actionIds) {
+    if (renderers[id]) renderers[id]();
+  }
+  if (!container.children.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("flow.emptyActions");
+    container.appendChild(empty);
+  }
+}
+
+function flowActionButton(sourceId, handler, extraClass = "") {
+  const source = $(sourceId);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = extraClass;
+  button.disabled = source ? source.disabled : false;
+  button.textContent = source ? source.textContent : t("app.unknown");
+  button.addEventListener("click", handler);
+  return button;
+}
+
+function renderFlowNodeArtifacts(node) {
+  const container = $("flow-artifact-actions");
+  if (!container) return;
+  container.textContent = "";
+  const artifacts = node.artifacts || [];
+  if (!artifacts.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("flow.emptyArtifacts");
+    container.appendChild(empty);
+    renderSelectedArtifact(null);
+    $("flow-artifact-preview").textContent = t("flow.emptyArtifacts");
+    return;
+  }
+  for (const artifact of artifacts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = artifact.path === state.selectedArtifactPath ? "artifact-button selected" : "artifact-button";
+    button.dataset.path = artifact.path;
+    button.disabled = !artifact.exists;
+    button.textContent = artifact.exists ? artifact.title : `${artifact.title} (${t("actions.artifactPending")})`;
+    button.addEventListener("click", () => selectArtifact(artifact));
+    container.appendChild(button);
+  }
+  const selected = artifacts.find((artifact) => artifact.path === state.selectedArtifactPath && artifact.exists) || artifacts.find((artifact) => artifact.exists);
+  if (selected) selectArtifact(selected);
+}
+
+function renderFlowNodeEngineering(node) {
+  const container = $("flow-engineering-evidence");
+  if (!container) return;
+  container.textContent = "";
+  const evidence = node.engineeringEvidence || {};
+  const rows = [
+    flowEvidenceList(t("flow.runIdentity"), [Object.values(evidence.run || {}).filter(Boolean).join(" / ")], t("flow.emptyEngineering")),
+    flowEvidenceList(t("stageDetail.relatedAgents"), evidence.agentIds || [], t("flow.emptyEngineering")),
+    flowEvidenceList(t("stageDetail.relatedEvents"), (evidence.events || []).map((item) => typeof item === "string" ? item : JSON.stringify(item)), t("flow.emptyEngineering")),
+    flowEvidenceList(t("stageDetail.relatedLogs"), evidence.logs || [], t("stageDetail.globalEngineeringHint")),
+  ];
+  if (evidence.diffSummary && evidence.diffSummary.available) {
+    rows.push(flowEvidenceList(t("app.engineeringDiff"), [renderDiffSummary(evidence.diffSummary)], t("diffView.empty")));
+  }
+  for (const row of rows) container.appendChild(row);
+}
+
+function flowEvidenceList(title, values, emptyText) {
+  const block = document.createElement("div");
+  block.className = "flow-evidence-card";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  block.appendChild(heading);
+  const items = (values || []).filter(Boolean).slice(0, 4);
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-text";
+    empty.textContent = emptyText;
+    block.appendChild(empty);
+    return block;
+  }
+  const list = document.createElement("ul");
+  list.className = "flow-evidence-list";
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.textContent = typeof item === "string" ? item : JSON.stringify(item);
+    list.appendChild(row);
+  }
+  block.appendChild(list);
+  return block;
+}
+
+function renderFlowNodeSpecifics(node, vm) {
+  const container = $("flow-node-specifics");
+  if (!container) return;
+  container.textContent = "";
+  if (node.id === "implementation") {
+    renderImplementationFlow(vm.implementationFlow || {}, container);
+    renderFlowNodeSpecificRows(container, t("complexTask.sliceLoopTitle"), [
+      vm.sliceLoop.summary,
+      vm.sliceLoop.currentSliceId ? `${t("complexTask.currentSlice")}: ${vm.sliceLoop.currentSliceId}` : "",
+      ...(vm.sliceLoop.blockers || []).slice(0, 2).map((item) => `${t("complexTask.blocker")}: ${item}`),
+      vm.sliceLoop.nextAction ? `${t("complexTask.nextAction")}: ${vm.sliceLoop.nextAction}` : "",
+    ]);
+    renderFlowNodeSpecificRows(container, t("complexTask.completionTitle"), [
+      `${t("complexTask.statusLabel")}: ${vm.completionGate.statusLabel || t("app.unknown")}`,
+      vm.completionGate.summary,
+      ...(vm.completionGate.blockers || []).slice(0, 2).map((item) => `${t("complexTask.blocker")}: ${item}`),
+      vm.completionGate.nextAction ? `${t("complexTask.nextAction")}: ${vm.completionGate.nextAction}` : "",
+    ]);
+    return;
+  }
+  if (node.id === "requirement") {
+    renderFlowNodeSpecificRows(container, t("complexTask.requirementTitle"), [
+      `${t("complexTask.statusLabel")}: ${vm.requirementUnderstanding.statusLabel || t("app.unknown")}`,
+      vm.requirementUnderstanding.summary,
+      vm.requirementUnderstanding.complexity ? `${t("complexTask.complexity")}: ${vm.requirementUnderstanding.complexity}` : "",
+      vm.requirementUnderstanding.planningMode ? `${t("complexTask.planningMode")}: ${vm.requirementUnderstanding.planningMode}` : "",
+      ...(vm.requirementUnderstanding.blockingQuestions || []).slice(0, 3).map((item) => `${t("complexTask.blockingQuestion")}: ${item}`),
+    ]);
+    renderFlowNodeSpecificRows(container, t("memoryRecall.title"), [
+      vm.memoryRecall.summary,
+      ...(vm.memoryRecall.recommendedSkills || []).slice(0, 3).map((item) => `${item.id || t("app.unknown")} · ${item.why || ""}`),
+    ]);
+    return;
+  }
+  if (node.id === "design") {
+    renderFlowNodeSpecificRows(container, t("complexTask.coverageTitle"), [
+      vm.acceptanceCoverage.summary,
+      `${t("complexTask.ready")}: ${vm.acceptanceCoverage.ready ? t("githubPr.yes") : t("githubPr.no")}`,
+      ...(vm.acceptanceCoverage.orphanCriteria || []).slice(0, 3).map((item) => `${t("complexTask.orphanCriteria")}: ${item.id || item.description || ""}`),
+    ]);
+    return;
+  }
+  if (node.id === "delivery") {
+    renderFlowNodeSpecificRows(container, t("acceptance.title"), [
+      (vm.acceptance || {}).conclusion || t("acceptance.notStarted"),
+      (vm.acceptance || {}).next_action ? `${t("implementationFlow.nextAction")}: ${(vm.acceptance || {}).next_action}` : "",
+    ]);
+    return;
+  }
+  if (node.id === "release") {
+    renderFlowNodeSpecificRows(container, t("releaseReadiness.title"), [
+      `${t("releaseReadiness.decision")}: ${vm.releaseReadiness.decisionLabel || t("releaseReadiness.decisions.not_generated")}`,
+      vm.releaseReadiness.summary,
+      ...(vm.releaseReadiness.blockers || []).slice(0, 3).map((item) => `${t("githubPr.blocker")}: ${item}`),
+      ...(vm.releaseReadiness.warnings || []).slice(0, 3).map((item) => `${t("githubPr.warning")}: ${item}`),
+    ]);
+    return;
+  }
+  if (node.id === "github_pr_ci") {
+    renderFlowNodeSpecificRows(container, t("githubPr.title"), [
+      `${t("githubPr.prInfo")}: ${vm.githubPr.statusLabel || ""}`,
+      vm.githubPr.pr && vm.githubPr.pr.url ? `${t("githubPr.prUrl")}: ${vm.githubPr.pr.url}` : t("githubPr.noPr"),
+      `${t("githubPr.ciInfo")}: ${vm.githubPr.ciStatusLabel || ""}`,
+      ...(vm.githubPr.blockers || []).slice(0, 3).map((item) => `${t("githubPr.blocker")}: ${item}`),
+      vm.githubPr.nextAction ? `${t("githubPr.nextAction")}: ${vm.githubPr.nextAction}` : "",
+    ]);
+    return;
+  }
+  if (node.id === "staging") {
+    renderFlowNodeSpecificRows(container, t("stagingReadiness.title"), [
+      `${t("stagingReadiness.decision")}: ${vm.stagingReadiness.decisionLabel || t("stagingReadiness.decisions.not_generated")}`,
+      vm.stagingReadiness.summary,
+      vm.stagingReadiness.evidence && vm.stagingReadiness.evidence.ci_summary ? `${t("stagingReadiness.ciSummary")}: ${vm.stagingReadiness.evidence.ci_summary}` : "",
+      ...(vm.stagingReadiness.blockers || []).slice(0, 3).map((item) => `${t("stagingReadiness.blocker")}: ${item}`),
+    ]);
+  }
+}
+
+function renderFlowNodeSpecificRows(container, title, values) {
+  const rows = (values || []).filter(Boolean);
+  if (!rows.length) return;
+  const card = document.createElement("section");
+  card.className = "flow-detail-card flow-specific-card";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  const list = document.createElement("div");
+  list.className = "quality-list";
+  card.append(heading, list);
+  renderFlowRows(list, rows, "");
+  container.appendChild(card);
 }
 
 function renderHealth(health) {
+  if (!$("health-summary")) return;
   $("health-summary").textContent = health.summary || t("health.unknownSummary");
   const list = $("health-details");
   list.textContent = "";
@@ -150,6 +497,7 @@ function renderHealth(health) {
 }
 
 function renderArtifactQuality(quality) {
+  if (!$("artifact-quality-summary")) return;
   const summary = $("artifact-quality-summary");
   const score = quality.score == null ? "" : ` ${Math.round(Number(quality.score) * 100)}%`;
   summary.textContent = `${quality.summary || t("quality.unknownSummary")}${score}`;
@@ -299,221 +647,6 @@ function renderCompactRows(container, rows, emptyText) {
   }
 }
 
-function renderStages(stages) {
-  const container = $("business-stages");
-  container.textContent = "";
-  for (const stage of stages) {
-    const card = document.createElement("article");
-    card.className = "business-stage-card";
-
-    const header = document.createElement("div");
-    header.className = "card-title-row";
-    const title = document.createElement("h3");
-    title.textContent = stage.title;
-    const status = document.createElement("span");
-    status.className = `mini-status ${statusClass(stage.tone)}`;
-    status.textContent = stage.statusLabel;
-    header.append(title, status);
-
-    const summary = document.createElement("p");
-    summary.className = "stage-summary";
-    summary.textContent = stage.summary;
-
-    const rows = document.createElement("dl");
-    rows.className = "stage-rows";
-    for (const row of stage.rows || []) {
-      const term = document.createElement("dt");
-      term.textContent = row.label;
-      const detail = document.createElement("dd");
-      detail.textContent = row.text;
-      rows.append(term, detail);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "card-actions";
-    for (const action of stage.actions || []) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "ghost small";
-      button.textContent = t(`actions.${action}`);
-      button.addEventListener("click", () => handleStageAction(action, stage));
-      actions.appendChild(button);
-    }
-
-    card.append(header, summary, rows, actions);
-    container.appendChild(card);
-  }
-}
-
-function handleStageAction(action, stage) {
-  if (action === "viewDeliverables") {
-    const first = (stage.artifacts || []).find((artifact) => artifact.exists);
-    if (first) selectArtifact(first);
-    toggleStageDetail(stage, "deliverables");
-    return;
-  }
-  if (action === "viewRisks") {
-    $("artifact-preview").textContent = view.toBusinessViewModel(state.currentRun || {}, state.i18n).risks.join("\n");
-    focusSection("deliverables-panel");
-    return;
-  }
-  toggleStageDetail(stage, "engineering");
-}
-
-function toggleStageDetail(stage, mode) {
-  const current = state.selectedStageDetail || {};
-  if (current.stageId === stage.id && current.mode === mode) {
-    state.selectedStageDetail = null;
-    state.stageDetailScroll = { key: "", top: 0 };
-  } else {
-    state.selectedStageDetail = { stageId: stage.id, mode };
-    state.stageDetailScroll = { key: stageDetailKey(state.selectedStageDetail), top: 0 };
-  }
-  renderStageDetail(state.currentVm || view.toBusinessViewModel(state.currentRun || {}, state.i18n));
-}
-
-function stageDetailKey(selection = state.selectedStageDetail) {
-  if (!selection) return "";
-  return `${state.selectedRunId || ""}:${selection.stageId || ""}:${selection.mode || ""}`;
-}
-
-function captureStageDetailScroll() {
-  const body = document.querySelector("#stage-detail-panel .stage-detail-body");
-  if (!body || !state.selectedStageDetail) return;
-  state.stageDetailScroll = { key: stageDetailKey(), top: body.scrollTop || 0 };
-}
-
-function restoreStageDetailScroll(body) {
-  if (!body || !state.selectedStageDetail) return;
-  const currentKey = stageDetailKey();
-  if (state.stageDetailScroll.key !== currentKey) return;
-  const top = Math.min(state.stageDetailScroll.top || 0, Math.max(0, body.scrollHeight - body.clientHeight));
-  body.scrollTop = top;
-}
-
-function renderStageDetail(vm) {
-  const panel = $("stage-detail-panel");
-  if (!panel) return;
-  captureStageDetailScroll();
-  panel.textContent = "";
-  const selection = state.selectedStageDetail;
-  if (!selection) {
-    panel.hidden = true;
-    return;
-  }
-  const stage = (vm.stages || []).find((item) => item.id === selection.stageId);
-  if (!stage) {
-    panel.hidden = true;
-    return;
-  }
-  panel.hidden = false;
-
-  const header = document.createElement("div");
-  header.className = "stage-detail-header";
-  const title = document.createElement("h3");
-  title.textContent = `${stage.title} / ${selection.mode === "engineering" ? t("stageDetail.engineeringSuffix") : t("stageDetail.deliverablesSuffix")}`;
-  const status = document.createElement("span");
-  status.className = `mini-status ${statusClass(stage.tone)}`;
-  status.textContent = stage.statusLabel;
-  header.append(title, status);
-
-  const body = document.createElement("div");
-  body.className = `stage-detail-body ${selection.mode === "engineering" ? "engineering-mode" : "deliverables-mode"}`;
-  if (selection.mode === "engineering") {
-    renderStageEngineering(stage, vm, body);
-  } else {
-    renderStageDeliverables(stage, body);
-  }
-
-  body.addEventListener("scroll", () => {
-    state.stageDetailScroll = { key: stageDetailKey(), top: body.scrollTop || 0 };
-  });
-  panel.append(header, body);
-  restoreStageDetailScroll(body);
-}
-
-function renderStageDeliverables(stage, container) {
-  const artifacts = (stage.artifacts || []).filter((artifact) => artifact.exists);
-  if (!artifacts.length) {
-    const empty = document.createElement("p");
-    empty.className = "summary-text";
-    empty.textContent = t("stageDetail.emptyDeliverables");
-    container.appendChild(empty);
-    return;
-  }
-
-  const list = document.createElement("div");
-  list.className = "stage-artifact-list";
-  for (const artifact of artifacts) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = artifact.path === state.selectedArtifactPath ? "artifact-button selected" : "artifact-button";
-    button.textContent = artifact.title;
-    button.addEventListener("click", () => {
-      selectArtifact(artifact);
-      renderStageDetail(state.currentVm || view.toBusinessViewModel(state.currentRun || {}, state.i18n));
-    });
-    list.appendChild(button);
-  }
-
-  const preview = document.createElement("div");
-  preview.className = "stage-detail-preview";
-  const selected = artifacts.find((artifact) => artifact.path === state.selectedArtifactPath) || artifacts[0];
-  const heading = document.createElement("h4");
-  heading.textContent = `${t("stageDetail.selectedArtifact")}: ${selected.title}`;
-  const description = document.createElement("p");
-  description.className = "summary-text";
-  description.textContent = selected.description || t("stageDetail.globalArtifactsHint");
-  const content = document.createElement("pre");
-  content.className = "stage-artifact-preview";
-  content.textContent = "";
-  const hint = document.createElement("p");
-  hint.className = "meta";
-  hint.textContent = t("stageDetail.globalArtifactsHint");
-  preview.append(heading, description, content, hint);
-  loadArtifactContent(selected).then((value) => {
-    content.textContent = value;
-  }).catch((error) => {
-    content.textContent = String(error.message || error);
-  });
-
-  const action = document.createElement("button");
-  action.type = "button";
-  action.className = "ghost small";
-  action.textContent = t("stageDetail.openGlobalDeliverables");
-  action.addEventListener("click", () => focusSection("deliverables-panel"));
-  preview.appendChild(action);
-
-  container.append(list, preview);
-}
-
-function renderStageEngineering(stage, vm, container) {
-  if (stage.id === "implementation") {
-    renderImplementationFlow(vm.implementationFlow || {}, container);
-  }
-  const related = filterEngineeringForStage(stage, vm);
-  const agents = document.createElement("div");
-  agents.className = "stage-detail-block";
-  const agentTitle = document.createElement("strong");
-  agentTitle.textContent = t("stageDetail.relatedAgents");
-  const agentText = document.createElement("p");
-  agentText.className = "summary-text";
-  agentText.textContent = (stage.agentIds || []).join(", ") || t("stageDetail.emptyEngineering");
-  agents.append(agentTitle, agentText);
-
-  const events = stageDetailList(t("stageDetail.relatedEvents"), related.events, t("stageDetail.emptyEngineering"));
-  const logs = stageDetailList(t("stageDetail.relatedLogs"), related.logs, t("stageDetail.globalEngineeringHint"));
-  const risks = stageDetailList(t("stageDetail.riskEvents"), related.risks, t("actions.noRisk"));
-
-  const action = document.createElement("button");
-  action.type = "button";
-  action.className = "ghost small";
-  action.textContent = t("stageDetail.openGlobalEngineering");
-  action.addEventListener("click", () => focusSection("engineering-rail"));
-
-  container.append(agents, events, logs, risks, action);
-}
-
 function renderImplementationFlow(flow, container) {
   const panel = document.createElement("div");
   panel.className = "implementation-flow";
@@ -535,14 +668,14 @@ function renderImplementationFlow(flow, container) {
   currentText.textContent = step.title || flow.current_step || t("implementationFlow.none");
   current.append(currentTitle, currentText);
 
-  const inputs = stageDetailList(
+  const inputs = implementationFlowList(
     t("implementationFlow.inputs"),
     (flow.inputs || []).filter((item) => item.exists).map((item) => `${item.title || item.path}: ${item.path}`),
     t("implementationFlow.none"),
   );
 
   const timeline = document.createElement("div");
-  timeline.className = "stage-detail-block";
+  timeline.className = "flow-specific-block";
   const timelineTitle = document.createElement("strong");
   timelineTitle.textContent = t("implementationFlow.timeline");
   const timelineList = document.createElement("ol");
@@ -562,20 +695,20 @@ function renderImplementationFlow(flow, container) {
   timeline.append(timelineTitle, timelineList);
 
   const evidence = flow.evidence || {};
-  const changedFiles = stageDetailList(t("implementationFlow.changedFiles"), evidence.changed_files || [], t("implementationFlow.none"));
+  const changedFiles = implementationFlowList(t("implementationFlow.changedFiles"), evidence.changed_files || [], t("implementationFlow.none"));
   const testEvidence = (evidence.tests_run || []).length ? evidence.tests_run : evidence.verification_commands || [];
-  const testsRun = stageDetailList(t("implementationFlow.testsRun"), testEvidence, t("implementationFlow.none"));
-  const blockers = stageDetailList(t("implementationFlow.blockers"), flow.blockers || [], t("implementationFlow.none"));
-  const risks = stageDetailList(t("implementationFlow.risks"), flow.risk_events || [], t("implementationFlow.none"));
-  const nextAction = stageDetailList(t("implementationFlow.nextAction"), flow.next_action ? [flow.next_action] : [], t("implementationFlow.none"));
+  const testsRun = implementationFlowList(t("implementationFlow.testsRun"), testEvidence, t("implementationFlow.none"));
+  const blockers = implementationFlowList(t("implementationFlow.blockers"), flow.blockers || [], t("implementationFlow.none"));
+  const risks = implementationFlowList(t("implementationFlow.risks"), flow.risk_events || [], t("implementationFlow.none"));
+  const nextAction = implementationFlowList(t("implementationFlow.nextAction"), flow.next_action ? [flow.next_action] : [], t("implementationFlow.none"));
 
   panel.append(current, inputs, timeline, changedFiles, testsRun, blockers, risks, nextAction);
   container.appendChild(panel);
 }
 
-function stageDetailList(title, values, emptyText) {
+function implementationFlowList(title, values, emptyText) {
   const block = document.createElement("div");
-  block.className = "stage-detail-block";
+  block.className = "flow-specific-block";
   const heading = document.createElement("strong");
   heading.textContent = title;
   block.appendChild(heading);
@@ -588,7 +721,7 @@ function stageDetailList(title, values, emptyText) {
     return block;
   }
   const list = document.createElement("ul");
-  list.className = "stage-detail-list";
+  list.className = "flow-specific-list";
   for (const item of items) {
     const row = document.createElement("li");
     row.textContent = typeof item === "string" ? item : JSON.stringify(item);
@@ -598,28 +731,9 @@ function stageDetailList(title, values, emptyText) {
   return block;
 }
 
-function filterEngineeringForStage(stage, vm) {
-  const agentIds = stage.agentIds || [];
-  const engineering = vm.engineering || {};
-  const events = (engineering.events || []).filter((event) => {
-    const text = JSON.stringify(event);
-    return agentIds.some((agentId) => text.includes(agentId));
-  });
-  const logs = (engineering.logs || []).filter((line) => agentIds.some((agentId) => String(line).includes(agentId)));
-  const fallbackLogs = logs.length ? logs : (engineering.logs || []).slice(0, 3);
-  const risks = (vm.risks || []).filter((risk) => risk && risk !== t("actions.noRisk"));
-  return { events, logs: fallbackLogs, risks };
-}
-
-function focusSection(id) {
-  const target = $(id);
-  if (!target) return;
-  target.scrollIntoView({ behavior: "smooth", block: "start" });
-  if (typeof target.focus === "function") target.focus({ preventScroll: true });
-}
-
 function renderGates(gates) {
   const container = $("quality-gates");
+  if (!container) return;
   container.textContent = "";
   for (const gate of gates) {
     const card = document.createElement("article");
@@ -946,6 +1060,7 @@ async function startStagingReadiness() {
 
 function renderArtifactActions(deliverables) {
   const container = $("artifact-actions");
+  if (!container) return;
   container.textContent = "";
   for (const artifact of deliverables) {
     const button = document.createElement("button");
@@ -976,9 +1091,17 @@ function selectArtifact(artifact) {
   if (!artifact || !artifact.exists) return;
   state.selectedArtifactPath = artifact.path;
   if (artifact.path !== "codex/diff.patch") state.selectedDiffFilePath = "";
-  renderArtifactActions((view.toBusinessViewModel(state.currentRun || {}, state.i18n).deliverables || []));
+  updateFlowArtifactButtons();
   renderSelectedArtifact(artifact);
   loadArtifact(artifact);
+}
+
+function updateFlowArtifactButtons() {
+  const container = $("flow-artifact-actions");
+  if (!container) return;
+  for (const button of container.querySelectorAll(".artifact-button")) {
+    button.classList.toggle("selected", button.dataset.path === state.selectedArtifactPath);
+  }
 }
 
 function renderSelectedArtifact(artifact) {
@@ -994,7 +1117,7 @@ async function loadArtifact(artifact) {
     renderDiffArtifact(content, artifact);
     return;
   }
-  const preview = $("artifact-preview");
+  const preview = $("flow-artifact-preview");
   preview.className = "artifact-preview";
   preview.textContent = content;
 }
@@ -1024,6 +1147,7 @@ function renderNextActions(actions) {
 }
 
 function renderEngineering(vm) {
+  if (!$("engineering-run")) return;
   $("engineering-run").textContent = [vm.engineering.runId, vm.engineering.status, vm.engineering.executor].filter(Boolean).join("\n");
   $("engineering-events").textContent = JSON.stringify(vm.engineering.events || [], null, 2);
   const rawWarnings = (vm.engineering.healthSummary || {}).raw_warnings || [];
@@ -1046,7 +1170,7 @@ function renderDiffSummary(diffSummary) {
 }
 
 function renderDiffArtifact(rawPatch, artifact) {
-  const preview = $("artifact-preview");
+  const preview = $("flow-artifact-preview");
   preview.className = "artifact-preview diff-artifact-preview";
   preview.textContent = "";
 
@@ -1250,7 +1374,7 @@ function startPolling() {
       await refreshRuns();
       await refreshRun();
     } catch (error) {
-      $("artifact-preview").textContent = String(error.message || error);
+      $("flow-artifact-preview").textContent = String(error.message || error);
     }
   }, 2000);
 }
@@ -1264,6 +1388,6 @@ async function boot() {
 }
 
 boot().catch((error) => {
-  const target = $("artifact-preview");
+  const target = $("flow-artifact-preview");
   if (target) target.textContent = String(error.message || error);
 });
