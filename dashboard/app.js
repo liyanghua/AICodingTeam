@@ -18,6 +18,7 @@ const GITHUB_PR_DRAFT_ENDPOINT_SUFFIX = "/pr/draft";
 const GITHUB_PR_STATUS_ENDPOINT_SUFFIX = "/pr/status";
 const STAGING_READINESS_ENDPOINT_SUFFIX = "/staging-readiness";
 const STAGING_REHEARSAL_ENDPOINT_SUFFIX = "/staging-rehearsal";
+const PRODUCTION_READINESS_ENDPOINT_SUFFIX = "/production-readiness";
 
 function t(path, fallback = "") {
   return view.lookup(state.i18n, path, fallback || view.lookup(state.i18n, "app.unknown", "未知项"));
@@ -120,6 +121,7 @@ function renderBusinessRun(vm) {
   renderGithubPrCi(vm);
   renderStagingReadiness(vm);
   renderStagingRehearsal(vm);
+  renderProductionReadiness(vm);
   renderFlowTimeline(vm);
   ensureSelectedFlowNode(vm);
   renderSelectedFlowNode(vm);
@@ -296,6 +298,7 @@ function renderFlowNodeActions(node) {
     github_ci: () => container.appendChild(flowActionButton("github-ci-action", refreshGithubCi, "ghost")),
     staging_readiness: () => container.appendChild(flowActionButton("staging-readiness-action", startStagingReadiness)),
     staging_rehearsal: () => container.appendChild(flowActionButton("staging-rehearsal-action", startStagingRehearsal, "ghost")),
+    production_readiness: () => container.appendChild(flowActionButton("production-readiness-action", startProductionReadiness)),
   };
   for (const id of actionIds) {
     if (renderers[id]) renderers[id]();
@@ -470,6 +473,38 @@ function renderFlowNodeSpecifics(node, vm) {
       ...(vm.stagingRehearsal.steps || []).slice(0, 3).map((step) => `${step.id || t("app.unknown")}: ${step.status || ""}${step.exit_code == null ? "" : ` · ${t("acceptance.exitCode")}: ${step.exit_code}`}`),
       ...(vm.stagingRehearsal.blockers || []).slice(0, 3).map((item) => `${t("stagingRehearsal.blocker")}: ${item}`),
       ...(vm.stagingRehearsal.nextActions || []).slice(0, 2).map((item) => `${t("stagingRehearsal.nextActions")}: ${item}`),
+    ]);
+    return;
+  }
+  if (node.id === "production") {
+    const evidence = vm.productionReadiness.evidence || {};
+    const localValidation = evidence.local_validation || {};
+    const macMiniValidation = evidence.mac_mini_validation || {};
+    const macMini = evidence.mac_mini || {};
+    const cloud = evidence.cloud_asset_center || {};
+    const smoke = evidence.collector_smoke || {};
+    const sync = evidence.cloud_sync || {};
+    const localCloud = localValidation.cloud_asset_center || cloud;
+    const macDoctor = macMiniValidation.doctor || macMini;
+    const macSmoke = macMiniValidation.collector_smoke || smoke;
+    const macSync = macMiniValidation.cloud_sync || sync;
+    renderFlowNodeSpecificRows(container, t("productionReadiness.title"), [
+      `${t("productionReadiness.decision")}: ${vm.productionReadiness.decisionLabel || t("productionReadiness.decisions.not_generated")}`,
+      vm.productionReadiness.summary,
+      ...(vm.productionReadiness.blockers || []).slice(0, 3).map((item) => `${t("productionReadiness.blocker")}: ${item}`),
+      ...(vm.productionReadiness.warnings || []).slice(0, 3).map((item) => `${t("productionReadiness.warning")}: ${item}`),
+    ]);
+    renderFlowNodeSpecificRows(container, t("productionReadiness.localValidation"), [
+      localValidation.profile ? `${t("productionReadiness.profile")}: ${localValidation.profile}` : "",
+      localValidation.staging_rehearsal_status ? `${t("stagingRehearsal.status")}: ${localValidation.staging_rehearsal_status}` : "",
+      localCloud.status ? `${t("productionReadiness.cloudAssetCenter")}: ${localCloud.status}` : "",
+    ]);
+    renderFlowNodeSpecificRows(container, t("productionReadiness.macMiniValidation"), [
+      macMiniValidation.profile ? `${t("productionReadiness.profile")}: ${macMiniValidation.profile}` : "",
+      macDoctor.status ? `${t("productionReadiness.macMini")}: ${macDoctor.status}` : "",
+      macSmoke.status ? `${t("productionReadiness.collectorSmoke")}: ${macSmoke.status}${macSmoke.result_count == null ? "" : ` · ${t("productionReadiness.resultCount")}: ${macSmoke.result_count}`}` : "",
+      macSync.status ? `${t("productionReadiness.cloudSync")}: ${macSync.status}${macSync.synced_assets == null ? "" : ` · ${t("productionReadiness.syncedAssets")}: ${macSync.synced_assets}`}` : "",
+      ...(vm.productionReadiness.nextActions || []).slice(0, 3).map((item) => `${t("productionReadiness.nextActions")}: ${item}`),
     ]);
   }
 }
@@ -1102,6 +1137,79 @@ async function startStagingRehearsal() {
   action.disabled = true;
   action.textContent = t("stagingRehearsal.running");
   await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${STAGING_REHEARSAL_ENDPOINT_SUFFIX}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  await refreshRun();
+}
+
+function renderProductionReadiness(vm) {
+  const production = vm.productionReadiness || {};
+  const rehearsal = vm.stagingRehearsal || {};
+  const staging = vm.stagingReadiness || {};
+  const action = $("production-readiness-action");
+  const summary = $("production-readiness-summary");
+  const gates = $("production-readiness-gates");
+  const evidence = $("production-readiness-evidence");
+  if (!action || !summary || !gates || !evidence) return;
+
+  const canGenerate = rehearsal.status === "completed" || staging.decision === "ready_for_staging";
+  action.disabled = !canGenerate;
+  action.textContent = t("productionReadiness.generateButton");
+  action.onclick = startProductionReadiness;
+  summary.textContent = production.summary || (canGenerate ? t("productionReadiness.readyToGenerate") : t("productionReadiness.empty"));
+
+  gates.textContent = "";
+  const gateItems = (production.gates || []).slice(0, 8);
+  if (!gateItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "quality-row";
+    empty.textContent = t("productionReadiness.noGates");
+    gates.appendChild(empty);
+  } else {
+    for (const gate of gateItems) {
+      const row = document.createElement("div");
+      row.className = `quality-row release-gate-row release-gate-${gate.status || "unknown"}`;
+      row.textContent = `${gate.id || t("app.unknown")}: ${gate.status || ""} · ${gate.reason || ""}`;
+      gates.appendChild(row);
+    }
+  }
+
+  evidence.textContent = "";
+  const ev = production.evidence || {};
+  const localValidation = ev.local_validation || {};
+  const macMiniValidation = ev.mac_mini_validation || {};
+  const macMini = ev.mac_mini || {};
+  const cloud = ev.cloud_asset_center || {};
+  const smoke = ev.collector_smoke || {};
+  const sync = ev.cloud_sync || {};
+  const localCloud = localValidation.cloud_asset_center || cloud;
+  const macDoctor = macMiniValidation.doctor || macMini;
+  const macSmoke = macMiniValidation.collector_smoke || smoke;
+  const macSync = macMiniValidation.cloud_sync || sync;
+  const rows = [];
+  rows.push(`${t("productionReadiness.decision")}: ${production.decisionLabel || t("productionReadiness.decisions.not_generated")}`);
+  if (ev.staging_decision) rows.push(`${t("stagingReadiness.decision")}: ${ev.staging_decision}`);
+  if (ev.staging_rehearsal_status) rows.push(`${t("stagingRehearsal.status")}: ${ev.staging_rehearsal_status}`);
+  if (localValidation.profile) rows.push(`${t("productionReadiness.localValidation")}: ${localValidation.profile}`);
+  if (localCloud.status) rows.push(`${t("productionReadiness.cloudAssetCenter")}: ${localCloud.status}`);
+  if (macMiniValidation.profile) rows.push(`${t("productionReadiness.macMiniValidation")}: ${macMiniValidation.profile}`);
+  if (macDoctor.status) rows.push(`${t("productionReadiness.macMini")}: ${macDoctor.status}`);
+  if (macSmoke.status) rows.push(`${t("productionReadiness.collectorSmoke")}: ${macSmoke.status}${macSmoke.result_count == null ? "" : ` · ${t("productionReadiness.resultCount")}: ${macSmoke.result_count}`}`);
+  if (macSync.status) rows.push(`${t("productionReadiness.cloudSync")}: ${macSync.status}${macSync.synced_assets == null ? "" : ` · ${t("productionReadiness.syncedAssets")}: ${macSync.synced_assets}`}`);
+  for (const blocker of production.blockers || []) rows.push(`${t("productionReadiness.blocker")}: ${blocker}`);
+  for (const warning of production.warnings || []) rows.push(`${t("productionReadiness.warning")}: ${warning}`);
+  for (const item of (production.nextActions || []).slice(0, 3)) rows.push(`${t("productionReadiness.nextActions")}: ${item}`);
+  renderCompactRows(evidence, rows, t("productionReadiness.empty"));
+}
+
+async function startProductionReadiness() {
+  if (!state.selectedRunId) return;
+  const action = $("production-readiness-action");
+  action.disabled = true;
+  action.textContent = t("productionReadiness.generating");
+  await fetchJson(`/api/runs/${encodeURIComponent(state.selectedRunId)}${PRODUCTION_READINESS_ENDPOINT_SUFFIX}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",

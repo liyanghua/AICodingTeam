@@ -198,6 +198,9 @@
     "staging_readiness.json": {"title": "Staging 准备数据", "description": "Staging Gate、CI 证据、阻塞和下一步的结构化结果。"},
     "staging_rehearsal.md": {"title": "Staging 本地演练", "description": "进入真实 staging 前的本地复核、全量测试和证据记录。"},
     "staging_rehearsal.json": {"title": "Staging 本地演练数据", "description": "本地演练步骤、测试结果、Git 状态、阻塞和下一步的结构化结果。"},
+    "production_readiness.md": {"title": "生产准备报告", "description": "复核 Mac mini、云端素材中心、实机 smoke 和同步验收，判断是否可进入人工生产确认。"},
+    "production_readiness.json": {"title": "生产准备数据", "description": "生产准备 Gate、健康证据、阻塞、warning 和下一步的结构化结果。"},
+    "deployment_runbook.md": {"title": "部署 Runbook", "description": "Mac mini 采集工作台和云端素材中心的人工部署、健康检查、首次采集和恢复步骤。"},
     "codex/diff.patch": {"title": "代码差异", "description": "AI 实现产生的变更证据。"}
   },
   "events": {
@@ -247,7 +250,8 @@
       "delivery": {"title": "交付验收", "description": "确认最终交付并执行采纳验收。"},
       "release": {"title": "发布准备", "description": "判断是否值得进入 PR/CI，并生成 PR draft。"},
       "github_pr_ci": {"title": "GitHub PR / CI", "description": "创建 Draft PR 并观察 CI checks。"},
-      "staging": {"title": "Staging 准备", "description": "判断是否可以进入 staging。"}
+      "staging": {"title": "Staging 准备", "description": "判断是否可以进入 staging。"},
+      "production": {"title": "生产准备", "description": "复核手机采集工作台、云端素材中心、实机 smoke 和同步证据。"}
     }
   },
   "memoryRecall": {
@@ -395,6 +399,35 @@
       "completed": "演练通过",
       "failed": "演练未通过",
       "blocked": "演练被阻塞"
+    }
+  },
+  "productionReadiness": {
+    "title": "生产准备",
+    "generateButton": "生成生产准备判断",
+    "generating": "生成中",
+    "empty": "Staging 准备和本地演练完成后，可生成生产准备判断；第一版只给人工下一步，不自动部署。",
+    "readyToGenerate": "Staging 准备证据已具备，可以生成生产准备判断。",
+    "decision": "生产判断",
+    "gates": "Production Gates",
+    "evidence": "生产证据",
+    "localValidation": "本地验证",
+    "macMiniValidation": "Mac mini 实机验证",
+    "profile": "环境",
+    "nextActions": "下一步",
+    "noGates": "尚未生成生产准备 Gate。",
+    "macMini": "Mac mini 工作台",
+    "cloudAssetCenter": "云端素材中心",
+    "collectorSmoke": "实机 smoke",
+    "cloudSync": "云同步验收",
+    "resultCount": "采集数量",
+    "syncedAssets": "同步素材",
+    "warning": "提示",
+    "blocker": "阻塞",
+    "decisions": {
+      "not_generated": "尚未生成",
+      "ready_for_manual_production": "可进入人工生产确认",
+      "waiting_for_manual_check": "等待人工补齐证据",
+      "blocked": "暂不能进入生产"
     }
   },
   "stageDetail": {

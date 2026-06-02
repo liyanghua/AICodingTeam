@@ -132,6 +132,11 @@ def _build_parser() -> argparse.ArgumentParser:
     team_release_staging.add_argument("--runs-dir", default="runs")
     team_release_staging.add_argument("--json", action="store_true", dest="json_output")
     team_release_staging.set_defaults(func=_cmd_team_release_staging_readiness)
+    team_release_production = team_release_sub.add_parser("production-readiness", help="Generate production readiness gate artifacts")
+    team_release_production.add_argument("--run-id", required=True)
+    team_release_production.add_argument("--runs-dir", default="runs")
+    team_release_production.add_argument("--json", action="store_true", dest="json_output")
+    team_release_production.set_defaults(func=_cmd_team_release_production_readiness)
     team_release_rehearsal = team_release_sub.add_parser("staging-rehearsal", help="Run local staging rehearsal after staging readiness")
     team_release_rehearsal.add_argument("--run-id", required=True)
     team_release_rehearsal.add_argument("--runs-dir", default="runs")
@@ -696,6 +701,21 @@ def _cmd_team_release_staging_readiness(args: argparse.Namespace) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(format_staging_readiness(result), end="")
+    return 0
+
+
+def _cmd_team_release_production_readiness(args: argparse.Namespace) -> int:
+    from .team.release import format_production_readiness, generate_production_readiness
+
+    try:
+        result = generate_production_readiness(str(args.run_id), runs_dir=Path(args.runs_dir))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_production_readiness(result), end="")
     return 0
 
 

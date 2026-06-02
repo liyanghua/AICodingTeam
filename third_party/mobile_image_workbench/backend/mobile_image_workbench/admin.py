@@ -298,6 +298,9 @@ def _mac_mini_remote_status(repo_root: Path) -> dict[str, Any]:
     values = _mac_mini_remote_values(repo_root)
     target = _first_value(values, "MWB_MAC_MINI_SSH_TARGET", "MAC_MINI_USER")
     remote_root = _first_value(values, "MWB_MAC_MINI_REMOTE_ROOT", "RES_DIR")
+    workbench_env_file = _first_value(values, "MWB_MAC_MINI_WORKBENCH_ENV_FILE")
+    if remote_root and not workbench_env_file:
+        workbench_env_file = _default_remote_workbench_env_file(remote_root)
     key_path = _first_value(values, "MWB_MAC_MINI_SSH_KEY_PATH")
     password = _first_value(values, "MWB_MAC_MINI_SSH_PASS", "MAC_MINI_PASS", "MAC_NINI_PASS")
     missing: list[str] = []
@@ -315,6 +318,7 @@ def _mac_mini_remote_status(repo_root: Path) -> dict[str, Any]:
         "envFileExists": env_file.exists(),
         "target": target,
         "remoteRoot": remote_root,
+        "workbenchEnvFile": workbench_env_file,
         "port": _first_value(values, "MWB_MAC_MINI_SSH_PORT") or "22",
         "auth": auth,
     }
@@ -324,6 +328,9 @@ def _mac_mini_remote_config(repo_root: Path) -> dict[str, str]:
     values = _mac_mini_remote_values(repo_root)
     target = _first_value(values, "MWB_MAC_MINI_SSH_TARGET", "MAC_MINI_USER")
     remote_root = _first_value(values, "MWB_MAC_MINI_REMOTE_ROOT", "RES_DIR")
+    workbench_env_file = _first_value(values, "MWB_MAC_MINI_WORKBENCH_ENV_FILE")
+    if remote_root and not workbench_env_file:
+        workbench_env_file = _default_remote_workbench_env_file(remote_root)
     key_path = _first_value(values, "MWB_MAC_MINI_SSH_KEY_PATH")
     password = _first_value(values, "MWB_MAC_MINI_SSH_PASS", "MAC_MINI_PASS", "MAC_NINI_PASS")
     missing: list[str] = []
@@ -342,6 +349,7 @@ def _mac_mini_remote_config(repo_root: Path) -> dict[str, str]:
     return {
         "target": target,
         "remote_root": remote_root,
+        "workbench_env_file": workbench_env_file,
         "key_path": key_path,
         "password": password,
         "port": _first_value(values, "MWB_MAC_MINI_SSH_PORT") or "22",
@@ -399,6 +407,7 @@ def _mac_mini_remote_commands(
     ]
     remote_command = (
         f"cd {shlex.quote(config['remote_root'])} && "
+        f"MWB_ENV_FILE={shlex.quote(config['workbench_env_file'])} "
         "bash third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh"
     )
     ssh_command = prefix + ssh_options + [config["target"], remote_command]
@@ -419,6 +428,10 @@ def _mac_mini_remote_env_file(repo_root: Path) -> Path:
     if explicit:
         return Path(explicit).expanduser()
     return repo_root / "third_party/mobile_deploy/mac-mini/.env.remote"
+
+
+def _default_remote_workbench_env_file(remote_root: str) -> str:
+    return f"{remote_root.rstrip('/')}/third_party/mobile_image_workbench/.env.mac-mini"
 
 
 def _read_env_values(path: Path) -> dict[str, str]:

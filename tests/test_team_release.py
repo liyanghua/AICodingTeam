@@ -214,6 +214,105 @@ def _write_ci_status(run_dir: Path, *, status: str = "passed") -> None:
     )
 
 
+def _write_staging_readiness_artifact(run_dir: Path, *, decision: str = "ready_for_staging") -> None:
+    blockers = [] if decision == "ready_for_staging" else ["staging readiness is not ready"]
+    (run_dir / "staging_readiness.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_dir.name,
+                "generated_at": "2026-05-28T00:08:00+00:00",
+                "staging_decision": decision,
+                "summary": "PR 和 CI 已通过，可以进入 staging。" if decision == "ready_for_staging" else "staging 尚未准备好。",
+                "gates": [{"id": "ci_passed", "status": "passed" if decision == "ready_for_staging" else "blocked", "reason": "CI status", "evidence": []}],
+                "evidence": {"ci_status": "passed", "pr_url": "https://github.com/example/project/pull/42"},
+                "blockers": blockers,
+                "warnings": [],
+                "next_actions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_staging_rehearsal_artifact(run_dir: Path, *, status: str = "completed") -> None:
+    (run_dir / "staging_rehearsal.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_dir.name,
+                "status": status,
+                "generated_at": "2026-05-28T00:09:00+00:00",
+                "summary": "Staging 本地演练已通过。" if status == "completed" else "Staging 本地演练未通过。",
+                "staging_readiness_decision": "ready_for_staging",
+                "steps": [{"id": "full_tests", "status": "completed" if status == "completed" else "failed", "exit_code": 0 if status == "completed" else 1}],
+                "evidence": {"changed_files": ["dashboard/app.js"], "git_status": [" M dashboard/app.js"]},
+                "blockers": [] if status == "completed" else ["full tests failed"],
+                "warnings": [],
+                "next_actions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_mobile_production_evidence(run_dir: Path) -> None:
+    (run_dir / "production_checks").mkdir(parents=True)
+    (run_dir / "production_checks" / "mac_mini_doctor.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "launch_agent": "running",
+                "workbench_url": "http://mac-mini.local:8765",
+                "api_doctor": {"status": "ok", "adb": "connected", "xhs_installed": True, "manual_login_confirmed": True},
+                "jobs_writable": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "production_checks" / "cloud_asset_center_health.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "asset_center_url": "https://assets.example.internal",
+                "api_health": {"status": "ok"},
+                "categories_available": True,
+                "assets_available": True,
+                "pg_configured": True,
+                "oss_configured": True,
+                "sync_token_configured": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "production_checks" / "collector_smoke.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "mode": "deterministic",
+                "top_n": 1,
+                "manifest_path": "third_party/mobile_image_workbench/runs/job-1/collector_runs/run-1/manifest.json",
+                "result_count": 1,
+                "risk_events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "production_checks" / "cloud_sync_check.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "job_id": "job-1",
+                "tagged_assets": 1,
+                "synced_assets": 1,
+                "category": "桌垫",
+                "cloud_query": {"categories": ["桌垫"], "assets_found": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 class TeamReleaseTests(unittest.TestCase):
     def test_release_readiness_ready_for_pr_ci_when_acceptance_review_tests_and_diff_are_clean(self) -> None:
         from growth_dev.team.release import generate_release_readiness
@@ -539,6 +638,103 @@ class TeamReleaseTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertTrue(staging_readiness_exists)
         self.assertEqual(result["staging_readiness_decision"], "ready_for_staging")
+
+    def test_production_readiness_blocks_without_manual_production_evidence(self) -> None:
+        from growth_dev.team.release import generate_production_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            _write_staging_readiness_artifact(run_dir, decision="ready_for_staging")
+            _write_staging_rehearsal_artifact(run_dir, status="completed")
+
+            result = generate_production_readiness("release-run-1", runs_dir=runs_dir)
+            artifact = json.loads((run_dir / "production_readiness.json").read_text(encoding="utf-8"))
+            note = (run_dir / "production_readiness.md").read_text(encoding="utf-8")
+            runbook = (run_dir / "deployment_runbook.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["production_decision"], "blocked")
+        self.assertTrue(any("Mac mini" in blocker for blocker in result["blockers"]))
+        self.assertTrue(any("cloud asset center" in blocker for blocker in result["blockers"]))
+        self.assertTrue(any("实机 smoke" in blocker for blocker in result["blockers"]))
+        self.assertTrue(any("云端同步" in blocker for blocker in result["blockers"]))
+        self.assertEqual(artifact["production_decision"], "blocked")
+        self.assertIn("# Production Readiness", note)
+        self.assertIn("# 手机采集生产部署 Runbook", runbook)
+
+    def test_production_readiness_ready_when_staging_and_manual_evidence_are_complete(self) -> None:
+        from growth_dev.team.release import generate_production_readiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            _write_staging_readiness_artifact(run_dir, decision="ready_for_staging")
+            _write_staging_rehearsal_artifact(run_dir, status="completed")
+            _write_mobile_production_evidence(run_dir)
+            secret_text = "token=should-not-leak postgresql://user:password@host/db ALIYUN_OSS_ACCESS_KEY_SECRET=abc .env"
+            (run_dir / "production_checks" / "cloud_asset_center_health.json").write_text(
+                json.dumps({"status": "ok", "notes": secret_text, "pg_configured": True, "oss_configured": True, "sync_token_configured": True, "categories_available": True, "assets_available": True}),
+                encoding="utf-8",
+            )
+
+            result = generate_production_readiness("release-run-1", runs_dir=runs_dir)
+            payload = (
+                json.dumps(result, ensure_ascii=False)
+                + (run_dir / "production_readiness.md").read_text(encoding="utf-8")
+                + (run_dir / "deployment_runbook.md").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result["production_decision"], "ready_for_manual_production")
+        self.assertEqual(result["blockers"], [])
+        self.assertTrue(any(gate["id"] == "mac_mini_health" and gate["status"] == "passed" for gate in result["gates"]))
+        self.assertTrue(any(gate["id"] == "cloud_asset_center_health" and gate["status"] == "passed" for gate in result["gates"]))
+        self.assertTrue(any(gate["id"] == "collector_smoke" and gate["status"] == "passed" for gate in result["gates"]))
+        self.assertTrue(any(gate["id"] == "cloud_sync_acceptance" and gate["status"] == "passed" for gate in result["gates"]))
+        self.assertEqual(result["evidence"]["local_validation"]["cloud_asset_center"]["status"], "ok")
+        self.assertEqual(result["evidence"]["local_validation"]["staging_rehearsal_status"], "completed")
+        self.assertEqual(result["evidence"]["mac_mini_validation"]["doctor"]["status"], "ok")
+        self.assertEqual(result["evidence"]["mac_mini_validation"]["collector_smoke"]["result_count"], 1)
+        self.assertEqual(result["evidence"]["collector_smoke"]["result_count"], 1)
+        self.assertNotIn("should-not-leak", payload)
+        self.assertNotIn("postgresql://user:password@host/db", payload)
+        self.assertNotIn("ALIYUN_OSS_ACCESS_KEY_SECRET=abc", payload)
+        self.assertNotIn(".env", payload)
+
+    def test_cli_production_readiness_generates_json_output(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = _write_ready_run(runs_dir)
+            _write_staging_readiness_artifact(run_dir, decision="ready_for_staging")
+            _write_staging_rehearsal_artifact(run_dir, status="completed")
+            _write_mobile_production_evidence(run_dir)
+
+            with _captured_output() as (stdout, stderr):
+                exit_code = main(
+                    [
+                        "team",
+                        "release",
+                        "production-readiness",
+                        "--run-id",
+                        "release-run-1",
+                        "--runs-dir",
+                        str(runs_dir),
+                        "--json",
+                    ]
+                )
+            payload = json.loads(stdout.getvalue())
+            production_json_exists = (run_dir / "production_readiness.json").exists()
+            runbook_exists = (run_dir / "deployment_runbook.md").exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(payload["production_decision"], "ready_for_manual_production")
+        self.assertTrue(production_json_exists)
+        self.assertTrue(runbook_exists)
 
     def test_cli_staging_rehearsal_generates_artifacts_and_json_output(self) -> None:
         from growth_dev.cli import main

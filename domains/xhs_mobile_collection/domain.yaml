@@ -1,0 +1,105 @@
+domain_id: xhs_mobile_collection
+title: XHS Mobile Collection
+summary: Run low-frequency Xiaohongshu mobile image collection through the existing xhs_collector package with manual login and risk-stop boundaries.
+task_type: mobile_collection
+priority: P0
+repo:
+  root: third_party/xhs_collector
+  core_runtime_policy: controlled
+input_schema:
+  excel_input:
+    type: path
+    required: true
+  config:
+    type: path
+    required: false
+  mode:
+    type: string
+    required: false
+  top_n:
+    type: integer
+    required: false
+  image_top_n:
+    type: integer
+    required: false
+  keyword_top_n:
+    type: integer
+    required: false
+  keyword_result_top_n:
+    type: integer
+    required: false
+  output_dir:
+    type: path
+    required: false
+defaults:
+  excel_input: input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx
+  config: third_party/xhs_collector/config/xhs_collector.json
+  mode: deterministic
+  top_n: 1
+  output_dir: third_party/xhs_collector/runs/xhs_collector
+output_schema:
+  status: string
+  run_id: string
+  output_dir: string
+  result_count: integer
+  manifest: string
+  step_events: string
+  risk_events: string
+frameworks:
+  - xhs_collector
+  - uiautomator2
+  - adb
+  - python-unittest
+risk_rules:
+  - manual_login_only
+  - no_captcha_bypass
+  - no_fingerprint_spoofing
+  - no_proxy_rotation
+  - no_private_api_reverse_engineering
+  - low_frequency_only
+  - stop_on_login_captcha_risk_or_permission_prompt
+  - store_evidence_locally
+allowed_paths:
+  - third_party/xhs_collector/xhs_collector/
+  - third_party/xhs_collector/config/
+  - third_party/xhs_collector/README.md
+  - tests/test_xhs_collector.py
+  - domains/xhs_mobile_collection/
+modification_policy:
+  default: deny
+  allow_only_allowed_paths: true
+  forbidden_paths:
+    - third_party/xhs_collector/.venv/
+    - third_party/xhs_collector/runs/
+    - third_party/mobile_asset_center/data/
+    - third_party/mobile_image_workbench/runs/
+    - "**/.env"
+artifact_contract:
+  manifest: manifest.json
+  step_events: step_events.jsonl
+  risk_events: risk_events.jsonl
+  screenshots: screenshots/
+  collected_items: items/
+  run_root: third_party/xhs_collector/runs/xhs_collector/{collector_run_id}
+verification_commands:
+  - python3 -m unittest tests.test_xhs_collector -v
+  - cd third_party/xhs_collector && python3 -m xhs_collector validate --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" --config config/xhs_collector.json
+  - cd third_party/xhs_collector && python3 -m xhs_collector run --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" --config config/xhs_collector.json --dry-run
+  - cd third_party/xhs_collector && python3 -m xhs_collector doctor --config config/xhs_collector.json
+  - cd third_party/xhs_collector && python3 -m xhs_collector run --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" --config config/xhs_collector.json --mode deterministic --top-n 1
+evaluation_rules:
+  - excel_input_validates
+  - dry_run_exits_zero
+  - dry_run_outputs_run_id_and_output_dir
+  - doctor_reports_device_readiness_or_clear_blocker
+  - smoke_collects_one_item_or_records_risk_event
+  - manifest_step_events_and_risk_events_are_auditable
+  - no_disallowed_risk_behavior
+  - no_files_modified_outside_allowed_paths
+success_criteria:
+  - unittest_passes
+  - validate_exits_zero
+  - dry_run_exits_zero
+  - manifest_created
+  - risk_events_empty_or_explained
+  - deterministic_smoke_success_or_clear_environment_blocker

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import csv
+import io
 from http import HTTPStatus
 import json
 import os
@@ -318,6 +320,8 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         parser = build_parser()
         tag_args = parser.parse_args(
             [
+                "--env-file",
+                "/tmp/workbench.local.env",
                 "tag-scenes",
                 "--runs-root",
                 "/tmp/workbench-runs",
@@ -353,6 +357,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         )
 
         self.assertEqual(tag_args.command, "tag-scenes")
+        self.assertEqual(str(tag_args.env_file), "/tmp/workbench.local.env")
         self.assertEqual(tag_args.provider, "rule")
         self.assertTrue(tag_args.force)
         self.assertTrue(tag_args.debug_request)
@@ -361,6 +366,79 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertEqual(sync_args.collector_id, "mac-01")
         self.assertEqual(sync_args.job_id, "job-1")
         self.assertEqual(sync_args.batch_size, 100)
+
+    def test_cli_deploy_mac_mini_runs_remote_deploy_once(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.cli import (
+            main,
+        )
+
+        calls: list[tuple[Path, bool]] = []
+
+        class FakeAdmin:
+            def __init__(self, repo_root, *, run_async=True):
+                calls.append((Path(repo_root), run_async))
+
+            def start_mac_mini_remote_deploy(self):
+                return {
+                    "taskId": "admin-1",
+                    "kind": "deploy_mac_mini_remote",
+                    "status": "completed",
+                    "message": "执行完成",
+                    "exitCode": 0,
+                    "summary": {"target": "zw@192.168.77.35"},
+                }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with mock.patch(
+                "third_party.mobile_image_workbench.backend.mobile_image_workbench.admin.AdminTaskManager",
+                FakeAdmin,
+            ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "deploy-mac-mini",
+                        "--repo-root",
+                        str(repo_root),
+                        "--json",
+                    ]
+                )
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(calls, [(repo_root.resolve(), False)])
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["summary"]["target"], "zw@192.168.77.35")
+
+    def test_cli_env_file_loads_before_scene_tagger_default_model(self) -> None:
+        from third_party.mobile_image_workbench.backend.mobile_image_workbench.cli import (
+            build_parser,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env.local"
+            env_path.write_text(
+                "DASHSCOPE_VLM_MODEL=qwen-vl-plus-from-env-file\n"
+                "DASHSCOPE_API_KEY=file-key\n",
+                encoding="utf-8",
+            )
+            old_model = os.environ.get("DASHSCOPE_VLM_MODEL")
+            old_key = os.environ.get("DASHSCOPE_API_KEY")
+            try:
+                os.environ.pop("DASHSCOPE_VLM_MODEL", None)
+                os.environ["DASHSCOPE_API_KEY"] = "existing-key"
+                parser = build_parser(["--env-file", str(env_path)])
+                args = parser.parse_args(["--env-file", str(env_path), "tag-scenes"])
+                args_after_command = parser.parse_args(["tag-scenes", "--env-file", str(env_path)])
+
+                self.assertEqual(args.model, "qwen-vl-plus-from-env-file")
+                self.assertEqual(args_after_command.model, "qwen-vl-plus-from-env-file")
+                self.assertEqual(os.environ["DASHSCOPE_API_KEY"], "existing-key")
+            finally:
+                _restore_env("DASHSCOPE_VLM_MODEL", old_model)
+                _restore_env("DASHSCOPE_API_KEY", old_key)
 
     def test_scene_tagger_defaults_to_qwen_vl_max_and_dashscope_env(self) -> None:
         from third_party.mobile_image_workbench.backend.mobile_image_workbench.cli import (
@@ -1285,6 +1363,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
                         "MWB_MAC_MINI_REMOTE_ROOT=/Users/deployer/mobile-runtime",
                         "MWB_MAC_MINI_SSH_KEY_PATH=/Users/yichen/.ssh/mac-mini",
                         "MWB_MAC_MINI_SSH_PORT=2222",
+                        "MWB_MAC_MINI_WORKBENCH_ENV_FILE=/Users/deployer/mobile-runtime/third_party/mobile_image_workbench/.env.mac-mini",
                         "MWB_MAC_MINI_SSH_PASS=secret-should-not-leak",
                     ]
                 ),
@@ -1301,6 +1380,10 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             self.assertEqual(remote["target"], "deployer@192.168.77.85")
             self.assertEqual(remote["remoteRoot"], "/Users/deployer/mobile-runtime")
             self.assertEqual(remote["port"], "2222")
+            self.assertEqual(
+                remote["workbenchEnvFile"],
+                "/Users/deployer/mobile-runtime/third_party/mobile_image_workbench/.env.mac-mini",
+            )
             self.assertNotIn("secret-should-not-leak", json.dumps(remote, ensure_ascii=False))
 
     def test_admin_mac_mini_remote_config_uses_new_env_before_legacy_names(self) -> None:
@@ -1372,6 +1455,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
             self.assertEqual([call[0][0] for call in run_calls], ["rsync", "ssh"])
             self.assertIn("deployer@192.168.77.85:/Users/deployer/mobile-runtime/", run_calls[0][0])
             self.assertIn("install_workbench_launchd.sh", run_calls[1][0][-1])
+            self.assertIn("MWB_ENV_FILE=", run_calls[1][0][-1])
             self.assertIn(f"-i {key_path}", " ".join(run_calls[0][0]))
             self.assertIn("IdentitiesOnly=yes", " ".join(run_calls[0][0]))
             self.assertNotIn("secret", "\n".join(" ".join(call[0]) for call in run_calls))
@@ -1553,6 +1637,12 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         mac_env = (
             root / "third_party/mobile_deploy/mac-mini/workbench.env.example"
         ).read_text(encoding="utf-8")
+        local_env = (
+            root / "third_party/mobile_deploy/mac-mini/workbench.local.env.example"
+        ).read_text(encoding="utf-8")
+        mac_mini_env = (
+            root / "third_party/mobile_deploy/mac-mini/workbench.mac-mini.env.example"
+        ).read_text(encoding="utf-8")
         remote_env = (
             root / "third_party/mobile_deploy/mac-mini/remote.env.example"
         ).read_text(encoding="utf-8")
@@ -1569,10 +1659,23 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("Removing incompatible venv", mac_script)
         self.assertIn("Install Certificates.command", mac_script)
         self.assertIn("/Applications/Python 3.12/Install Certificates.command", mac_script)
+        self.assertIn("python_certificates_ready", mac_script)
+        self.assertIn(
+            "Python SSL certificates already available; skipping certificate installer.",
+            mac_script,
+        )
         self.assertIn("No Python certificate installer found", mac_script)
         self.assertIn("MWB_PIP_TRUSTED_HOST", mac_script)
         self.assertIn("PIP_TRUSTED_HOST", mac_script)
         self.assertIn("MWB_PIP_INDEX_URL", mac_script)
+        self.assertIn("MWB_ENV_FILE", mac_script)
+        self.assertIn("load_dotenv", mac_script)
+        self.assertIn("pip_tooling_ready", mac_script)
+        self.assertIn("pip tooling already available; skipping upgrade.", mac_script)
+        self.assertIn("--no-build-isolation", mac_script)
+        self.assertIn("pip install --no-build-isolation -e", mac_script)
+        self.assertNotIn("source \"${ENV_FILE}\"", mac_script)
+        self.assertIn("<string>--env-file</string>", mac_script)
         self.assertIn("npm not found; using existing frontend/dist", mac_script)
         self.assertIn("frontend/dist/index.html", mac_script)
         self.assertIn("ANDROID_HOME_DIR", mac_script)
@@ -1582,8 +1685,16 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("DASHSCOPE_API_KEY", mac_env)
         self.assertIn("MWB_ADMIN_TOKEN", mac_env)
         self.assertIn("MWB_DEPLOY_SSH_HOST", mac_env)
+        self.assertIn("MWB_COLLECTOR_ID=local-validation", local_env)
+        self.assertIn("MWB_CLOUD_SERVER_URL=http://127.0.0.1:8876", local_env)
+        self.assertIn("MWB_COLLECTOR_ID=mac-mini-01", mac_mini_env)
+        self.assertIn("MWB_PYTHON_BIN", mac_mini_env)
+        self.assertIn("ANDROID_HOME", mac_mini_env)
+        self.assertIn("workbench.local.env.example", readme)
+        self.assertIn("workbench.mac-mini.env.example", readme)
         self.assertIn("MWB_MAC_MINI_SSH_TARGET", remote_env)
         self.assertIn("MWB_MAC_MINI_REMOTE_ROOT", remote_env)
+        self.assertIn("MWB_MAC_MINI_WORKBENCH_ENV_FILE", remote_env)
         self.assertIn("MWB_MAC_MINI_SSH_PASS", remote_env)
         self.assertIn("systemctl", server_script)
         self.assertIn("mobile_asset_center", server_script)
@@ -1594,6 +1705,7 @@ class MobileImageWorkbenchTests(unittest.TestCase):
         self.assertIn("Mac mini", readme)
         self.assertIn(".env.remote", readme)
         self.assertIn(".env.asset.cloud", readme)
+        self.assertIn("deploy-mac-mini --json", readme)
         self.assertIn("云服务器", readme)
 
     def test_job_settings_defaults_match_input_modes(self) -> None:

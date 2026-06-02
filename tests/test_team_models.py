@@ -123,6 +123,27 @@ class TeamModelTests(unittest.TestCase):
         self.assertIn("manual_login_only", _field(spec, "risk_rules"))
         self.assertIn("no_captcha_bypass", _field(spec, "risk_rules"))
 
+    def test_xhs_mobile_collection_domain_declares_collector_contract(self) -> None:
+        from growth_dev.team.domain import load_domain_spec
+
+        repo_root = Path(__file__).resolve().parents[1]
+        spec = load_domain_spec("xhs_mobile_collection", domains_dir=repo_root / "domains")
+
+        self.assertEqual(spec.domain_id, "xhs_mobile_collection")
+        self.assertEqual(spec.metadata["repo"]["root"], "third_party/xhs_collector")
+        self.assertIn("excel_input", spec.input_schema)
+        self.assertIn("manual_login_only", spec.risk_rules)
+        self.assertIn("stop_on_login_captcha_risk_or_permission_prompt", spec.risk_rules)
+        self.assertIn("third_party/xhs_collector/xhs_collector/", spec.metadata["allowed_paths"])
+        self.assertNotIn("third_party/mobile_asset_center/data/", spec.metadata["allowed_paths"])
+        commands = "\n".join(spec.metadata["verification_commands"])
+        self.assertIn("tests.test_xhs_collector", commands)
+        self.assertIn("xhs_collector validate", commands)
+        self.assertIn("--dry-run", commands)
+        self.assertIn("--mode deterministic", commands)
+        self.assertEqual(spec.metadata["artifact_contract"]["manifest"], "manifest.json")
+        self.assertEqual(spec.metadata["artifact_contract"]["risk_events"], "risk_events.jsonl")
+
     def test_team_yaml_rejects_agent_without_outputs(self) -> None:
         from growth_dev.team.models import TeamSpec
 

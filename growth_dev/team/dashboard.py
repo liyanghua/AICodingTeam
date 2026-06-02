@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from ..utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
 from .models import TeamRunRecord
 from .quality import evaluate_run_quality, summarize_run_health, summarize_run_logs
-from .release import generate_release_readiness, generate_staging_readiness
+from .release import generate_production_readiness, generate_release_readiness, generate_staging_readiness
 from .github_pr import create_draft_pr, refresh_ci_status
 from .staging import run_staging_rehearsal
 
@@ -135,11 +135,12 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
     gates.append({"id": "apply_gate", "label": "Apply Gate", "status": apply_status, "reason": apply_reason})
     ci_status = _read_ci_status(run_dir)
     staging_readiness = _read_staging_readiness(run_dir)
+    production_readiness = _read_production_readiness(run_dir)
     gates.extend(
         [
             _ci_gate_view(ci_status),
             _deploy_gate_view(staging_readiness),
-            {"id": "human_release_gate", "label": "Human Release Gate", "status": "planned", "reason": "Reserved for production approval."},
+            _production_gate_view(production_readiness),
         ]
     )
 
@@ -170,6 +171,7 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "ci_status": ci_status,
         "staging_readiness": staging_readiness,
         "staging_rehearsal": _read_staging_rehearsal(run_dir),
+        "production_readiness": production_readiness,
         "acceptance": _read_acceptance_status(run_dir),
         "artifacts": _build_artifact_view(run_dir, repo_root, record),
         "events": events[-50:],
@@ -556,6 +558,19 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
                     self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "production-readiness":
+                try:
+                    self._send_json(
+                        generate_production_readiness(parts[2], runs_dir=config.runs_dir),
+                        status=HTTPStatus.OK,
+                    )
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
             if parsed.path != "/api/runs":
                 self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -752,6 +767,9 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("staging_readiness.json", "Staging Readiness JSON", "run"),
         ("staging_rehearsal.md", "Staging Rehearsal", "run"),
         ("staging_rehearsal.json", "Staging Rehearsal JSON", "run"),
+        ("production_readiness.md", "Production Readiness", "run"),
+        ("production_readiness.json", "Production Readiness JSON", "run"),
+        ("deployment_runbook.md", "Deployment Runbook", "run"),
     ]
     seen: set[tuple[str, str]] = set()
     artifacts: list[dict[str, Any]] = []
@@ -913,6 +931,14 @@ def _read_staging_rehearsal(run_dir: Path) -> dict[str, Any]:
     return _redact(payload) if isinstance(payload, dict) else {"schema_version": 1, "status": "not_started", "steps": [], "blockers": [], "warnings": [], "next_actions": []}
 
 
+def _read_production_readiness(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "production_readiness.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
 def _ci_gate_view(ci_status: dict[str, Any]) -> dict[str, str]:
     status = str(ci_status.get("status", "not_started")) if ci_status else "not_started"
     if status == "passed":
@@ -933,6 +959,17 @@ def _deploy_gate_view(staging_readiness: dict[str, Any]) -> dict[str, str]:
     if decision == "blocked":
         return {"id": "deploy_gate", "label": "Deploy Gate", "status": "blocked", "reason": str(staging_readiness.get("summary", "Staging is blocked."))}
     return {"id": "deploy_gate", "label": "Deploy Gate", "status": "planned", "reason": "Reserved for staging deploy integration."}
+
+
+def _production_gate_view(production_readiness: dict[str, Any]) -> dict[str, str]:
+    decision = str(production_readiness.get("production_decision", ""))
+    if decision == "ready_for_manual_production":
+        return {"id": "human_release_gate", "label": "Human Release Gate", "status": "passed", "reason": str(production_readiness.get("summary", "Ready for manual production confirmation."))}
+    if decision == "waiting_for_manual_check":
+        return {"id": "human_release_gate", "label": "Human Release Gate", "status": "warning", "reason": str(production_readiness.get("summary", "Waiting for manual production evidence."))}
+    if decision == "blocked":
+        return {"id": "human_release_gate", "label": "Human Release Gate", "status": "blocked", "reason": str(production_readiness.get("summary", "Production readiness is blocked."))}
+    return {"id": "human_release_gate", "label": "Human Release Gate", "status": "planned", "reason": "Reserved for production approval."}
 
 
 def _read_acceptance_status(run_dir: Path) -> dict[str, Any]:

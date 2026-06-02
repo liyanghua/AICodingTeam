@@ -16,6 +16,9 @@ READINESS_MD = "release_readiness.md"
 PR_DRAFT_MD = "pr_draft.md"
 STAGING_READINESS_JSON = "staging_readiness.json"
 STAGING_READINESS_MD = "staging_readiness.md"
+PRODUCTION_READINESS_JSON = "production_readiness.json"
+PRODUCTION_READINESS_MD = "production_readiness.md"
+DEPLOYMENT_RUNBOOK_MD = "deployment_runbook.md"
 
 SECRET_REPLACEMENTS = [
     (re.compile(r"sk-[A-Za-z0-9_\-]{6,}"), "<redacted-secret>"),
@@ -204,10 +207,108 @@ def generate_staging_readiness(
     return result
 
 
+def generate_production_readiness(
+    run_id: str,
+    *,
+    runs_dir: Path = Path("runs"),
+) -> dict[str, Any]:
+    runs_dir = Path(runs_dir)
+    run_dir = runs_dir / run_id
+    record_path = run_dir / "team_run_record.json"
+    if not record_path.exists():
+        raise FileNotFoundError(f"team_run_record.json not found: {record_path}")
+
+    record = TeamRunRecord.from_dict(read_json(record_path))
+    staging = _read_json(run_dir / STAGING_READINESS_JSON)
+    rehearsal = _read_json(run_dir / "staging_rehearsal.json")
+    checks_dir = run_dir / "production_checks"
+    mac_mini = _read_json(checks_dir / "mac_mini_doctor.json")
+    cloud = _read_json(checks_dir / "cloud_asset_center_health.json")
+    smoke = _read_json(checks_dir / "collector_smoke.json")
+    sync = _read_json(checks_dir / "cloud_sync_check.json")
+
+    gates: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    _add_production_staging_gate(staging, gates, blockers)
+    _add_production_rehearsal_gate(rehearsal, gates, blockers)
+    _add_mac_mini_health_gate(mac_mini, gates, blockers, warnings)
+    _add_cloud_asset_center_gate(cloud, gates, blockers, warnings)
+    _add_collector_smoke_gate(smoke, gates, blockers, warnings)
+    _add_cloud_sync_gate(sync, gates, blockers, warnings)
+    _add_production_safety_gate(record, smoke, gates, blockers)
+
+    if blockers:
+        decision = "blocked"
+    elif warnings:
+        decision = "waiting_for_manual_check"
+    else:
+        decision = "ready_for_manual_production"
+
+    result = {
+        "schema_version": 1,
+        "run_id": record.run_id,
+        "generated_at": now_iso(),
+        "production_decision": decision,
+        "summary": _production_summary(decision, blockers, warnings),
+        "gates": gates,
+        "evidence": {
+            "staging_decision": str(staging.get("staging_decision", "")),
+            "staging_rehearsal_status": str(rehearsal.get("status", "")),
+            "local_validation": {
+                "profile": "local",
+                "staging_decision": str(staging.get("staging_decision", "")),
+                "staging_rehearsal_status": str(rehearsal.get("status", "")),
+                "cloud_asset_center": _production_evidence_subset(cloud, ["status", "asset_center_url", "categories_available", "assets_available", "pg_configured", "oss_configured", "sync_token_configured"]),
+            },
+            "mac_mini_validation": {
+                "profile": "mac_mini",
+                "doctor": _production_evidence_subset(mac_mini, ["status", "launch_agent", "workbench_url", "jobs_writable"]),
+                "collector_smoke": _production_evidence_subset(smoke, ["status", "mode", "top_n", "manifest_path", "result_count"]),
+                "cloud_sync": _production_evidence_subset(sync, ["status", "job_id", "tagged_assets", "synced_assets", "category", "cloud_query"]),
+            },
+            "mac_mini": _production_evidence_subset(mac_mini, ["status", "launch_agent", "workbench_url", "jobs_writable"]),
+            "cloud_asset_center": _production_evidence_subset(cloud, ["status", "asset_center_url", "categories_available", "assets_available", "pg_configured", "oss_configured", "sync_token_configured"]),
+            "collector_smoke": _production_evidence_subset(smoke, ["status", "mode", "top_n", "manifest_path", "result_count"]),
+            "cloud_sync": _production_evidence_subset(sync, ["status", "job_id", "tagged_assets", "synced_assets", "category", "cloud_query"]),
+        },
+        "blockers": _dedupe(blockers),
+        "warnings": _dedupe(warnings),
+        "next_actions": _production_next_actions(record.run_id, decision),
+    }
+    result = _redact(result)
+    _write_production_artifacts(run_dir, result)
+    return result
+
+
 def format_staging_readiness(result: dict[str, Any]) -> str:
     lines = [
         f"Run: {result.get('run_id', '')}",
         f"Decision: {result.get('staging_decision', '')}",
+        f"Summary: {result.get('summary', '')}",
+        "",
+        "Gates:",
+    ]
+    for gate in result.get("gates", []):
+        if isinstance(gate, dict):
+            lines.append(f"- {gate.get('id', '')}: {gate.get('status', '')} - {gate.get('reason', '')}")
+    blockers = [str(item) for item in result.get("blockers", [])]
+    warnings = [str(item) for item in result.get("warnings", [])]
+    if blockers:
+        lines.extend(["", "Blockers:", *[f"- {item}" for item in blockers]])
+    if warnings:
+        lines.extend(["", "Warnings:", *[f"- {item}" for item in warnings]])
+    next_actions = [str(item) for item in result.get("next_actions", [])]
+    if next_actions:
+        lines.extend(["", "Next actions:", *[f"- {item}" for item in next_actions]])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_production_readiness(result: dict[str, Any]) -> str:
+    lines = [
+        f"Run: {result.get('run_id', '')}",
+        f"Decision: {result.get('production_decision', '')}",
         f"Summary: {result.get('summary', '')}",
         "",
         "Gates:",
@@ -238,6 +339,13 @@ def _write_staging_artifacts(run_dir: Path, result: dict[str, Any]) -> None:
     ensure_dir(run_dir)
     write_json(run_dir / STAGING_READINESS_JSON, result)
     (run_dir / STAGING_READINESS_MD).write_text(_staging_markdown(result), encoding="utf-8")
+
+
+def _write_production_artifacts(run_dir: Path, result: dict[str, Any]) -> None:
+    ensure_dir(run_dir)
+    write_json(run_dir / PRODUCTION_READINESS_JSON, result)
+    (run_dir / PRODUCTION_READINESS_MD).write_text(_production_markdown(result), encoding="utf-8")
+    (run_dir / DEPLOYMENT_RUNBOOK_MD).write_text(_deployment_runbook(result), encoding="utf-8")
 
 
 def _readiness_markdown(result: dict[str, Any]) -> str:
@@ -318,6 +426,106 @@ def _staging_markdown(result: dict[str, Any]) -> str:
     lines.extend([f"- {item}" for item in result.get("warnings", [])] or ["暂无 warning。"])
     lines.extend(["", "## Next Actions", ""])
     lines.extend([f"- `{item}`" for item in result.get("next_actions", [])] or ["暂无下一步动作。"])
+    return _redact_text("\n".join(lines).rstrip() + "\n")
+
+
+def _production_markdown(result: dict[str, Any]) -> str:
+    evidence = result.get("evidence", {}) if isinstance(result.get("evidence"), dict) else {}
+    lines = [
+        "# Production Readiness",
+        "",
+        f"- Run: `{result.get('run_id', '')}`",
+        f"- Decision: `{result.get('production_decision', '')}`",
+        f"- Summary: {result.get('summary', '')}",
+        "",
+        "## Gates",
+        "",
+        "| Gate | Status | Reason |",
+        "| --- | --- | --- |",
+    ]
+    for gate in result.get("gates", []):
+        if isinstance(gate, dict):
+            reason = str(gate.get("reason", "")).replace("|", "\\|")
+            lines.append(f"| `{gate.get('id', '')}` | `{gate.get('status', '')}` | {reason} |")
+    lines.extend(["", "## Evidence", ""])
+    lines.append(f"- Staging decision: `{evidence.get('staging_decision', '')}`")
+    lines.append(f"- Staging rehearsal: `{evidence.get('staging_rehearsal_status', '')}`")
+    local = evidence.get("local_validation", {}) if isinstance(evidence.get("local_validation"), dict) else {}
+    mac_validation = evidence.get("mac_mini_validation", {}) if isinstance(evidence.get("mac_mini_validation"), dict) else {}
+    local_cloud = local.get("cloud_asset_center", {}) if isinstance(local.get("cloud_asset_center"), dict) else {}
+    mac_doctor = mac_validation.get("doctor", {}) if isinstance(mac_validation.get("doctor"), dict) else {}
+    mac_smoke = mac_validation.get("collector_smoke", {}) if isinstance(mac_validation.get("collector_smoke"), dict) else {}
+    lines.append(f"- Local validation: `{local.get('profile', 'local')}` / cloud `{local_cloud.get('status', 'missing')}`")
+    lines.append(f"- Mac mini validation: `{mac_validation.get('profile', 'mac_mini')}` / doctor `{mac_doctor.get('status', 'missing')}` / smoke `{mac_smoke.get('status', 'missing')}`")
+    for key, label in (
+        ("mac_mini", "Mac mini"),
+        ("cloud_asset_center", "Cloud asset center"),
+        ("collector_smoke", "Collector smoke"),
+        ("cloud_sync", "Cloud sync"),
+    ):
+        value = evidence.get(key, {}) if isinstance(evidence.get(key), dict) else {}
+        lines.append(f"- {label}: `{value.get('status', 'missing')}`")
+    lines.extend(["", "## Blockers", ""])
+    lines.extend([f"- {item}" for item in result.get("blockers", [])] or ["暂无硬阻塞。"])
+    lines.extend(["", "## Warnings", ""])
+    lines.extend([f"- {item}" for item in result.get("warnings", [])] or ["暂无 warning。"])
+    lines.extend(["", "## Next Actions", ""])
+    lines.extend([f"- `{item}`" for item in result.get("next_actions", [])] or ["暂无下一步动作。"])
+    lines.extend(["", "## Runbook", "", "- Source: [deployment_runbook.md](deployment_runbook.md)"])
+    return _redact_text("\n".join(lines).rstrip() + "\n")
+
+
+def _deployment_runbook(result: dict[str, Any]) -> str:
+    run_id = str(result.get("run_id", ""))
+    lines = [
+        "# 手机采集生产部署 Runbook",
+        "",
+        "## 目标形态",
+        "",
+        "- Mac mini：连接 Android 手机，运行移动端图片采集工作台。",
+        "- 云服务器：运行素材中心 API/前端，使用 PostgreSQL 和 OSS 保存素材。",
+        "- AI Team：只负责生产准备判断、改造闭环和复盘，不自动执行生产部署。",
+        "",
+        "## Mac mini 部署",
+        "",
+        "```bash",
+        "cd /path/to/repo",
+        "bash third_party/mobile_deploy/mac-mini/install_workbench_launchd.sh",
+        "launchctl print gui/$(id -u)/com.ontology.mobile-image-workbench",
+        "curl http://127.0.0.1:8765/api/doctor",
+        "```",
+        "",
+        "## 云端素材中心部署",
+        "",
+        "```bash",
+        "cd /path/to/repo",
+        "sudo bash third_party/mobile_deploy/server/install_asset_center_systemd.sh",
+        "systemctl status mobile-asset-center",
+        "curl http://127.0.0.1:8876/api/health",
+        "curl http://127.0.0.1:8876/api/categories",
+        "```",
+        "",
+        "## 首次生产验收",
+        "",
+        "1. 人工确认手机已连接、XHS 已手动登录、验证码/权限弹窗已处理。",
+        "2. 在工作台运行 top-n=1 小流量采集。",
+        "3. 确认 job 产物包含 manifest、step_events、risk_events 和结果包。",
+        "4. 执行打标签并同步云端。",
+        "5. 在云端素材中心按 category/scene/assets 检索到新素材。",
+        "",
+        "## 回滚和恢复",
+        "",
+        "- Mac mini：恢复上一版 repo 后重跑 LaunchAgent 安装脚本；必要时停止 LaunchAgent。",
+        "- 云端：恢复上一版服务目录或镜像，保留数据库和对象存储；服务失败时先停止同步入口。",
+        "- 采集任务：失败 job 不删除，保留 risk_events 和 step_events 供复盘。",
+        "",
+        "## AI Team 复核命令",
+        "",
+        "```bash",
+        f"python3 -m growth_dev.cli team release production-readiness --run-id {run_id}",
+        f"python3 -m growth_dev.cli team release production-readiness --run-id {run_id} --json",
+        "```",
+    ]
     return _redact_text("\n".join(lines).rstrip() + "\n")
 
 
@@ -578,6 +786,157 @@ def _add_staging_risk_gate(
         gates.append(_gate("risk_and_blockers", "passed", "未发现未清零风险或阻塞。", []))
 
 
+def _add_production_staging_gate(staging: dict[str, Any], gates: list[dict[str, Any]], blockers: list[str]) -> None:
+    decision = str(staging.get("staging_decision", ""))
+    if decision == "ready_for_staging":
+        gates.append(_gate("staging_readiness", "passed", "Staging 准备判断已通过。", [decision]))
+        return
+    reason = "staging_readiness.json is missing or not ready_for_staging."
+    if decision:
+        reason = f"staging readiness is `{decision}`, expected `ready_for_staging`."
+    gates.append(_gate("staging_readiness", "blocked", reason, [decision or STAGING_READINESS_JSON]))
+    blockers.append(reason)
+
+
+def _add_production_rehearsal_gate(rehearsal: dict[str, Any], gates: list[dict[str, Any]], blockers: list[str]) -> None:
+    status = str(rehearsal.get("status", ""))
+    if status == "completed":
+        gates.append(_gate("staging_rehearsal", "passed", "Staging 本地演练已完成。", [status]))
+        return
+    reason = "staging_rehearsal.json is missing or not completed."
+    if status:
+        reason = f"staging rehearsal status is `{status}`, expected `completed`."
+    gates.append(_gate("staging_rehearsal", "blocked", reason, [status or "staging_rehearsal.json"]))
+    blockers.append(reason)
+
+
+def _add_mac_mini_health_gate(
+    mac_mini: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    if not mac_mini:
+        reason = "Mac mini 生产健康证据缺失：production_checks/mac_mini_doctor.json。"
+        gates.append(_gate("mac_mini_health", "blocked", reason, []))
+        blockers.append(reason)
+        return
+    status = str(mac_mini.get("status", ""))
+    api_doctor = mac_mini.get("api_doctor") if isinstance(mac_mini.get("api_doctor"), dict) else {}
+    launch_agent = str(mac_mini.get("launch_agent", ""))
+    jobs_writable = bool(mac_mini.get("jobs_writable", False))
+    xhs_ready = bool(api_doctor.get("xhs_installed", False))
+    login_confirmed = bool(api_doctor.get("manual_login_confirmed", False))
+    if status == "ok" and launch_agent == "running" and jobs_writable and xhs_ready and login_confirmed:
+        gates.append(_gate("mac_mini_health", "passed", "Mac mini 工作台、ADB/XHS 和手动登录证据齐备。", [status, launch_agent]))
+        return
+    reason = "Mac mini 生产健康未通过。"
+    evidence = [f"status={status}", f"launch_agent={launch_agent}", f"jobs_writable={jobs_writable}", f"xhs_installed={xhs_ready}", f"manual_login_confirmed={login_confirmed}"]
+    gates.append(_gate("mac_mini_health", "blocked", reason, evidence))
+    blockers.append(reason)
+    if not login_confirmed:
+        warnings.append("XHS 手动登录确认缺失，生产采集前必须人工确认。")
+
+
+def _add_cloud_asset_center_gate(
+    cloud: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    if not cloud:
+        reason = "cloud asset center 生产健康证据缺失：production_checks/cloud_asset_center_health.json。"
+        gates.append(_gate("cloud_asset_center_health", "blocked", reason, []))
+        blockers.append(reason)
+        return
+    status = str(cloud.get("status", ""))
+    required = {
+        "pg_configured": bool(cloud.get("pg_configured", False)),
+        "oss_configured": bool(cloud.get("oss_configured", False)),
+        "sync_token_configured": bool(cloud.get("sync_token_configured", False)),
+        "categories_available": bool(cloud.get("categories_available", False)),
+        "assets_available": bool(cloud.get("assets_available", False)),
+    }
+    if status == "ok" and all(required.values()):
+        gates.append(_gate("cloud_asset_center_health", "passed", "云端素材中心、PG/OSS 和同步配置证据齐备。", [status]))
+        return
+    reason = "cloud asset center 生产健康未通过。"
+    evidence = [f"{key}={value}" for key, value in required.items()]
+    gates.append(_gate("cloud_asset_center_health", "blocked", reason, [f"status={status}", *evidence]))
+    blockers.append(reason)
+    missing = [key for key, value in required.items() if not value]
+    if missing:
+        warnings.append(f"云端素材中心缺少配置或 API 证据：{', '.join(missing)}")
+
+
+def _add_collector_smoke_gate(
+    smoke: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    if not smoke:
+        reason = "实机 smoke 证据缺失：production_checks/collector_smoke.json。"
+        gates.append(_gate("collector_smoke", "blocked", reason, []))
+        blockers.append(reason)
+        return
+    status = str(smoke.get("status", ""))
+    result_count = int(smoke.get("result_count") or 0)
+    risks = smoke.get("risk_events", []) if isinstance(smoke.get("risk_events"), list) else []
+    if status in {"completed", "partial"} and result_count >= 1 and not risks:
+        gates.append(_gate("collector_smoke", "passed", "top-n=1 实机采集 smoke 已完成且无风险事件。", [f"result_count={result_count}"]))
+        return
+    reason = "实机 smoke 未完成或存在风险事件。"
+    gates.append(_gate("collector_smoke", "blocked", reason, [f"status={status}", f"result_count={result_count}", *[str(item) for item in risks]]))
+    blockers.append(reason)
+    if risks:
+        warnings.append("实机 smoke 存在 risk_events，生产前必须人工复核。")
+
+
+def _add_cloud_sync_gate(
+    sync: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+    warnings: list[str],
+) -> None:
+    if not sync:
+        reason = "云端同步验收证据缺失：production_checks/cloud_sync_check.json。"
+        gates.append(_gate("cloud_sync_acceptance", "blocked", reason, []))
+        blockers.append(reason)
+        return
+    status = str(sync.get("status", ""))
+    synced_assets = int(sync.get("synced_assets") or 0)
+    cloud_query = sync.get("cloud_query") if isinstance(sync.get("cloud_query"), dict) else {}
+    assets_found = int(cloud_query.get("assets_found") or 0)
+    if status == "ok" and synced_assets >= 1 and assets_found >= 1:
+        gates.append(_gate("cloud_sync_acceptance", "passed", "采集结果已打标并同步到云端素材中心，且可检索。", [f"synced_assets={synced_assets}", f"assets_found={assets_found}"]))
+        return
+    reason = "云端同步验收未通过。"
+    gates.append(_gate("cloud_sync_acceptance", "blocked", reason, [f"status={status}", f"synced_assets={synced_assets}", f"assets_found={assets_found}"]))
+    blockers.append(reason)
+    warnings.append("云端同步未形成可检索素材证据。")
+
+
+def _add_production_safety_gate(
+    record: TeamRunRecord,
+    smoke: dict[str, Any],
+    gates: list[dict[str, Any]],
+    blockers: list[str],
+) -> None:
+    risks: list[str] = []
+    risks.extend(record.risk_events)
+    for agent in record.agent_runs:
+        risks.extend(agent.risk_events)
+    if isinstance(smoke.get("risk_events"), list):
+        risks.extend(str(item) for item in smoke.get("risk_events", []) if item)
+    risks = _dedupe(risks)
+    if risks:
+        gates.append(_gate("production_safety", "blocked", "存在未清零生产风险事件。", risks))
+        blockers.extend(risks)
+    else:
+        gates.append(_gate("production_safety", "passed", "未发现未清零生产风险事件；仍需人工遵守手动登录和低频采集边界。", []))
+
+
 def _gate(gate_id: str, status: str, reason: str, evidence: list[Any]) -> dict[str, Any]:
     return {
         "id": gate_id,
@@ -801,6 +1160,37 @@ def _staging_next_actions(run_id: str, decision: str) -> list[str]:
         f"python3 -m growth_dev.cli team release readiness --run-id {run_id}",
         f"python3 -m growth_dev.cli team release staging-readiness --run-id {run_id}",
     ]
+
+
+def _production_summary(decision: str, blockers: list[str], warnings: list[str]) -> str:
+    if decision == "ready_for_manual_production":
+        return "Staging、本地演练、Mac mini、云端素材中心、实机 smoke 和云同步证据均已齐备，可进入人工生产发布确认。"
+    if decision == "waiting_for_manual_check":
+        return f"核心证据基本齐备，但仍有 {len(warnings)} 条人工复核项，暂不自动进入生产。"
+    return f"存在 {len(blockers)} 个生产硬阻塞，暂不能进入生产使用。"
+
+
+def _production_next_actions(run_id: str, decision: str) -> list[str]:
+    if decision == "ready_for_manual_production":
+        return [
+            f"python3 -m growth_dev.cli team release production-readiness --run-id {run_id}",
+            "人工确认生产窗口、负责人、回滚方式和首次 top-n=1 采集范围。",
+            "按 deployment_runbook.md 执行或复核 Mac mini 与云端素材中心部署。",
+        ]
+    if decision == "waiting_for_manual_check":
+        return [
+            "补齐 production_readiness.md 中的 warning 证据。",
+            f"python3 -m growth_dev.cli team release production-readiness --run-id {run_id}",
+        ]
+    return [
+        "先处理 production_readiness.md 中的 blockers。",
+        "补齐 production_checks/ 下的 Mac mini、云端、实机 smoke 和云同步证据。",
+        f"python3 -m growth_dev.cli team release production-readiness --run-id {run_id}",
+    ]
+
+
+def _production_evidence_subset(payload: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    return {key: payload.get(key) for key in keys if key in payload}
 
 
 def _ci_status_reason(status: str) -> str:

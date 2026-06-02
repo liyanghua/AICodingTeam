@@ -38,6 +38,34 @@ python3 -m xhs_collector run \
 Run commands from `third_party/xhs_collector`, or set `PYTHONPATH` to include
 that directory.
 
+## AI Team Domain
+
+The collector is registered as the `xhs_mobile_collection` domain pack for
+AI Team runs. Use this when the task is to improve the collector through the
+gated AI-coding workflow instead of running collection directly:
+
+```bash
+python3 -m growth_dev.cli team run \
+  --domain xhs_mobile_collection \
+  --executor codex \
+  --brief "跑通小红书手机采集 top-n=1 的 deterministic smoke，并修复阻塞问题"
+```
+
+For a first controlled validation, run the deterministic team flow without
+changing code:
+
+```bash
+python3 -m growth_dev.cli team run \
+  --domain xhs_mobile_collection \
+  --executor deterministic \
+  --brief "跑通小红书手机采集 top-n=1 的 deterministic smoke，并修复阻塞问题"
+```
+
+The domain contract lives in `domains/xhs_mobile_collection/domain.yaml`. It
+keeps Codex changes bounded to the collector, its tests, docs, and the domain
+pack; historical `runs/`, real `.env` files, and asset-center data are outside
+the allowed modification boundary.
+
 ## Deterministic Mode
 
 Install runtime dependencies in a Python 3.11-3.13 environment:

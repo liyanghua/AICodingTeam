@@ -90,6 +90,17 @@ class MobileAssetCenterTests(unittest.TestCase):
                 asset_center_runtime_config(captured["data_root"])["profile"], "local"
             )
 
+    def test_mobile_deploy_readme_documents_local_cloud_profile_env_file(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        readme = (root / "third_party/mobile_deploy/README.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("python3.12 -m venv .venv-asset-center", readme)
+        self.assertIn("python -m pip install -e '.[cloud]'", readme)
+        self.assertIn("--env-file .env.asset.local-cloud", readme)
+        self.assertIn("workbench.local.env.example", readme)
+
     def test_asset_center_cloud_profile_uses_standard_env_for_pg_and_oss(self) -> None:
         from third_party.mobile_asset_center.backend.mobile_asset_center.server import (
             asset_center_runtime_config,

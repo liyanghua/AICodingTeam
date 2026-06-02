@@ -1894,6 +1894,35 @@ class XhsCollectorTests(unittest.TestCase):
         self.assertIn("买家秀 实拍", rank_prompt)
         self.assertIn("商拍", rank_prompt)
 
+    def test_doctor_reports_missing_mobilerun_as_environment_blocker(self) -> None:
+        from third_party.xhs_collector.xhs_collector.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "device_serial": None,
+                        "xhs_package": "com.xingin.xhs",
+                        "mode": "deterministic",
+                        "output_root": str(Path(temp_dir) / "runs"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch(
+                "third_party.xhs_collector.xhs_collector.device.AndroidCollectorDevice.connect",
+                side_effect=RuntimeError("No package metadata was found for mobilerun"),
+            ):
+                with mock.patch("builtins.print") as printed:
+                    exit_code = main(["doctor", "--config", str(config_path)])
+
+        self.assertEqual(exit_code, 1)
+        output = "\n".join(str(call.args[0]) for call in printed.call_args_list if call.args)
+        self.assertIn("environment_blocker", output)
+        self.assertIn("mobilerun", output)
+        self.assertIn("third_party/mobilerun-main", output)
+
     def test_dry_run_writes_manifest_ranked_items_and_risk_events(self) -> None:
         from third_party.xhs_collector.xhs_collector.runner import run_dry_collect
 

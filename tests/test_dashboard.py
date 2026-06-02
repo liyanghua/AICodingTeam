@@ -473,6 +473,32 @@ console.log(JSON.stringify(vm));
             encoding="utf-8",
         )
         (run_dir / "staging_rehearsal.md").write_text("# Staging Rehearsal\n", encoding="utf-8")
+        (run_dir / "production_readiness.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "generated_at": "2026-05-23T00:07:00+00:00",
+                    "production_decision": "ready_for_manual_production",
+                    "summary": "生产准备证据齐备，可进入人工生产确认。",
+                    "gates": [{"id": "collector_smoke", "status": "passed", "reason": "top-n=1 smoke passed.", "evidence": ["result_count=1"]}],
+                    "evidence": {
+                        "staging_decision": "ready_for_staging",
+                        "staging_rehearsal_status": "completed",
+                        "mac_mini": {"status": "ok", "launch_agent": "running"},
+                        "cloud_asset_center": {"status": "ok"},
+                        "collector_smoke": {"status": "completed", "result_count": 1},
+                        "cloud_sync": {"status": "ok", "synced_assets": 1},
+                    },
+                    "blockers": [],
+                    "warnings": [],
+                    "next_actions": ["人工确认生产窗口。"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "production_readiness.md").write_text("# Production Readiness\n", encoding="utf-8")
+        (run_dir / "deployment_runbook.md").write_text("# 手机采集生产部署 Runbook\n", encoding="utf-8")
         return run_dir
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
@@ -504,6 +530,7 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["ci_status"]["status"], "passed")
         self.assertEqual(state["staging_readiness"]["staging_decision"], "ready_for_staging")
         self.assertEqual(state["staging_rehearsal"]["status"], "completed")
+        self.assertEqual(state["production_readiness"]["production_decision"], "ready_for_manual_production")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_quality_report.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
@@ -521,6 +548,9 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "staging_readiness.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "staging_rehearsal.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "staging_rehearsal.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "production_readiness.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "production_readiness.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "deployment_runbook.md" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -672,10 +702,19 @@ console.log(JSON.stringify(vm));
                 request.do_POST()
                 rehearsal_payload = request._send_json.call_args.args[0]
 
+            with mock.patch("growth_dev.team.dashboard.generate_production_readiness") as production_mock:
+                production_mock.return_value = {"production_decision": "ready_for_manual_production"}
+                request = handler.__new__(handler)
+                request.path = "/api/runs/dashboard-run-1/production-readiness"
+                request._send_json = mock.Mock()
+                request.do_POST()
+                production_payload = request._send_json.call_args.args[0]
+
         self.assertEqual(draft_payload["status"], "created")
         self.assertEqual(status_payload["status"], "passed")
         self.assertEqual(staging_payload["staging_decision"], "ready_for_staging")
         self.assertEqual(rehearsal_payload["status"], "completed")
+        self.assertEqual(production_payload["production_decision"], "ready_for_manual_production")
 
     def test_dashboard_acceptance_rejects_run_id_path_escape(self) -> None:
         from growth_dev.team.dashboard import start_dashboard_acceptance
@@ -970,18 +1009,25 @@ console.log(JSON.stringify(vm));
 
         self.assertIn('id="staging-readiness-action"', html)
         self.assertIn('id="staging-rehearsal-action"', html)
+        self.assertIn('id="production-readiness-action"', html)
         self.assertIn("renderStagingReadiness", app_js)
         self.assertIn("renderStagingRehearsal", app_js)
+        self.assertIn("renderProductionReadiness", app_js)
         self.assertIn("startStagingReadiness", app_js)
         self.assertIn("startStagingRehearsal", app_js)
+        self.assertIn("startProductionReadiness", app_js)
         self.assertIn('/staging-readiness"', app_js)
         self.assertIn('/staging-rehearsal"', app_js)
+        self.assertIn('/production-readiness"', app_js)
         self.assertIn("stagingReadiness", i18n)
         self.assertIn("stagingRehearsal", i18n)
+        self.assertIn("productionReadiness", i18n)
         for key in ("title", "generateButton", "empty", "decision", "gates", "nextActions"):
             self.assertIn(key, i18n["stagingReadiness"])
         for key in ("title", "runButton", "empty", "status", "logs", "nextActions"):
             self.assertIn(key, i18n["stagingRehearsal"])
+        for key in ("title", "generateButton", "empty", "decision", "gates", "nextActions"):
+            self.assertIn(key, i18n["productionReadiness"])
         self.assertIn('id="flow-node-detail"', html)
 
     def test_dashboard_pr_ci_empty_state_explains_draft_pr_next_step(self) -> None:
@@ -1079,7 +1125,7 @@ console.log(JSON.stringify(vm));
 
         self.assertEqual(
             [node["id"] for node in vm["flowNodes"]],
-            ["requirement", "design", "implementation", "quality", "delivery", "release", "github_pr_ci", "staging"],
+            ["requirement", "design", "implementation", "quality", "delivery", "release", "github_pr_ci", "staging", "production"],
         )
         self.assertEqual(vm["recommendedFlowNodeId"], "delivery")
         self.assertEqual([stage["id"] for stage in vm["stages"]], ["requirement", "design", "implementation", "quality", "delivery"])
@@ -1107,6 +1153,7 @@ console.log(JSON.stringify(vm));
         release_node = vm["flowNodes"][5]
         github_node = vm["flowNodes"][6]
         staging_node = vm["flowNodes"][7]
+        production_node = vm["flowNodes"][8]
         self.assertEqual(delivery_node["status"], "waiting_confirmation")
         self.assertTrue(any(action["id"] == "acceptance" for action in delivery_node["actions"]))
         self.assertTrue(any(artifact["path"] == "final_report.md" for artifact in delivery_node["artifacts"]))
@@ -1115,6 +1162,7 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(action["id"] == "github_ci" for action in github_node["actions"]))
         self.assertTrue(any(action["id"] == "staging_readiness" for action in staging_node["actions"]))
         self.assertTrue(any(action["id"] == "staging_rehearsal" for action in staging_node["actions"]))
+        self.assertTrue(any(action["id"] == "production_readiness" for action in production_node["actions"]))
         self.assertIn("engineeringEvidence", vm["flowNodes"][2])
         self.assertTrue(vm["flowNodes"][2]["engineeringEvidence"]["events"])
 

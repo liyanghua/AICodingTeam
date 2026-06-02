@@ -38,7 +38,7 @@
     { id: "quality", agents: ["reviewer", "verifier"], artifactPaths: ["review_report.md", "test_report.md"] },
     { id: "delivery", agents: ["publisher"], artifactPaths: ["final_report.md"] },
   ];
-  const FLOW_NODE_IDS = ["requirement", "design", "implementation", "quality", "delivery", "release", "github_pr_ci", "staging"];
+  const FLOW_NODE_IDS = ["requirement", "design", "implementation", "quality", "delivery", "release", "github_pr_ci", "staging", "production"];
   const FLOW_NODE_ARTIFACTS = {
     requirement: [
       "task.yaml",
@@ -60,6 +60,7 @@
     release: ["release_readiness.md", "release_readiness.json", "pr_draft.md"],
     github_pr_ci: ["github_pr.md", "github_pr.json", "ci_status.md", "ci_status.json"],
     staging: ["staging_readiness.md", "staging_readiness.json", "staging_rehearsal.md", "staging_rehearsal.json"],
+    production: ["production_readiness.md", "production_readiness.json", "deployment_runbook.md"],
   };
   const FLOW_NODE_GATES = {
     requirement: ["requirement_quality"],
@@ -70,6 +71,7 @@
     release: [],
     github_pr_ci: ["ci_gate"],
     staging: ["deploy_gate", "human_release_gate"],
+    production: ["human_release_gate"],
   };
   const FLOW_NODE_AGENTS = {
     requirement: ["orchestrator", "requirements"],
@@ -80,6 +82,7 @@
     release: [],
     github_pr_ci: ["ci"],
     staging: ["deploy", "human_approval"],
+    production: ["human_approval"],
   };
 
   function toBusinessViewModel(run, i18n) {
@@ -103,6 +106,7 @@
       githubPr: buildGithubPr(run, i18n),
       stagingReadiness: buildStagingReadiness(run, i18n),
       stagingRehearsal: buildStagingRehearsal(run, i18n),
+      productionReadiness: buildProductionReadiness(run, i18n),
       qualityGates: buildGates(run, i18n),
       deliverables: buildArtifacts(run, i18n),
       recommendedArtifact: recommendedArtifact(run, i18n),
@@ -325,6 +329,22 @@
     };
   }
 
+  function buildProductionReadiness(run, i18n) {
+    const readiness = run.production_readiness || {};
+    const decision = readiness.production_decision || "not_generated";
+    return {
+      decision,
+      decisionLabel: lookup(i18n, `productionReadiness.decisions.${decision}`, decision),
+      summary: readiness.summary || lookup(i18n, "productionReadiness.empty", ""),
+      gates: Array.isArray(readiness.gates) ? readiness.gates : [],
+      evidence: readiness.evidence || {},
+      blockers: readiness.blockers || [],
+      warnings: readiness.warnings || [],
+      nextActions: readiness.next_actions || [],
+      generatedAt: readiness.generated_at || "",
+    };
+  }
+
   function buildStage(run, i18n, group) {
     const status = stageStatus(run, group);
     const copy = lookup(i18n, `stages.${group.id}`, {});
@@ -412,6 +432,16 @@
         detail: gate.reason || "",
       }));
     }
+    if (id === "production" && (vm.productionReadiness.gates || []).length) {
+      return (vm.productionReadiness.gates || []).map((gate) => ({
+        id: gate.id || "production_gate",
+        title: gate.id || "production_gate",
+        status: gate.status === "passed" ? "completed" : gate.status === "blocked" ? "needs_attention" : "waiting_confirmation",
+        statusLabel: gate.status || "",
+        tone: gate.status === "passed" ? "green" : gate.status === "blocked" ? "red" : "amber",
+        detail: gate.reason || "",
+      }));
+    }
     return gates;
   }
 
@@ -420,6 +450,7 @@
     if (id === "release") return [{ id: "release_readiness" }];
     if (id === "github_pr_ci") return [{ id: "github_pr" }, { id: "github_ci" }];
     if (id === "staging") return [{ id: "staging_readiness" }, { id: "staging_rehearsal" }];
+    if (id === "production") return [{ id: "production_readiness" }];
     return [];
   }
 
@@ -451,6 +482,14 @@
       if ((vm.githubPr || {}).ciStatus === "passed") return "waiting_confirmation";
       return "not_started";
     }
+    if (id === "production") {
+      const decision = vm.productionReadiness.decision || "not_generated";
+      if (decision === "blocked") return "needs_attention";
+      if (decision === "waiting_for_manual_check") return "waiting_confirmation";
+      if (decision === "ready_for_manual_production") return "completed";
+      if (vm.stagingRehearsal.status === "completed" || vm.stagingReadiness.decision === "ready_for_staging") return "waiting_confirmation";
+      return "not_started";
+    }
     return "not_started";
   }
 
@@ -459,6 +498,7 @@
     if (id === "github_pr_ci" && vm.githubPr.summary) return vm.githubPr.summary;
     if (id === "staging" && vm.stagingRehearsal.summary) return vm.stagingRehearsal.summary;
     if (id === "staging" && vm.stagingReadiness.summary) return vm.stagingReadiness.summary;
+    if (id === "production" && vm.productionReadiness.summary) return vm.productionReadiness.summary;
     return lookup(copy, `summary.${status}`, (stage && stage.summary) || lookup(i18n, `status.${status}.description`, ""));
   }
 
@@ -517,6 +557,26 @@
         `${lookup(i18n, "stagingRehearsal.title", "Staging 本地演练")}: ${vm.stagingRehearsal.statusLabel || ""}`,
         vm.stagingRehearsal.summary || "",
         vm.stagingReadiness.evidence && vm.stagingReadiness.evidence.ci_summary ? vm.stagingReadiness.evidence.ci_summary : "",
+      ].filter(Boolean);
+    }
+    if (id === "production") {
+      const evidence = vm.productionReadiness.evidence || {};
+      const localValidation = evidence.local_validation || {};
+      const macMiniValidation = evidence.mac_mini_validation || {};
+      const localCloud = localValidation.cloud_asset_center || evidence.cloud_asset_center || {};
+      const macDoctor = macMiniValidation.doctor || evidence.mac_mini || {};
+      const smoke = macMiniValidation.collector_smoke || evidence.collector_smoke || {};
+      const sync = macMiniValidation.cloud_sync || evidence.cloud_sync || {};
+      return [
+        `${lookup(i18n, "productionReadiness.decision", "生产判断")}: ${vm.productionReadiness.decisionLabel || ""}`,
+        localValidation.profile ? `${lookup(i18n, "productionReadiness.localValidation", "本地验证")}: ${localValidation.profile}` : "",
+        localCloud.status ? `${lookup(i18n, "productionReadiness.cloudAssetCenter", "云端素材中心")}: ${localCloud.status}` : "",
+        macMiniValidation.profile ? `${lookup(i18n, "productionReadiness.macMiniValidation", "Mac mini 实机验证")}: ${macMiniValidation.profile}` : "",
+        macDoctor.status ? `${lookup(i18n, "productionReadiness.macMini", "Mac mini 工作台")}: ${macDoctor.status}` : "",
+        smoke.status ? `${lookup(i18n, "productionReadiness.collectorSmoke", "实机 smoke")}: ${smoke.status}` : "",
+        sync.status ? `${lookup(i18n, "productionReadiness.cloudSync", "云同步")}: ${sync.status}` : "",
+        ...(vm.productionReadiness.blockers || []).slice(0, 3).map((item) => `${lookup(i18n, "productionReadiness.blocker", "阻塞")}: ${item}`),
+        ...(vm.productionReadiness.warnings || []).slice(0, 3).map((item) => `${lookup(i18n, "productionReadiness.warning", "提示")}: ${item}`),
       ].filter(Boolean);
     }
     return [];
@@ -680,7 +740,7 @@
 
   function recommendedArtifact(run, i18n) {
     const artifacts = buildArtifacts(run, i18n).filter((artifact) => artifact.exists);
-    const priority = ["staging_readiness.md", "github_pr.md", "ci_status.md", "pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
+    const priority = ["production_readiness.md", "deployment_runbook.md", "staging_readiness.md", "staging_rehearsal.md", "github_pr.md", "ci_status.md", "pr_draft.md", "release_readiness.md", "final_report.md", "review_report.md", "test_report.md", "codex/diff.patch", "prd.md"];
     for (const path of priority) {
       const found = artifacts.find((artifact) => artifact.path === path);
       if (found) return found;

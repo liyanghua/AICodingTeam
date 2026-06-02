@@ -83,6 +83,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _format_cli_error(exc: Exception) -> str:
+    message = str(exc)
+    if "No package metadata was found for mobilerun" in message or "No module named 'mobilerun" in message:
+        return json.dumps(
+            {
+                "status": "environment_blocker",
+                "blocker": "mobilerun_missing",
+                "message": "mobilerun is not installed or not importable from third_party/mobilerun-main.",
+                "next_action": "Install or expose third_party/mobilerun-main before running doctor or real-device collection.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    return f"error: {message}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -208,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
     except Exception as exc:
-        print(f"error: {exc}", flush=True)
+        print(_format_cli_error(exc), flush=True)
         return 1
     parser.error(f"unknown command: {args.command}")
     return 2
