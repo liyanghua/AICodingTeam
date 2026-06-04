@@ -34,7 +34,18 @@ CODEX_RESPONSE_SCHEMA: dict[str, Any] = {
 
 DEFAULT_ALLOWED_PATHS = ["growth_dev/", "dashboard/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md", "DESIGN.md"]
 DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
-UPSTREAM_CONTEXT_ARTIFACTS = ["task.yaml", "context.md", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "AGENTS.md", "DESIGN.md"]
+UPSTREAM_CONTEXT_ARTIFACTS = [
+    "task.yaml",
+    "context.md",
+    "requirements/capability_boundary.md",
+    "planning/tdd_plan.md",
+    "prd.md",
+    "tech_spec.md",
+    "ui_spec.md",
+    "eval.md",
+    "AGENTS.md",
+    "DESIGN.md",
+]
 
 IMPLEMENTATION_TRACE_PATH = "codex/implementation_trace.json"
 SLICE_LOOP_STATE_PATH = "codex/slice_loop_state.json"
@@ -929,6 +940,11 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             "",
             "## Codex Slice-Loop",
             *_slice_loop_prompt_lines(context),
+            "",
+            "## Codex / System Responsibility Boundary",
+            "- AI-Team owns requirement clarification, capability boundary, TDD plan, gates, and final readiness decisions.",
+            "- Codex CLI owns red-first tests, minimal implementation, verification evidence, and explicit blockers.",
+            "- Do not promote LLM draft assumptions or change real-device/production gates from inside the coding pass.",
             "",
             "## Allowed Files",
             *[f"- {path}" for path in allowed_paths],

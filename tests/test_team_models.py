@@ -141,6 +141,13 @@ class TeamModelTests(unittest.TestCase):
         self.assertIn("xhs_collector validate", commands)
         self.assertIn("--dry-run", commands)
         self.assertIn("--mode deterministic", commands)
+        self.assertIn("capabilities", spec.metadata)
+        capabilities = spec.metadata["capabilities"]
+        supported_ids = {item["id"] for item in capabilities["supported"]}
+        unsupported_ids = {item["id"] for item in capabilities["unsupported"]}
+        self.assertIn("image_then_keyword_collection", supported_ids)
+        self.assertIn("keyword_only_collection", supported_ids)
+        self.assertIn("captcha_or_risk_bypass", unsupported_ids)
         self.assertEqual(spec.metadata["artifact_contract"]["manifest"], "manifest.json")
         self.assertEqual(spec.metadata["artifact_contract"]["risk_events"], "risk_events.jsonl")
 

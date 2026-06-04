@@ -182,6 +182,135 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(events[-1]["event"], "run_failed")
         self.assertEqual(events[-1]["reason"], "requirement_quality_gate_failed")
 
+    def test_complex_task_writes_candidate_capability_boundary_and_tdd_plan(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, _ = _load_specs(root)
+            domain_spec = DomainSpec.from_dict(
+                {
+                    "domain_id": "xhs_mobile_collection",
+                    "summary": "XHS collector domain",
+                    "risk_rules": ["manual_login_only", "no_captcha_bypass"],
+                    "evaluation_rules": ["keyword_only_search_does_not_use_image_search"],
+                    "capabilities": {
+                        "supported": [
+                            {
+                                "id": "image_then_keyword_collection",
+                                "summary": "Excel/reference image flow can run image search then keyword search.",
+                                "evidence": ["third_party/xhs_collector/README.md"],
+                            }
+                        ],
+                        "unsupported": [
+                            {
+                                "id": "workbench_keyword_ui",
+                                "summary": "Workbench UI does not expose keyword-only collection yet.",
+                            }
+                        ],
+                    },
+                }
+            )
+            runtime = TeamRuntime(
+                team_spec=team_spec,
+                domain_spec=domain_spec,
+                runs_dir=root / "runs",
+                planning_mode="llm_assisted",
+                requirements_model="gpt-5.5",
+            )
+
+            record = runtime.run(
+                "给 xhs_collector 增加纯关键词采集能力，不走图搜，过滤视频，下载 TOP N 图文笔记图片。",
+                inputs={
+                    "allowed_paths": ["third_party/xhs_collector/", "tests/test_xhs_collector.py"],
+                    "verification_commands": ["python3 -m unittest tests.test_xhs_collector -v"],
+                },
+                run_id="xhs-keyword-plan",
+            )
+
+            run_dir = root / "runs" / "xhs-keyword-plan"
+            candidate = json.loads((run_dir / "requirements" / "requirement_understanding.candidate.json").read_text(encoding="utf-8"))
+            boundary = json.loads((run_dir / "requirements" / "capability_boundary.json").read_text(encoding="utf-8"))
+            tdd_plan = json.loads((run_dir / "planning" / "tdd_plan.json").read_text(encoding="utf-8"))
+            requirement_quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+            planning_quality = json.loads((run_dir / "planning" / "planning_quality_report.json").read_text(encoding="utf-8"))
+            boundary_md_exists = (run_dir / "requirements" / "capability_boundary.md").exists()
+            tdd_md_exists = (run_dir / "planning" / "tdd_plan.md").exists()
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(candidate["model"], "gpt-5.5")
+        self.assertIn("业务目标", candidate["clarification_angles"])
+        self.assertIn("image_then_keyword_collection", {item["id"] for item in boundary["existing_capabilities"]})
+        self.assertIn("workbench_keyword_ui", {item["id"] for item in boundary["unsupported_capabilities"]})
+        self.assertEqual(boundary["change_type"], "extend_existing_capability")
+        self.assertTrue(boundary_md_exists)
+        self.assertTrue(tdd_md_exists)
+        self.assertTrue(tdd_plan["test_cases"])
+        self.assertTrue(all(item["acceptance_criteria_ids"] for item in tdd_plan["test_cases"]))
+        tdd_text = json.dumps(tdd_plan, ensure_ascii=False)
+        self.assertIn("run-keyword", tdd_text)
+        self.assertIn("search_mode=keyword_only", tdd_text)
+        self.assertIn("不走图搜", tdd_text)
+        self.assertIn("skip_video_note_card", tdd_text)
+        self.assertIn("capability_boundary_ready", [item["id"] for item in requirement_quality["checks"]])
+        self.assertIn("tdd_plan_ready", planning_quality["checks"])
+
+    def test_complex_task_uses_default_capability_boundary_for_generic_domain(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = TeamRuntime(
+                team_spec=team_spec,
+                domain_spec=domain_spec,
+                runs_dir=root / "runs",
+            )
+
+            record = runtime.run(
+                "监控目标网页里关键词是否发生变化",
+                inputs={"verification_commands": ["python3 -m unittest discover -s tests -v"]},
+                run_id="generic-capability-run",
+            )
+
+            run_dir = root / "runs" / "generic-capability-run"
+            boundary = json.loads((run_dir / "requirements" / "capability_boundary.json").read_text(encoding="utf-8"))
+            quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(boundary["existing_capabilities"][0]["id"], f"{domain_spec.domain_id}_baseline")
+        self.assertEqual(boundary["existing_capabilities"][0]["source"], "domain_pack_default")
+        self.assertIn("domain.yaml", boundary["source_artifacts"])
+        self.assertNotIn("capabilities.yaml", boundary["source_artifacts"])
+        self.assertEqual(quality["status"], "passed")
+
+    def test_default_before_coding_gate_requires_capability_boundary_and_tdd_plan(self) -> None:
+        from growth_dev.team.runtime import check_gate, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            for relative in (
+                "prd.md",
+                "tech_spec.md",
+                "ui_spec.md",
+                "eval.md",
+                "acceptance_criteria.md",
+                "context_pack.md",
+                "planning/acceptance_coverage_matrix.json",
+                "planning/planning_quality_report.json",
+            ):
+                path = run_dir / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("ok\n", encoding="utf-8")
+
+            gate = default_team_spec().gate_by_id("before_coding")
+            result = check_gate(gate, run_dir)
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("requirements/capability_boundary.json", result.missing_artifacts)
+        self.assertIn("planning/tdd_plan.json", result.missing_artifacts)
+
     def test_complex_task_artifacts_redact_secrets_from_brief_and_inputs(self) -> None:
         from growth_dev.team.runtime import TeamRuntime
 

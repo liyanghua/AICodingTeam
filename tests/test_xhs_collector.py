@@ -7536,6 +7536,17 @@ class XhsCollectorTests(unittest.TestCase):
         self.assertEqual(staged.keyword_top_n, 4)
         self.assertEqual(staged.keyword_result_top_n, 5)
 
+    def test_collector_config_supports_keyword_only_search_mode(self) -> None:
+        from third_party.xhs_collector.xhs_collector.models import CollectorConfig
+
+        default = CollectorConfig.from_dict({})
+        keyword_only = CollectorConfig.from_dict({"search_mode": "keyword_only"})
+
+        self.assertEqual(default.search_mode, "image_then_keyword")
+        self.assertEqual(keyword_only.search_mode, "keyword_only")
+        with self.assertRaisesRegex(ValueError, "search_mode must be"):
+            CollectorConfig.from_dict({"search_mode": "private_api"})
+
     def test_deterministic_flow_uses_separate_image_and_keyword_result_counts(
         self,
     ) -> None:
@@ -7662,6 +7673,160 @@ class XhsCollectorTests(unittest.TestCase):
             )
             self.assertEqual(result.message, "downloaded 4 of 4 image search and keyword results")
 
+    def test_deterministic_keyword_only_flow_skips_image_search_and_downloads_top_n(
+        self,
+    ) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            run_deterministic_item,
+        )
+        from third_party.xhs_collector.xhs_collector.models import InputItem
+
+        class FakeDevice:
+            def __init__(self) -> None:
+                self.ui_text = "首页 发现 搜索"
+                self.typed: list[str] = []
+                self.image_search_taps = 0
+
+            def start_app(self, package: str) -> None:
+                self.ui_text = "首页 发现 搜索"
+
+            def push_reference_image(
+                self, local_path: Path, item_id: str, remote_dir: str
+            ) -> str:
+                raise AssertionError("keyword-only flow must not push a reference image")
+
+            def dump_hierarchy(self) -> str:
+                return self.ui_text
+
+            def click_ratio(self, x: float, y: float) -> None:
+                if (x, y) == (0.1, 0.1):
+                    self.ui_text = "取消 搜索历史 搜索小红书"
+                elif (x, y) == (0.2, 0.2):
+                    self.image_search_taps += 1
+                    raise AssertionError("keyword-only flow must not tap image search")
+                elif (x, y) == (0.12, 0.08):
+                    self.ui_text = "搜索输入框"
+                elif (x, y) == (0.88, 0.08):
+                    self.ui_text = "AI回答 笔记 搜索结果"
+                elif (x, y) in {(0.25, 0.3), (0.75, 0.3)}:
+                    self.ui_text = "笔记详情 评论 说点什么"
+                elif (x, y) == (0.5, 0.82) and "保存图片" in self.ui_text:
+                    self.ui_text = "已保存"
+                elif (x, y) == (0.06, 0.07):
+                    self.ui_text = "AI回答 笔记 搜索结果"
+
+            def set_text(self, text: str) -> None:
+                self.typed.append(text)
+                self.ui_text = f"搜索输入框 {text}"
+
+            def swipe_ratio(
+                self,
+                x1: float,
+                y1: float,
+                x2: float,
+                y2: float,
+                duration: float = 0.5,
+            ) -> None:
+                self.ui_text = "AI回答 笔记 搜索结果"
+
+            def long_press_ratio(
+                self, x: float, y: float, duration: float = 1.0
+            ) -> None:
+                self.ui_text = "保存图片"
+
+            def screenshot(self) -> bytes:
+                return b"png"
+
+        class FakeMediaStore:
+            def __init__(self) -> None:
+                self.saved = 0
+
+            def snapshot(self) -> list[str]:
+                return [
+                    f"/sdcard/Pictures/xhs_collector/keyword_{rank}.jpg"
+                    for rank in range(1, self.saved + 1)
+                ]
+
+            def pull(self, remote_path: str, target_path: Path) -> Path:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_bytes(remote_path.encode("utf-8"))
+                return target_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            device = FakeDevice()
+            media_store = FakeMediaStore()
+            item = InputItem(
+                item_id="keyword-only",
+                keyword="桌垫 买家秀",
+                keyword_candidates=["桌垫 买家秀"],
+                top_n=2,
+            )
+
+            result = run_deterministic_item(
+                item=item,
+                device=device,
+                media_store=media_store,
+                profile=self._basic_download_profile(),
+                output_item_dir=root / "items" / item.item_id,
+                output_dir=root,
+                xhs_package="com.xingin.xhs",
+                remote_image_dir="/sdcard/Pictures/xhs_collector",
+                throttle_seconds=0,
+                on_after_save=lambda: setattr(media_store, "saved", media_store.saved + 1),
+                save_poll_seconds=0,
+                keyword_top_n=1,
+                keyword_result_top_n=2,
+                search_mode="keyword_only",
+                sleep_func=lambda seconds: None,
+            )
+
+            events = (root / "step_events.jsonl").read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.collected_count, 2)
+        self.assertEqual(device.typed, ["桌垫 买家秀"])
+        self.assertEqual(device.image_search_taps, 0)
+        self.assertEqual(
+            [image.local_path.name for image in result.images],
+            ["keyword_rank_001.jpg", "keyword_rank_002.jpg"],
+        )
+        self.assertIn('"name": "keyword_only_search_plan"', events)
+        self.assertNotIn('"name": "push_reference"', events)
+        self.assertNotIn('"name": "tap_image_search_button"', events)
+
+    def test_keyword_only_result_selection_skips_video_note_cards(self) -> None:
+        from third_party.xhs_collector.xhs_collector.deterministic_flow import (
+            _next_unseen_note_card,
+        )
+
+        events: list[tuple[str, dict | None]] = []
+        selected = _next_unseen_note_card(
+            candidates=[
+                {
+                    "signature": "video-card",
+                    "signature_source": "text",
+                    "bounds": [0, 120, 500, 420],
+                    "text": "桌垫 买家秀 视频 播放",
+                },
+                {
+                    "signature": "image-card",
+                    "signature_source": "text",
+                    "bounds": [0, 430, 500, 760],
+                    "text": "桌垫 买家秀 实拍 图文笔记",
+                },
+            ],
+            seen_card_signatures=set(),
+            scroll_count=0,
+            stage="keyword_only_search",
+            query="桌垫 买家秀",
+            step=lambda name, payload=None: events.append((name, payload)),
+        )
+
+        self.assertEqual(selected["signature"], "image-card")
+        self.assertEqual(events[0][0], "skip_video_note_card")
+        self.assertEqual(events[0][1]["card_signature"], "video-card")
+
     def test_run_cli_accepts_keyword_top_n_override(self) -> None:
         from third_party.xhs_collector.xhs_collector.cli import main
 
@@ -7708,6 +7873,46 @@ class XhsCollectorTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(run_dry.call_args.args[3], 4)
+
+    def test_run_keyword_cli_routes_to_keyword_only_deterministic_collect(self) -> None:
+        from third_party.xhs_collector.xhs_collector.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps({"output_root": str(root / "runs"), "top_n": 5}),
+                encoding="utf-8",
+            )
+
+            with mock.patch(
+                "third_party.xhs_collector.xhs_collector.cli.run_collect_keyword"
+            ) as run_keyword:
+                run_keyword.return_value = mock.Mock(
+                    status="completed",
+                    run_id="keyword-run",
+                    output_dir=root / "runs" / "keyword-run",
+                    results=[],
+                )
+
+                exit_code = main(
+                    [
+                        "run-keyword",
+                        "--keyword",
+                        "桌垫 买家秀",
+                        "--top-n",
+                        "3",
+                        "--config",
+                        str(config_path),
+                        "--mode",
+                        "deterministic",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run_keyword.call_args.args[0], "桌垫 买家秀")
+        self.assertEqual(run_keyword.call_args.args[2], 3)
+        self.assertEqual(run_keyword.call_args.kwargs["mode"], "deterministic")
 
 
 if __name__ == "__main__":

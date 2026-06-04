@@ -76,6 +76,7 @@ RESULT_PAGE_MARKERS = ("图搜", "结果", "相关", "相似", "笔记", "搜索
 NOTE_DETAIL_MARKERS = ("评论", "说点什么", "点赞", "收藏", "分享", "关注")
 KEYWORD_SEARCH_MARKERS = ("AI回答", "AI 回答", "笔记", "搜索结果", "综合", "相关")
 SAVE_MENU_MARKERS = ("保存图片", "保存到相册", "保存")
+VIDEO_NOTE_TEXT_MARKERS = ("视频", "播放", "直播", "video", "reel")
 DOWNLOAD_PERMISSION_DISABLED_MARKERS = (
     "作者已关闭下载权限",
     "作者已关闭下载",
@@ -146,6 +147,7 @@ def run_deterministic_item(
     image_top_n: int | None = None,
     keyword_top_n: int = 3,
     keyword_result_top_n: int | None = None,
+    search_mode: str = "image_then_keyword",
     target_category: str = "",
     target_category_keywords: list[str] | tuple[str, ...] | None = None,
     sleep_func: Callable[[float], None] = time.sleep,
@@ -249,6 +251,144 @@ def run_deterministic_item(
                 risk_events=[{"event": risk, "item_id": item.item_id}],
                 step_count=step_count,
             )
+
+        if search_mode == "keyword_only":
+            if not _tap_search_box_until_search_page(
+                device=device,
+                profile=profile,
+                xhs_package=xhs_package,
+                timeout_seconds=save_poll_seconds,
+                sleep_func=sleep_func,
+                item_id=item.item_id,
+                tap_profile=tap_profile,
+                step=step,
+                cancel_token=cancel_token,
+            ):
+                return _failed_item(
+                    item=item,
+                    message="search_page_not_reached_after_retries",
+                    event="search_page_not_reached_after_retries",
+                    step_count=step_count,
+                    template_hits=template_hits,
+                )
+            keyword_queries = _keyword_queries(item, max(1, keyword_top_n))
+            step(
+                "keyword_only_search_plan",
+                {
+                    "keyword_top_n": max(1, keyword_top_n),
+                    "keyword_result_top_n": keyword_target_count,
+                    "keyword_query_count": len(keyword_queries),
+                    "queries": keyword_queries,
+                },
+            )
+            if media_store is None:
+                return ItemResult(
+                    item_id=item.item_id,
+                    keyword=item.keyword,
+                    status="completed",
+                    keyword_candidates=item.keyword_candidates,
+                    collected_count=0,
+                    images=images,
+                    message="keyword-only search page reached",
+                    step_count=step_count,
+                    template_hits=template_hits,
+                )
+            profile.require_points(DOWNLOAD_POINTS)
+            seen_image_hashes: set[str] = set()
+            for keyword_index, keyword_query in enumerate(keyword_queries, start=1):
+                filename_prefix = (
+                    "keyword_rank"
+                    if len(keyword_queries) == 1
+                    else f"keyword_{keyword_index:03d}_rank"
+                )
+                step(
+                    "start_keyword_only_search_query",
+                    {
+                        "keyword_index": keyword_index,
+                        "query": keyword_query,
+                        "filename_prefix": filename_prefix,
+                    },
+                )
+                keyword_started = _perform_keyword_search(
+                    query=keyword_query,
+                    item=item,
+                    device=device,
+                    profile=profile,
+                    save_poll_seconds=save_poll_seconds,
+                    sleep_func=sleep_func,
+                    step=step,
+                    cancel_token=cancel_token,
+                )
+                if not keyword_started:
+                    failure = {
+                        "event": "keyword_search_failed",
+                        "item_id": item.item_id,
+                        "query": keyword_query,
+                        "keyword_index": keyword_index,
+                    }
+                    rank_failures.append(failure)
+                    step("skip_keyword_only_query_due_to_blocked_state", failure)
+                    break
+                keyword_results, keyword_failures = _download_visible_note_results(
+                    stage="keyword_only_search",
+                    query=keyword_query,
+                    filename_prefix=filename_prefix,
+                    target_count=keyword_target_count,
+                    item=item,
+                    device=device,
+                    media_store=media_store,
+                    profile=profile,
+                    output_item_dir=output_item_dir,
+                    save_poll_seconds=save_poll_seconds,
+                    sleep_func=sleep_func,
+                    on_after_save=on_after_save,
+                    max_result_scrolls=max_result_scrolls,
+                    seen_image_hashes=seen_image_hashes,
+                    keyword_index=keyword_index,
+                    target_category=target_category,
+                    target_category_keywords=target_category_keywords,
+                    step=step,
+                    cancel_token=cancel_token,
+                )
+                images.extend(keyword_results)
+                rank_failures.extend(keyword_failures)
+                keyword_stage_blocked = any(
+                    failure.get("event") == "result_list_not_restored_after_back"
+                    for failure in keyword_failures
+                )
+                step(
+                    "finish_keyword_only_search_query",
+                    {
+                        "keyword_index": keyword_index,
+                        "query": keyword_query,
+                        "filename_prefix": filename_prefix,
+                        "downloaded_count": len(keyword_results),
+                        "failure_count": len(keyword_failures),
+                        "blocked": keyword_stage_blocked,
+                    },
+                )
+                if len(images) >= keyword_target_count or keyword_stage_blocked:
+                    break
+            status = "completed" if len(images) >= keyword_target_count else "partial"
+            result = ItemResult(
+                item_id=item.item_id,
+                keyword=item.keyword,
+                status=status,
+                keyword_candidates=item.keyword_candidates,
+                collected_count=len(images),
+                images=images,
+                message=(
+                    f"downloaded {len(images)} of {keyword_target_count} "
+                    "keyword-only search results"
+                ),
+                risk_events=rank_failures,
+                step_count=step_count,
+                template_hits=template_hits,
+            )
+            return result
+
+        if search_mode != "image_then_keyword":
+            raise ValueError("search_mode must be image_then_keyword or keyword_only")
 
         _raise_if_cancel_requested(cancel_token)
         remote_reference = device.push_reference_image(
@@ -878,6 +1018,7 @@ def run_deterministic_collect(
                 image_top_n=config.image_top_n,
                 keyword_top_n=config.keyword_top_n,
                 keyword_result_top_n=config.keyword_result_top_n,
+                search_mode=config.search_mode,
                 target_category=config.target_category,
                 target_category_keywords=config.target_category_keywords,
                 cancel_token=cancel_token,
@@ -1815,8 +1956,23 @@ def _next_unseen_note_card(
             )
             continue
         seen_card_signatures.add(dedupe_signature)
+        card_text = str(candidate.get("text") or "")
+        if _is_video_note_card_text(card_text):
+            step(
+                "skip_video_note_card",
+                {
+                    "stage": stage,
+                    "query": query,
+                    "keyword_index": keyword_index,
+                    "card_bounds": candidate.get("bounds"),
+                    "card_signature": signature,
+                    "card_signature_source": signature_source,
+                    "card_text": _truncate_text(card_text),
+                    "scroll_count": scroll_count,
+                },
+            )
+            continue
         if category_keywords:
-            card_text = str(candidate.get("text") or "")
             matched_keyword = _matched_category_keyword(card_text, category_keywords)
             if matched_keyword is None:
                 step(
@@ -1842,6 +1998,11 @@ def _next_unseen_note_card(
             candidate["target_category"] = target_category
         return candidate
     return None
+
+
+def _is_video_note_card_text(card_text: str) -> bool:
+    normalized = " ".join(card_text.split()).lower()
+    return any(marker in normalized for marker in VIDEO_NOTE_TEXT_MARKERS)
 
 
 def _candidate_dedupe_signature(candidate: dict, scroll_count: int) -> str:

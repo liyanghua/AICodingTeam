@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -159,6 +161,7 @@ async def run_collect_items_async(
     keyword_top_n: int | None = None,
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
+    search_mode: str | None = None,
     cancel_token=None,
 ) -> RunManifest:
     config = _config_with_overrides(
@@ -168,6 +171,7 @@ async def run_collect_items_async(
         image_top_n=image_top_n,
         keyword_result_top_n=keyword_result_top_n,
         mode=mode,
+        search_mode=search_mode,
     )
     output_dir = config.output_root / make_run_id()
     _prepare_output_dir(output_dir)
@@ -177,6 +181,49 @@ async def run_collect_items_async(
     return await _run_loaded_items_async(
         items=normalized_items,
         input_path=input_path,
+        config=config,
+        output_dir=output_dir,
+        cancel_token=cancel_token,
+    )
+
+
+async def run_collect_keyword_async(
+    keyword: str,
+    config_path: Path | None = None,
+    top_n: int | None = None,
+    *,
+    mode: str | None = None,
+    cancel_token=None,
+) -> RunManifest:
+    query = " ".join(keyword.split())
+    if not query:
+        raise ValueError("keyword must not be empty")
+    effective_mode = mode or "deterministic"
+    if effective_mode != "deterministic":
+        raise ValueError("run-keyword currently supports deterministic mode only")
+    base_config = load_config(config_path)
+    target_count = top_n if top_n is not None else base_config.top_n
+    config = _config_with_overrides(
+        base_config,
+        top_n=target_count,
+        keyword_top_n=1,
+        keyword_result_top_n=target_count,
+        mode=effective_mode,
+        search_mode="keyword_only",
+    )
+    output_dir = config.output_root / make_run_id()
+    _prepare_output_dir(output_dir)
+    item = InputItem(
+        item_id=_keyword_item_id(query),
+        keyword=query,
+        keyword_candidates=[query],
+        top_n=target_count,
+        reference_image=Path(),
+    )
+    normalized_items = _copy_direct_items_to_output([item], output_dir)
+    return await _run_loaded_items_async(
+        items=normalized_items,
+        input_path=Path("keyword_input"),
         config=config,
         output_dir=output_dir,
         cancel_token=cancel_token,
@@ -363,6 +410,7 @@ def run_collect_items(
     keyword_top_n: int | None = None,
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
+    search_mode: str | None = None,
     cancel_token=None,
 ) -> RunManifest:
     return asyncio.run(
@@ -375,6 +423,26 @@ def run_collect_items(
             keyword_top_n=keyword_top_n,
             image_top_n=image_top_n,
             keyword_result_top_n=keyword_result_top_n,
+            search_mode=search_mode,
+            cancel_token=cancel_token,
+        )
+    )
+
+
+def run_collect_keyword(
+    keyword: str,
+    config_path: Path | None = None,
+    top_n: int | None = None,
+    *,
+    mode: str | None = None,
+    cancel_token=None,
+) -> RunManifest:
+    return asyncio.run(
+        run_collect_keyword_async(
+            keyword,
+            config_path,
+            top_n,
+            mode=mode,
             cancel_token=cancel_token,
         )
     )
@@ -410,6 +478,9 @@ def _copy_direct_items_to_output(
         source = item.reference_image
         target_dir = output_dir / "inputs" / item.item_id
         target_dir.mkdir(parents=True, exist_ok=True)
+        if not str(source) or not source.is_file():
+            normalized.append(item)
+            continue
         target = target_dir / f"reference{source.suffix or '.jpg'}"
         if source.exists() and source.resolve() != target.resolve():
             shutil.copyfile(source, target)
@@ -417,6 +488,13 @@ def _copy_direct_items_to_output(
             shutil.copyfile(source, target)
         normalized.append(replace(item, reference_image=target))
     return normalized
+
+
+def _keyword_item_id(keyword: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "-", keyword).strip("-")
+    slug = slug[:40] or "keyword"
+    digest = hashlib.sha1(keyword.encode("utf-8")).hexdigest()[:8]
+    return f"keyword-{slug}-{digest}"
 
 
 def _dry_collect_item(
@@ -452,6 +530,7 @@ def _config_with_overrides(
     image_top_n: int | None = None,
     keyword_result_top_n: int | None = None,
     mode: str | None = None,
+    search_mode: str | None = None,
 ) -> CollectorConfig:
     if (
         top_n is None
@@ -459,6 +538,7 @@ def _config_with_overrides(
         and image_top_n is None
         and keyword_result_top_n is None
         and mode is None
+        and search_mode is None
     ):
         return config
     data = {
@@ -477,6 +557,7 @@ def _config_with_overrides(
             else config.keyword_result_top_n
         ),
         "mode": mode or config.mode,
+        "search_mode": search_mode or config.search_mode,
         "keyword_template": config.keyword_template,
         "target_category": config.target_category,
         "target_category_keywords": config.target_category_keywords,

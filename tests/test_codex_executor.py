@@ -405,6 +405,18 @@ class CodexExecutorTests(unittest.TestCase):
             (run_dir / "prd.md").write_text("# PRD\n\nBuild it.\n", encoding="utf-8")
             (run_dir / "tech_spec.md").write_text("# Technical Spec\n\nUse a worktree.\n", encoding="utf-8")
             (run_dir / "eval.md").write_text("# Eval\n\nRun the tests.\n", encoding="utf-8")
+            requirements_dir = run_dir / "requirements"
+            planning_dir = run_dir / "planning"
+            requirements_dir.mkdir()
+            planning_dir.mkdir()
+            (requirements_dir / "capability_boundary.md").write_text(
+                "# Capability Boundary\n\n- Existing: image_then_keyword_collection\n",
+                encoding="utf-8",
+            )
+            (planning_dir / "tdd_plan.md").write_text(
+                "# TDD Plan\n\n- First write failing CLI and flow tests.\n",
+                encoding="utf-8",
+            )
             record = TeamRunRecord(run_id="run-1", domain_id="demo", brief="Implement a tiny change", run_dir=run_dir)
             context = AgentContext(
                 run_id="run-1",
@@ -426,6 +438,10 @@ class CodexExecutorTests(unittest.TestCase):
 
         self.assertIn("Implement a tiny change", prompt_text)
         self.assertIn("growth_dev/fake_target.py", prompt_text)
+        self.assertIn("Capability Boundary", prompt_text)
+        self.assertIn("requirements/capability_boundary.md", prompt_text)
+        self.assertIn("TDD Plan", prompt_text)
+        self.assertIn("planning/tdd_plan.md", prompt_text)
         self.assertIn("manual_login_only", summary_text)
         self.assertIn("prd.md", summary_text)
         self.assertIn("Build it.", summary_text)

@@ -1,0 +1,34 @@
+schema_version: 1
+domain_id: xhs_mobile_collection
+supported:
+  - id: image_then_keyword_collection
+    summary: Excel/reference-image collection can run image search and then keyword search through the public XHS app UI.
+    entrypoint: python3 -m xhs_collector run
+    evidence:
+      - third_party/xhs_collector/README.md
+      - third_party/xhs_collector/xhs_collector/deterministic_flow.py
+      - tests/test_xhs_collector.py
+    verification_commands:
+      - python3 -m unittest tests.test_xhs_collector -v
+  - id: keyword_only_collection
+    summary: Keyword-only deterministic collection can search text directly, skip video notes, and download TOP N image/text note images.
+    entrypoint: python3 -m xhs_collector run-keyword
+    evidence:
+      - third_party/xhs_collector/xhs_collector/cli.py
+      - third_party/xhs_collector/xhs_collector/runner.py
+      - tests/test_xhs_collector.py
+    verification_commands:
+      - cd third_party/xhs_collector && python3 -m xhs_collector run-keyword --help
+      - python3 -m unittest tests.test_xhs_collector -v
+unsupported:
+  - id: captcha_or_risk_bypass
+    summary: Captcha solving, risk-control bypass, fingerprint spoofing, proxy rotation, and anti-bot evasion are prohibited.
+  - id: automatic_login
+    summary: XHS login remains manual and must not be automated.
+  - id: workbench_keyword_ui
+    summary: The mobile image workbench does not yet expose a production UI job type for keyword-only collection.
+manual_gates:
+  - doctor_before_real_device_smoke
+  - manual_login_confirmed
+  - top_n_1_first_smoke
+  - risk_events_reviewed

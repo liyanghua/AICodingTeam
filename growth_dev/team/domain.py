@@ -16,6 +16,10 @@ def load_domain_spec(domain_id: str, domains_dir: Path = Path("domains")) -> Dom
     if not domain_path.exists():
         raise FileNotFoundError(f"Domain pack not found: {domain_path}")
     payload = load_yaml_subset(domain_path)
+    capabilities_path = domains_dir / domain_id / "capabilities.yaml"
+    if capabilities_path.exists():
+        payload["capabilities"] = load_yaml_subset(capabilities_path)
+        payload["capabilities_path"] = str(capabilities_path)
     domain = DomainSpec.from_dict(payload)
     if domain.domain_id != domain_id:
         raise ValueError(f"Domain id mismatch: expected {domain_id}, got {domain.domain_id}")

@@ -16,7 +16,9 @@ from .retrospective import generate_run_retrospective
 COMPLEX_TASK_REQUIRED_ARTIFACTS = [
     "acceptance_criteria.md",
     "context_pack.md",
+    "requirements/capability_boundary.json",
     "planning/acceptance_coverage_matrix.json",
+    "planning/tdd_plan.json",
     "planning/planning_quality_report.json",
 ]
 

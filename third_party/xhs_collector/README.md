@@ -33,6 +33,12 @@ python3 -m xhs_collector run \
   --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" \
   --config config/xhs_collector.json \
   --dry-run
+
+python3 -m xhs_collector run-keyword \
+  --keyword "桌垫 买家秀" \
+  --top-n 1 \
+  --config config/xhs_collector.json \
+  --mode deterministic
 ```
 
 Run commands from `third_party/xhs_collector`, or set `PYTHONPATH` to include
@@ -190,6 +196,34 @@ python3 -m xhs_collector run \
 
 `--top-n` remains a compatibility shortcut when image-search and keyword-search
 stages should use the same target count.
+
+## Keyword-Only Search
+
+Use `run-keyword` when the task starts from a text keyword and must not use
+image search or a reference image:
+
+```bash
+python3 -m xhs_collector run-keyword \
+  --keyword "桌垫 买家秀" \
+  --top-n 1 \
+  --config config/xhs_collector.json \
+  --mode deterministic
+```
+
+This path opens XHS, enters the keyword in the normal search box, submits the
+search, skips visible video note cards, and saves images from the top matching
+image/text notes until `--top-n` is reached or the configured scroll limit is
+hit. It records skipped video cards as `skip_video_note_card` step events.
+
+For local validation before any real-device smoke, run:
+
+```bash
+python3 -m unittest tests.test_xhs_collector -v
+python3 -m xhs_collector run-keyword --help
+```
+
+Real-device keyword smoke should stay small at first (`--top-n 1`) and still
+uses manual login, low frequency, and risk-stop behavior.
 
 If the phone is already on the XHS camera/album page and you only want to
 continue from there, skip launching XHS again:

@@ -152,6 +152,32 @@ console.log(JSON.stringify(vm));
         (requirements_dir / "acceptance_criteria.draft.md").write_text("# Draft Acceptance Criteria\n", encoding="utf-8")
         (requirements_dir / "open_questions.md").write_text("# Open Questions\n", encoding="utf-8")
         (requirements_dir / "assumptions.md").write_text("# Assumptions\n", encoding="utf-8")
+        (requirements_dir / "requirement_understanding.candidate.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "model": "gpt-5.3",
+                    "clarification_angles": ["业务目标", "输入输出", "可观测验收"],
+                    "blocking_questions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (requirements_dir / "capability_boundary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "change_type": "extend_existing_capability",
+                    "existing_capabilities": [{"id": "dashboard_business_view", "summary": "Dashboard can render flow nodes."}],
+                    "required_new_capabilities": [{"id": "capability_boundary_view", "summary": "Dashboard shows capability boundary."}],
+                    "unsupported_capabilities": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (requirements_dir / "capability_boundary.md").write_text("# Capability Boundary\n", encoding="utf-8")
         (run_dir / "acceptance_criteria.md").write_text("# Acceptance Criteria\n\n- `AC-001` 覆盖 Dashboard 可视化闭环。\n", encoding="utf-8")
         (run_dir / "context_pack.md").write_text("# Context Pack\n", encoding="utf-8")
         (planning_dir / "acceptance_coverage_matrix.json").write_text(
@@ -185,6 +211,26 @@ console.log(JSON.stringify(vm));
             json.dumps({"schema_version": 1, "status": "passed", "summary": "Planning is ready for implementation.", "blockers": []}),
             encoding="utf-8",
         )
+        (planning_dir / "tdd_plan.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "status": "passed",
+                    "test_cases": [
+                        {
+                            "id": "TDD-001",
+                            "acceptance_criteria_ids": ["AC-001"],
+                            "test_intent": "Dashboard shows capability boundary artifacts.",
+                            "expected_red_failure": "artifact missing before implementation",
+                            "verification_command": "python3 -m unittest tests.test_dashboard -v",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (planning_dir / "tdd_plan.md").write_text("# TDD Plan\n", encoding="utf-8")
         (slices_dir / "slice-001.yaml").write_text(
             "slice_id: slice-001\ntitle: 展示复杂任务闭环\nacceptance_criteria_ids:\n  - AC-001\nverification_commands:\n  - python3 -m unittest tests.test_dashboard -v\n",
             encoding="utf-8",
@@ -524,6 +570,9 @@ console.log(JSON.stringify(vm));
         self.assertIn("health_summary", state)
         self.assertIn("quality_report", state)
         self.assertEqual(state["implementation_trace"]["status"], "completed")
+        self.assertEqual(state["requirement_understanding"]["candidate"]["model"], "gpt-5.3")
+        self.assertEqual(state["requirement_understanding"]["capability_boundary"]["change_type"], "extend_existing_capability")
+        self.assertEqual(state["tdd_plan"]["status"], "passed")
         self.assertEqual(state["memory_recall"]["matches"][0]["run_id"], "historical-dashboard-run")
         self.assertEqual(state["release_readiness"]["release_decision"], "ready_for_pr_ci")
         self.assertEqual(state["github_pr"]["status"], "created")
@@ -533,6 +582,11 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["production_readiness"]["production_decision"], "ready_for_manual_production")
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_quality_report.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/requirement_understanding.candidate.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/capability_boundary.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/capability_boundary.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "planning/tdd_plan.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "planning/tdd_plan.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "retrospective.md" for item in state["artifacts"]))

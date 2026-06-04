@@ -13,7 +13,13 @@ from .calibration import (
 )
 from .config import load_config
 from .device import run_doctor
-from .runner import calibrate, run_collect, run_dry_collect, validate_input
+from .runner import (
+    calibrate,
+    run_collect,
+    run_collect_keyword,
+    run_dry_collect,
+    validate_input,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,6 +86,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--keyword-result-top-n", type=int, default=None)
     run.add_argument("--mode", choices=["mobilerun", "deterministic"], default=None)
     run.add_argument("--dry-run", action="store_true")
+
+    run_keyword = subparsers.add_parser(
+        "run-keyword", help="Run keyword-only text search collection"
+    )
+    run_keyword.add_argument("--keyword", required=True)
+    run_keyword.add_argument("--config", type=Path, default=None)
+    run_keyword.add_argument("--top-n", type=int, default=None)
+    run_keyword.add_argument(
+        "--mode", choices=["deterministic"], default="deterministic"
+    )
     return parser
 
 
@@ -209,6 +225,26 @@ def main(argv: list[str] | None = None) -> int:
                     keyword_result_top_n=args.keyword_result_top_n,
                     mode=args.mode,
                 )
+            )
+            print(
+                json.dumps(
+                    {
+                        "status": manifest.status,
+                        "run_id": manifest.run_id,
+                        "output_dir": str(manifest.output_dir),
+                        "result_count": len(manifest.results),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.command == "run-keyword":
+            manifest = run_collect_keyword(
+                args.keyword,
+                args.config,
+                args.top_n,
+                mode=args.mode,
             )
             print(
                 json.dumps(

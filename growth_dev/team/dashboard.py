@@ -162,6 +162,7 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "quality_report": quality_report,
         "requirement_understanding": _read_requirement_understanding(run_dir),
         "acceptance_coverage": _read_acceptance_coverage(run_dir),
+        "tdd_plan": _read_tdd_plan(run_dir),
         "implementation_trace": _read_implementation_trace(run_dir),
         "slice_loop": _read_slice_loop_state(run_dir),
         "implementation_completion_gate": _read_implementation_completion_gate(run_dir),
@@ -727,15 +728,20 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("task.yaml", "Task Package", "run"),
         ("context.md", "Context", "run"),
         ("requirements/brief_analysis.json", "Requirement Analysis", "run"),
+        ("requirements/requirement_understanding.candidate.json", "Requirement Understanding Candidate", "run"),
         ("requirements/requirement_quality_report.json", "Requirement Quality Report", "run"),
         ("requirements/clarification.md", "Requirement Clarification", "run"),
         ("requirements/acceptance_criteria.draft.md", "Draft Acceptance Criteria", "run"),
         ("requirements/open_questions.md", "Open Questions", "run"),
         ("requirements/assumptions.md", "Assumptions", "run"),
+        ("requirements/capability_boundary.md", "Capability Boundary", "run"),
+        ("requirements/capability_boundary.json", "Capability Boundary JSON", "run"),
         ("acceptance_criteria.md", "Acceptance Criteria", "run"),
         ("context_pack.md", "Context Pack", "run"),
         ("planning/acceptance_coverage_matrix.md", "Acceptance Coverage Matrix", "run"),
         ("planning/acceptance_coverage_matrix.json", "Acceptance Coverage Matrix JSON", "run"),
+        ("planning/tdd_plan.md", "TDD Plan", "run"),
+        ("planning/tdd_plan.json", "TDD Plan JSON", "run"),
         ("planning/planning_quality_report.json", "Planning Quality Report", "run"),
         ("prd.md", "PRD", "run"),
         ("tech_spec.md", "Tech Spec", "run"),
@@ -844,16 +850,22 @@ def _read_implementation_trace(run_dir: Path) -> dict[str, Any]:
 
 def _read_requirement_understanding(run_dir: Path) -> dict[str, Any]:
     analysis = _safe_read_json(run_dir / "requirements" / "brief_analysis.json")
+    candidate = _safe_read_json(run_dir / "requirements" / "requirement_understanding.candidate.json")
     quality = _safe_read_json(run_dir / "requirements" / "requirement_quality_report.json")
+    capability_boundary = _safe_read_json(run_dir / "requirements" / "capability_boundary.json")
     return _redact(
         {
             "brief_analysis": analysis if isinstance(analysis, dict) else {},
+            "candidate": candidate if isinstance(candidate, dict) else {},
             "quality_report": quality if isinstance(quality, dict) else {},
+            "capability_boundary": capability_boundary if isinstance(capability_boundary, dict) else {},
             "draft_artifacts": {
+                "requirement_candidate": (run_dir / "requirements" / "requirement_understanding.candidate.json").exists(),
                 "clarification": (run_dir / "requirements" / "clarification.md").exists(),
                 "acceptance_criteria_draft": (run_dir / "requirements" / "acceptance_criteria.draft.md").exists(),
                 "open_questions": (run_dir / "requirements" / "open_questions.md").exists(),
                 "assumptions": (run_dir / "requirements" / "assumptions.md").exists(),
+                "capability_boundary": (run_dir / "requirements" / "capability_boundary.json").exists(),
             },
         }
     )
@@ -861,6 +873,14 @@ def _read_requirement_understanding(run_dir: Path) -> dict[str, Any]:
 
 def _read_acceptance_coverage(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "planning" / "acceptance_coverage_matrix.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_tdd_plan(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "planning" / "tdd_plan.json"
     if not path.exists():
         return {}
     payload = _safe_read_json(path)

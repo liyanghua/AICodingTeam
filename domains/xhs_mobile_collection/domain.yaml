@@ -28,6 +28,9 @@ input_schema:
   keyword_result_top_n:
     type: integer
     required: false
+  keyword:
+    type: string
+    required: false
   output_dir:
     type: path
     required: false
@@ -83,6 +86,7 @@ artifact_contract:
   run_root: third_party/xhs_collector/runs/xhs_collector/{collector_run_id}
 verification_commands:
   - python3 -m unittest tests.test_xhs_collector -v
+  - cd third_party/xhs_collector && python3 -m xhs_collector run-keyword --help
   - cd third_party/xhs_collector && python3 -m xhs_collector validate --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" --config config/xhs_collector.json
   - cd third_party/xhs_collector && python3 -m xhs_collector run --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" --config config/xhs_collector.json --dry-run
   - cd third_party/xhs_collector && python3 -m xhs_collector doctor --config config/xhs_collector.json
@@ -94,10 +98,13 @@ evaluation_rules:
   - doctor_reports_device_readiness_or_clear_blocker
   - smoke_collects_one_item_or_records_risk_event
   - manifest_step_events_and_risk_events_are_auditable
+  - keyword_only_search_does_not_use_image_search
+  - keyword_only_search_skips_video_notes
   - no_disallowed_risk_behavior
   - no_files_modified_outside_allowed_paths
 success_criteria:
   - unittest_passes
+  - keyword_only_cli_available
   - validate_exits_zero
   - dry_run_exits_zero
   - manifest_created

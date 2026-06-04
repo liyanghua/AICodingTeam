@@ -10,6 +10,8 @@ DEFAULT_DOWNLOAD_MODE = "in_app_save"
 DEFAULT_OUTPUT_ROOT = Path("runs/xhs_collector")
 DEFAULT_REMOTE_IMAGE_DIR = "/sdcard/Pictures/xhs_collector"
 DEFAULT_MODE = "mobilerun"
+DEFAULT_SEARCH_MODE = "image_then_keyword"
+SEARCH_MODES = {"image_then_keyword", "keyword_only"}
 
 
 def _optional_str(value: Any) -> str | None:
@@ -76,6 +78,7 @@ class CollectorConfig:
     keyword_top_n: int = 3
     keyword_result_top_n: int = 5
     mode: str = DEFAULT_MODE
+    search_mode: str = DEFAULT_SEARCH_MODE
     keyword_template: str = "{keyword} {description}"
     target_category: str = ""
     target_category_keywords: list[str] = field(default_factory=list)
@@ -99,6 +102,8 @@ class CollectorConfig:
             keyword_top_n=int(data.get("keyword_top_n", 3)),
             keyword_result_top_n=int(data.get("keyword_result_top_n", top_n)),
             mode=str(data.get("mode", DEFAULT_MODE)).strip() or DEFAULT_MODE,
+            search_mode=str(data.get("search_mode", DEFAULT_SEARCH_MODE)).strip()
+            or DEFAULT_SEARCH_MODE,
             keyword_template=str(
                 data.get("keyword_template", "{keyword} {description}")
             ),
@@ -137,6 +142,9 @@ class CollectorConfig:
             raise ValueError("download_mode must be in_app_save")
         if self.mode not in {"mobilerun", "deterministic"}:
             raise ValueError("mode must be mobilerun or deterministic")
+        if self.search_mode not in SEARCH_MODES:
+            allowed = ", ".join(sorted(SEARCH_MODES))
+            raise ValueError(f"search_mode must be one of: {allowed}")
         if not self.xhs_package:
             raise ValueError("xhs_package must not be empty")
         if not self.remote_image_dir.startswith("/sdcard/"):

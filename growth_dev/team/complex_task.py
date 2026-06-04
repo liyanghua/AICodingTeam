@@ -13,6 +13,11 @@ from .models import DomainSpec
 PLANNING_MODES = {"deterministic", "llm_assisted", "auto"}
 REQUIREMENT_QUALITY_ARTIFACT = "requirements/requirement_quality_report.json"
 PLANNING_QUALITY_ARTIFACT = "planning/planning_quality_report.json"
+REQUIREMENT_CANDIDATE_ARTIFACT = "requirements/requirement_understanding.candidate.json"
+CAPABILITY_BOUNDARY_JSON_ARTIFACT = "requirements/capability_boundary.json"
+CAPABILITY_BOUNDARY_MD_ARTIFACT = "requirements/capability_boundary.md"
+TDD_PLAN_JSON_ARTIFACT = "planning/tdd_plan.json"
+TDD_PLAN_MD_ARTIFACT = "planning/tdd_plan.md"
 SECRET_REPLACEMENTS = [
     (re.compile(r"sk-[A-Za-z0-9_\-]{6,}"), "<redacted-secret>"),
     (re.compile(r"(?i)(AICODEMIRROR_KEY\s*[:=]\s*)[^\s,;'\"\n]+"), r"\1<redacted>"),
@@ -94,6 +99,16 @@ def generate_complex_task_artifacts(
     draft_paths: list[str] = []
     if _should_generate_llm_draft(analysis, normalized):
         draft_paths = _write_llm_draft_placeholders(requirements_dir, analysis, normalized)
+        candidate = _requirement_candidate(run_id, artifact_brief, domain, artifact_inputs, analysis, normalized)
+        write_json(requirements_dir / "requirement_understanding.candidate.json", candidate)
+        draft_paths.append(REQUIREMENT_CANDIDATE_ARTIFACT)
+
+    capability_boundary = _capability_boundary(run_id, artifact_brief, domain, artifact_inputs, run_dir)
+    write_json(requirements_dir / "capability_boundary.json", capability_boundary)
+    (requirements_dir / "capability_boundary.md").write_text(
+        _capability_boundary_markdown(capability_boundary),
+        encoding="utf-8",
+    )
 
     acceptance = _acceptance_criteria(artifact_brief, domain, artifact_inputs, analysis)
     acceptance_md = _acceptance_criteria_markdown(acceptance)
@@ -110,18 +125,26 @@ def generate_complex_task_artifacts(
     write_json(planning_dir / "acceptance_coverage_matrix.json", coverage)
     (planning_dir / "acceptance_coverage_matrix.md").write_text(_coverage_matrix_markdown(coverage), encoding="utf-8")
 
-    requirement_quality = _requirement_quality_report(analysis, acceptance, coverage)
-    planning_quality = _planning_quality_report(coverage, slices)
+    tdd_plan = _tdd_plan(run_id, artifact_brief, domain, acceptance, slices, artifact_inputs)
+    write_json(planning_dir / "tdd_plan.json", tdd_plan)
+    (planning_dir / "tdd_plan.md").write_text(_tdd_plan_markdown(tdd_plan), encoding="utf-8")
+
+    requirement_quality = _requirement_quality_report(analysis, acceptance, coverage, capability_boundary)
+    planning_quality = _planning_quality_report(coverage, slices, tdd_plan)
     write_json(requirements_dir / "requirement_quality_report.json", requirement_quality)
     write_json(planning_dir / "planning_quality_report.json", planning_quality)
 
     output_paths = [
         "requirements/brief_analysis.json",
         *draft_paths,
+        CAPABILITY_BOUNDARY_JSON_ARTIFACT,
+        CAPABILITY_BOUNDARY_MD_ARTIFACT,
         "acceptance_criteria.md",
         "context_pack.md",
         "planning/acceptance_coverage_matrix.json",
         "planning/acceptance_coverage_matrix.md",
+        TDD_PLAN_JSON_ARTIFACT,
+        TDD_PLAN_MD_ARTIFACT,
         *[f"slices/{item['id']}.yaml" for item in slices],
         REQUIREMENT_QUALITY_ARTIFACT,
         PLANNING_QUALITY_ARTIFACT,
@@ -196,6 +219,198 @@ def _write_llm_draft_placeholders(requirements_dir: Path, analysis: dict[str, An
         (requirements_dir / name).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         paths.append(f"requirements/{name}")
     return paths
+
+
+def _requirement_candidate(
+    run_id: str,
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    config: ComplexTaskConfig,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "domain_id": domain.domain_id,
+        "generated_at": now_iso(),
+        "model": _redact_text(config.requirements_model or "not_configured"),
+        "reasoning_effort": config.requirements_reasoning_effort,
+        "status": "candidate_only",
+        "clarification_angles": [
+            "业务目标",
+            "用户/操作者",
+            "输入输出",
+            "主流程",
+            "边界/非目标",
+            "兼容性",
+            "安全风险",
+            "可观测验收",
+            "部署/环境依赖",
+        ],
+        "candidate_scope": {
+            "goal": _compact(brief),
+            "domain_id": domain.domain_id,
+            "allowed_paths": _string_list(inputs.get("allowed_paths")) or _string_list(domain.metadata.get("allowed_paths")),
+            "verification_commands": _string_list(inputs.get("verification_commands")) or _string_list(domain.metadata.get("verification_commands")),
+        },
+        "blocking_questions": list(analysis.get("blocking_questions", [])),
+        "assumptions": list(analysis.get("assumptions", [])),
+        "safety_boundaries": list(domain.risk_rules),
+        "promotion_policy": "Do not promote this candidate unless deterministic requirement quality gates pass.",
+    }
+
+
+def _capability_boundary(
+    run_id: str,
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    run_dir: Path,
+) -> dict[str, Any]:
+    capabilities = domain.metadata.get("capabilities") if isinstance(domain.metadata, dict) else {}
+    if not isinstance(capabilities, dict):
+        capabilities = {}
+    supported = _capability_list(capabilities.get("supported"))
+    if not supported:
+        supported = _default_domain_capabilities(domain, inputs)
+    unsupported = _capability_list(capabilities.get("unsupported"))
+    required_new = _required_new_capabilities(brief, domain, supported)
+    historical = _historical_learning_sources(run_dir.parent, domain.domain_id, brief)
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "domain_id": domain.domain_id,
+        "generated_at": now_iso(),
+        "change_type": _capability_change_type(brief, supported, required_new),
+        "summary": "Capability boundary is derived from the domain pack, current run inputs, and local learning summaries.",
+        "existing_capabilities": supported,
+        "required_new_capabilities": required_new,
+        "unsupported_capabilities": unsupported,
+        "manual_gates": _string_list(capabilities.get("manual_gates")),
+        "source_artifacts": _dedupe(
+            [
+                "domain.yaml",
+                "capabilities.yaml" if capabilities else "",
+                *[str(item) for item in historical],
+            ]
+        ),
+        "inputs_considered": sorted(str(key) for key in inputs.keys()),
+        "runtime_policy": "Obsidian is not used as runtime source of truth; use repo domain pack and run artifacts.",
+    }
+
+
+def _default_domain_capabilities(domain: DomainSpec, inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    verification_commands = _string_list(inputs.get("verification_commands")) or _string_list(domain.metadata.get("verification_commands"))
+    return [
+        {
+            "id": f"{domain.domain_id}_baseline",
+            "summary": f"Use the `{domain.domain_id}` domain pack, current run artifacts, and declared verification commands as baseline capability evidence.",
+            "entrypoint": "",
+            "evidence": ["domain.yaml"],
+            "verification_commands": [_redact_text(command) for command in verification_commands],
+            "source": "domain_pack_default",
+        }
+    ]
+
+
+def _capability_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        capability_id = str(item.get("id", "")).strip()
+        if not capability_id:
+            continue
+        items.append(
+            {
+                "id": capability_id,
+                "summary": _redact_text(str(item.get("summary", ""))),
+                "entrypoint": _redact_text(str(item.get("entrypoint", ""))),
+                "evidence": [_redact_text(str(path)) for path in _string_list(item.get("evidence"))],
+                "verification_commands": [_redact_text(str(command)) for command in _string_list(item.get("verification_commands"))],
+            }
+        )
+    return items
+
+
+def _required_new_capabilities(brief: str, domain: DomainSpec, supported: list[dict[str, Any]]) -> list[dict[str, str]]:
+    lowered = brief.lower()
+    supported_ids = {str(item.get("id", "")) for item in supported}
+    required: list[dict[str, str]] = []
+    if domain.domain_id == "xhs_mobile_collection" and any(marker in lowered for marker in ("纯关键词", "run-keyword", "keyword-only", "keyword_only")):
+        required.append(
+            {
+                "id": "keyword_only_collection",
+                "summary": "Keyword-only text search collection without image search.",
+                "status": "already_supported" if "keyword_only_collection" in supported_ids else "missing",
+            }
+        )
+    return required
+
+
+def _capability_change_type(brief: str, supported: list[dict[str, Any]], required_new: list[dict[str, str]]) -> str:
+    lowered = brief.lower()
+    if any(marker in lowered for marker in ("修复", "bug", "fix")):
+        return "fix_existing_capability"
+    if required_new or any(marker in lowered for marker in ("新增", "增加", "扩展", "add", "new")):
+        return "extend_existing_capability" if supported else "new_capability"
+    return "adjust_existing_capability" if supported else "new_capability"
+
+
+def _historical_learning_sources(runs_dir: Path, domain_id: str, brief: str, limit: int = 3) -> list[str]:
+    if not runs_dir.exists():
+        return []
+    terms = {part.lower() for part in re.findall(r"[\w\u4e00-\u9fff]+", brief) if len(part) >= 2}
+    matches: list[tuple[int, str]] = []
+    for summary_path in runs_dir.glob("*/learning_summary.json"):
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict) or str(payload.get("domain_id", "")) != domain_id:
+            continue
+        text = json.dumps(payload, ensure_ascii=False).lower()
+        score = sum(1 for term in terms if term in text)
+        matches.append((score, f"{summary_path.parent.name}/learning_summary.json"))
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return [path for score, path in matches[:limit] if score > 0]
+
+
+def _capability_boundary_markdown(boundary: dict[str, Any]) -> str:
+    lines = [
+        "# Capability Boundary",
+        "",
+        f"- Change type: `{boundary.get('change_type', '')}`",
+        f"- Runtime policy: {boundary.get('runtime_policy', '')}",
+        "",
+        "## Existing Capabilities",
+        *_capability_markdown_lines(boundary.get("existing_capabilities", [])),
+        "",
+        "## Required New Capabilities",
+        *_capability_markdown_lines(boundary.get("required_new_capabilities", [])),
+        "",
+        "## Unsupported Capabilities",
+        *_capability_markdown_lines(boundary.get("unsupported_capabilities", [])),
+        "",
+        "## Source Artifacts",
+        *[f"- `{item}`" for item in _string_list(boundary.get("source_artifacts"))],
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _capability_markdown_lines(capabilities: Any) -> list[str]:
+    if not isinstance(capabilities, list) or not capabilities:
+        return ["- none"]
+    lines: list[str] = []
+    for item in capabilities:
+        if not isinstance(item, dict):
+            continue
+        suffix = f": {item.get('summary', '')}" if item.get("summary") else ""
+        lines.append(f"- `{item.get('id', '')}`{suffix}")
+    return lines or ["- none"]
 
 
 def _acceptance_criteria(brief: str, domain: DomainSpec, inputs: dict[str, Any], analysis: dict[str, Any]) -> list[dict[str, Any]]:
@@ -298,7 +513,116 @@ def _coverage_matrix(run_id: str, acceptance: list[dict[str, Any]], slices: list
     }
 
 
-def _requirement_quality_report(analysis: dict[str, Any], acceptance: list[dict[str, Any]], coverage: dict[str, Any]) -> dict[str, Any]:
+def _tdd_plan(
+    run_id: str,
+    brief: str,
+    domain: DomainSpec,
+    acceptance: list[dict[str, Any]],
+    slices: list[dict[str, Any]],
+    inputs: dict[str, Any],
+) -> dict[str, Any]:
+    verification_commands = _string_list(inputs.get("verification_commands")) or _string_list(domain.metadata.get("verification_commands")) or ["python3 -m unittest discover -s tests -v"]
+    cases: list[dict[str, Any]] = []
+    xhs_keyword_cases = _xhs_keyword_tdd_cases(brief, acceptance, verification_commands)
+    if xhs_keyword_cases:
+        cases.extend(xhs_keyword_cases)
+    else:
+        for index, criterion in enumerate(acceptance, start=1):
+            cases.append(
+                {
+                    "id": f"TDD-{index:03d}",
+                    "acceptance_criteria_ids": [criterion["id"]],
+                    "related_slice_ids": [item["id"] for item in slices if criterion["id"] in item.get("acceptance_criteria_ids", [])],
+                    "test_intent": f"Add or update behavior tests proving {criterion['id']}.",
+                    "expected_red_failure": "The behavior is missing before implementation.",
+                    "verification_command": verification_commands[0],
+                    "red_first_required": True,
+                    "executor": "codex_cli",
+                }
+            )
+    covered = {ac_id for case in cases for ac_id in _string_list(case.get("acceptance_criteria_ids"))}
+    required = {str(item.get("id", "")) for item in acceptance}
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "generated_at": now_iso(),
+        "status": "passed" if required.issubset(covered) and cases else "failed",
+        "summary": "TDD plan maps acceptance criteria to red-first tests before Codex implementation.",
+        "test_cases": cases,
+        "coverage": {
+            "required_acceptance_criteria_ids": sorted(required),
+            "covered_acceptance_criteria_ids": sorted(covered),
+            "missing_acceptance_criteria_ids": sorted(required - covered),
+        },
+        "policy": "Codex writes failing tests first, records red failure, then makes the minimal green implementation.",
+    }
+
+
+def _xhs_keyword_tdd_cases(brief: str, acceptance: list[dict[str, Any]], verification_commands: list[str]) -> list[dict[str, Any]]:
+    lowered = brief.lower()
+    if not any(marker in lowered for marker in ("纯关键词", "run-keyword", "keyword-only", "keyword_only")):
+        return []
+    ac_ids = [str(item.get("id", "")) for item in acceptance if str(item.get("id", "")).strip()]
+    command = next((item for item in verification_commands if "test_xhs_collector" in item), verification_commands[0])
+    intents = [
+        ("run-keyword CLI routes to keyword-only deterministic collection", "run-keyword command is missing or routes to the legacy flow."),
+        ("search_mode=keyword_only is accepted while default remains image_then_keyword", "CollectorConfig has no search_mode or rejects keyword_only."),
+        ("keyword-only flow 不走图搜 and does not push a reference image", "The flow still taps image search or pushes a reference image."),
+        ("keyword-only result selection records skip_video_note_card for video notes", "Video result cards are selected instead of skipped."),
+        ("TOP N image/text note downloads create auditable item outputs", "The deterministic result does not collect the requested TOP N images."),
+    ]
+    return [
+        {
+            "id": f"TDD-{index:03d}",
+            "acceptance_criteria_ids": ac_ids or ["AC-001"],
+            "related_slice_ids": [],
+            "test_intent": intent,
+            "expected_red_failure": red_failure,
+            "verification_command": command,
+            "red_first_required": True,
+            "executor": "codex_cli",
+        }
+        for index, (intent, red_failure) in enumerate(intents, start=1)
+    ]
+
+
+def _tdd_plan_markdown(plan: dict[str, Any]) -> str:
+    lines = [
+        "# TDD Plan",
+        "",
+        f"- Status: `{plan.get('status', '')}`",
+        f"- Policy: {plan.get('policy', '')}",
+        "",
+        "## Test Cases",
+    ]
+    for item in plan.get("test_cases", []):
+        lines.extend(
+            [
+                f"- `{item.get('id', '')}` {item.get('test_intent', '')}",
+                f"  - AC: {', '.join(_string_list(item.get('acceptance_criteria_ids')))}",
+                f"  - Red failure: {item.get('expected_red_failure', '')}",
+                f"  - Command: `{item.get('verification_command', '')}`",
+            ]
+        )
+    coverage = plan.get("coverage", {})
+    lines.extend(
+        [
+            "",
+            "## Coverage",
+            f"- Required AC: {', '.join(_string_list(coverage.get('required_acceptance_criteria_ids')))}",
+            f"- Covered AC: {', '.join(_string_list(coverage.get('covered_acceptance_criteria_ids')))}",
+            f"- Missing AC: {', '.join(_string_list(coverage.get('missing_acceptance_criteria_ids'))) or 'none'}",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _requirement_quality_report(
+    analysis: dict[str, Any],
+    acceptance: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    capability_boundary: dict[str, Any],
+) -> dict[str, Any]:
     blockers: list[str] = []
     if analysis.get("blocking_questions"):
         blockers.append("blocking_questions_present")
@@ -309,6 +633,8 @@ def _requirement_quality_report(analysis: dict[str, Any], acceptance: list[dict[
             blockers.append(f"untestable_acceptance:{item.get('id')}")
     if any(not item.get("covering_slice_ids") for item in coverage.get("acceptance_criteria", [])):
         blockers.append("acceptance_not_covered_by_slice")
+    if not capability_boundary.get("existing_capabilities") and not capability_boundary.get("required_new_capabilities"):
+        blockers.append("capability_boundary_missing")
     status = "passed" if not blockers else "failed"
     return {
         "schema_version": 1,
@@ -321,11 +647,12 @@ def _requirement_quality_report(analysis: dict[str, Any], acceptance: list[dict[
             {"id": "testable_acceptance", "status": "passed" if not any("untestable_acceptance" in item for item in blockers) else "failed"},
             {"id": "no_blocking_questions", "status": "passed" if not analysis.get("blocking_questions") else "failed"},
             {"id": "coverage_ready", "status": "passed" if "acceptance_not_covered_by_slice" not in blockers else "failed"},
+            {"id": "capability_boundary_ready", "status": "passed" if "capability_boundary_missing" not in blockers else "failed"},
         ],
     }
 
 
-def _planning_quality_report(coverage: dict[str, Any], slices: list[dict[str, Any]]) -> dict[str, Any]:
+def _planning_quality_report(coverage: dict[str, Any], slices: list[dict[str, Any]], tdd_plan: dict[str, Any]) -> dict[str, Any]:
     blockers: list[str] = []
     ac_ids = {str(item["id"]) for item in coverage.get("acceptance_criteria", [])}
     covered_ids = {str(ac_id) for item in slices for ac_id in item.get("acceptance_criteria_ids", [])}
@@ -338,6 +665,8 @@ def _planning_quality_report(coverage: dict[str, Any], slices: list[dict[str, An
             blockers.append(f"unverifiable_slice:{item.get('id')}")
         if not item.get("allowed_paths"):
             blockers.append(f"slice_without_allowed_paths:{item.get('id')}")
+    if tdd_plan.get("status") != "passed" or not tdd_plan.get("test_cases"):
+        blockers.append("tdd_plan_missing_or_incomplete")
     status = "passed" if not blockers else "failed"
     return {
         "schema_version": 1,
@@ -349,6 +678,7 @@ def _planning_quality_report(coverage: dict[str, Any], slices: list[dict[str, An
             "no_orphan_slice": not any(item.startswith("orphan_slice:") for item in blockers),
             "all_slices_verifiable": not any(item.startswith("unverifiable_slice:") for item in blockers),
             "allowed_paths_declared": not any(item.startswith("slice_without_allowed_paths:") for item in blockers),
+            "tdd_plan_ready": "tdd_plan_missing_or_incomplete" not in blockers,
         },
     }
 
@@ -448,6 +778,18 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return [str(value)]
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _compact(value: str, limit: int = 160) -> str:

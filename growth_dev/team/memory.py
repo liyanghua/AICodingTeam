@@ -188,6 +188,10 @@ def _run_note(record: TeamRunRecord, run_dir: Path) -> str:
         "",
         *_memory_recall_lines(run_dir),
         "",
+        "## 能力边界变化",
+        "",
+        *_capability_boundary_lines(run_dir),
+        "",
         "## 发布准备",
         "",
         *_release_readiness_lines(run_dir),
@@ -359,6 +363,37 @@ def _memory_recall_lines(run_dir: Path) -> list[str]:
     recall_path = run_dir / "memory_recall.md"
     if recall_path.exists():
         lines.append(f"- Source: [memory_recall.md]({recall_path.resolve().as_uri()})")
+    return lines
+
+
+def _capability_boundary_lines(run_dir: Path) -> list[str]:
+    path = run_dir / "requirements" / "capability_boundary.json"
+    if not path.exists():
+        return ["暂无能力边界变化记录。"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ["能力边界记录不可解析。"]
+    if not isinstance(payload, dict):
+        return ["能力边界记录不可解析。"]
+    lines = [
+        f"- Change type: `{_redact(str(payload.get('change_type', '')) or 'unknown')}`",
+    ]
+    for title, key in (
+        ("Existing", "existing_capabilities"),
+        ("New / Required", "required_new_capabilities"),
+        ("Unsupported", "unsupported_capabilities"),
+    ):
+        values = [
+            _redact(str(item.get("id", "")))
+            for item in payload.get(key, [])
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        ]
+        if values:
+            lines.append(f"- {title}: {', '.join(f'`{value}`' for value in values)}")
+    md_path = run_dir / "requirements" / "capability_boundary.md"
+    if md_path.exists():
+        lines.append(f"- Source: [capability_boundary.md]({md_path.resolve().as_uri()})")
     return lines
 
 

@@ -357,6 +357,25 @@ class TeamMemoryTests(unittest.TestCase):
             runs_dir = root / "runs"
             vault_dir = root / "vault"
             run_dir = _write_run(runs_dir, "memory-run-1")
+            requirements_dir = run_dir / "requirements"
+            requirements_dir.mkdir(exist_ok=True)
+            (requirements_dir / "capability_boundary.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "memory-run-1",
+                        "change_type": "extend_existing_capability",
+                        "existing_capabilities": [{"id": "image_then_keyword_collection", "summary": "旧图搜链路"}],
+                        "required_new_capabilities": [{"id": "keyword_only_collection", "summary": "新增纯关键词采集"}],
+                        "unsupported_capabilities": [{"id": "captcha_or_risk_bypass", "summary": "禁止风控绕过"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (requirements_dir / "capability_boundary.md").write_text(
+                "# Capability Boundary\n\n- Existing: image_then_keyword_collection\n- New: keyword_only_collection\n",
+                encoding="utf-8",
+            )
 
             result = export_run_to_obsidian("memory-run-1", runs_dir=runs_dir, vault_dir=vault_dir)
 
@@ -378,6 +397,9 @@ class TeamMemoryTests(unittest.TestCase):
         self.assertIn("## 质量检查与关卡", note)
         self.assertIn("## 任务复盘", note)
         self.assertIn("## 历史任务召回", note)
+        self.assertIn("## 能力边界变化", note)
+        self.assertIn("extend_existing_capability", note)
+        self.assertIn("keyword_only_collection", note)
         self.assertIn("## 发布准备", note)
         self.assertIn("## GitHub PR / CI", note)
         self.assertIn("## 推荐 Project Skills", note)
