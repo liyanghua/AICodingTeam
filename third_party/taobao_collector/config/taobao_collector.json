@@ -1,0 +1,15 @@
+{
+  "taobao_package": "com.taobao.taobao",
+  "mode": "keyword_search",
+  "top_n": 5,
+  "output_root": "runs/taobao_collector",
+  "coordinate_profile": "config/taobao_coordinates.json",
+  "remote_image_dir": "/sdcard/Pictures/taobao_collector",
+  "wait_timeout_seconds": 10.0,
+  "app_start_wait_seconds": 5.0,
+  "throttle_seconds": 1.0,
+  "detail_extra_top_n": 1,
+  "detail_media_scan_max": 5,
+  "detail_media_swipe_start": [0.82, 0.35],
+  "detail_media_swipe_end": [0.18, 0.35]
+}
