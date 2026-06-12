@@ -12,6 +12,7 @@ from .domain import load_domain_spec, load_team_spec
 from .memory_recall import generate_memory_recall
 from .models import AgentRun, AgentSpec, GateResult, GateSpec, TeamRunRecord, TeamSpec
 from .retrospective import generate_run_retrospective
+from .workspace import refresh_task_workspace
 
 COMPLEX_TASK_REQUIRED_ARTIFACTS = [
     "acceptance_criteria.md",
@@ -247,6 +248,7 @@ class TeamRuntime:
                 self._write_record(record)
                 self._write_event(record, "run_failed", reason="gate_failed")
                 self._write_retrospective(record)
+                self._write_task_workspace(record)
                 return record
 
             agent_context = AgentContext(
@@ -299,6 +301,7 @@ class TeamRuntime:
                 self._write_record(record)
                 self._write_event(record, "run_failed", reason=f"agent_failed:{agent.id}")
                 self._write_retrospective(record)
+                self._write_task_workspace(record)
                 return record
 
             if agent.id == "orchestrator":
@@ -308,6 +311,7 @@ class TeamRuntime:
                     self._write_record(record)
                     self._write_event(record, "run_failed", reason="requirement_quality_gate_failed")
                     self._write_retrospective(record)
+                    self._write_task_workspace(record)
                     return record
 
         record.status = "completed"
@@ -315,6 +319,7 @@ class TeamRuntime:
         self._write_record(record)
         self._write_event(record, "run_completed")
         self._write_retrospective(record)
+        self._write_task_workspace(record)
         return record
 
     def check_gate(self, run_dir: Path, gate_id: str) -> GateResult:
@@ -389,7 +394,22 @@ class TeamRuntime:
             return
         record.artifacts["retrospective.md"] = "retrospective.md"
         record.artifacts["learning_summary.json"] = "learning_summary.json"
-        for output_path in ("retrospective.md", "learning_summary.json"):
+        record.artifacts["finish_learning_suggestions.md"] = "finish_learning_suggestions.md"
+        record.artifacts["finish_learning_suggestions.json"] = "finish_learning_suggestions.json"
+        for output_path in ("retrospective.md", "learning_summary.json", "finish_learning_suggestions.md", "finish_learning_suggestions.json"):
+            if output_path not in record.output_paths:
+                record.output_paths.append(output_path)
+        self._write_record(record)
+
+    def _write_task_workspace(self, record: TeamRunRecord) -> None:
+        try:
+            result = refresh_task_workspace(record.run_id, runs_dir=record.run_dir.parent)
+        except Exception as exc:  # noqa: BLE001 - workspace observability must not change run outcome.
+            self._write_event(record, "task_workspace_failed", error=str(exc))
+            return
+        for output_path in result.get("artifacts", {}).values():
+            output_path = str(output_path)
+            record.artifacts[Path(output_path).name] = output_path
             if output_path not in record.output_paths:
                 record.output_paths.append(output_path)
         self._write_record(record)

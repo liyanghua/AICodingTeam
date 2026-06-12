@@ -28,7 +28,10 @@
       agents: ["coder"],
       artifactPaths: [
         "coding_prompt.md",
+        "tool_context/codex.md",
         "codex/implementation_trace.json",
+        "codex/failure_classification.md",
+        "codex/failure_classification.json",
         "codex/slice_loop_state.json",
         "implementation_completion_gate.md",
         "implementation_completion_gate.json",
@@ -52,11 +55,14 @@
       "memory_recall.json",
       "acceptance_criteria.md",
       "context_pack.md",
+      "task_workspace.md",
+      "task_workspace.json",
+      "task_journal.md",
     ],
-    design: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/acceptance_coverage_matrix.json", "planning/planning_quality_report.json"],
-    implementation: ["coding_prompt.md", "codex/implementation_trace.json", "codex/slice_loop_state.json", "implementation_completion_gate.md", "implementation_completion_gate.json", "codex/diff.patch"],
-    quality: ["review_report.md", "test_report.md"],
-    delivery: ["final_report.md"],
+    design: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/acceptance_coverage_matrix.json", "planning/planning_quality_report.json", "task_workspace.md"],
+    implementation: ["coding_prompt.md", "tool_context/codex.md", "codex/implementation_trace.json", "codex/failure_classification.md", "codex/failure_classification.json", "codex/slice_loop_state.json", "implementation_completion_gate.md", "implementation_completion_gate.json", "codex/diff.patch", "task_journal.md"],
+    quality: ["review_report.md", "test_report.md", "task_journal.md"],
+    delivery: ["final_report.md", "task_workspace.md", "task_journal.md"],
     release: ["release_readiness.md", "release_readiness.json", "pr_draft.md"],
     github_pr_ci: ["github_pr.md", "github_pr.json", "ci_status.md", "ci_status.json"],
     staging: ["staging_readiness.md", "staging_readiness.json", "staging_rehearsal.md", "staging_rehearsal.json"],
@@ -102,6 +108,8 @@
       acceptanceCoverage: buildAcceptanceCoverage(run, i18n),
       sliceLoop: buildSliceLoop(run, i18n),
       completionGate: buildCompletionGate(run, i18n),
+      taskWorkspace: buildTaskWorkspace(run),
+      taskJournal: buildTaskJournal(run),
       releaseReadiness: buildReleaseReadiness(run, i18n),
       githubPr: buildGithubPr(run, i18n),
       stagingReadiness: buildStagingReadiness(run, i18n),
@@ -258,6 +266,34 @@
     };
   }
 
+  function buildTaskWorkspace(run) {
+    const workspace = run.task_workspace || {};
+    const slices = workspace.slices || {};
+    return {
+      loopPhase: workspace.loop_phase || "",
+      objective: workspace.objective || "",
+      currentFocus: workspace.current_focus || "",
+      taskType: workspace.task_type || "",
+      acceptanceCriteria: Array.isArray(workspace.acceptance_criteria) ? workspace.acceptance_criteria : [],
+      activeSlice: slices.active || null,
+      completedSlices: Array.isArray(slices.completed) ? slices.completed : [],
+      pendingSlices: Array.isArray(slices.pending) ? slices.pending : [],
+      blockedSlices: Array.isArray(slices.blocked) ? slices.blocked : [],
+      blockers: Array.isArray(workspace.blockers) ? workspace.blockers : [],
+      warnings: Array.isArray(workspace.warnings) ? workspace.warnings : [],
+      nextActions: Array.isArray(workspace.next_actions) ? workspace.next_actions : [],
+      verificationCommands: Array.isArray(workspace.verification_commands) ? workspace.verification_commands : [],
+      artifactLinks: Array.isArray(workspace.artifact_links) ? workspace.artifact_links : [],
+    };
+  }
+
+  function buildTaskJournal(run) {
+    const journal = run.task_journal || {};
+    return {
+      events: Array.isArray(journal.events) ? journal.events : [],
+    };
+  }
+
   function buildReleaseReadiness(run, i18n) {
     const readiness = run.release_readiness || {};
     const gates = Array.isArray(readiness.gates) ? readiness.gates : [];
@@ -398,7 +434,7 @@
       artifacts,
       gates: gatesForFlowNode(id, vm, run),
       actions: actionsForFlowNode(id, run, vm),
-      insights: insightsForFlowNode(id, run, vm, i18n),
+      insights: [...insightsForFlowNode(id, run, vm, i18n), ...workspaceInsightsForFlowNode(id, vm, i18n)],
       engineeringEvidence: engineeringForFlowNode(id, run, vm),
       agentIds: FLOW_NODE_AGENTS[id] || [],
     };
@@ -494,12 +530,42 @@
   }
 
   function flowNodeSummary(id, status, run, i18n, vm, copy, stage) {
+    if (vm.taskWorkspace.currentFocus && flowNodeLoopPhase(id) === vm.taskWorkspace.loopPhase) {
+      return vm.taskWorkspace.currentFocus;
+    }
     if (id === "release" && vm.releaseReadiness.summary) return vm.releaseReadiness.summary;
     if (id === "github_pr_ci" && vm.githubPr.summary) return vm.githubPr.summary;
     if (id === "staging" && vm.stagingRehearsal.summary) return vm.stagingRehearsal.summary;
     if (id === "staging" && vm.stagingReadiness.summary) return vm.stagingReadiness.summary;
     if (id === "production" && vm.productionReadiness.summary) return vm.productionReadiness.summary;
     return lookup(copy, `summary.${status}`, (stage && stage.summary) || lookup(i18n, `status.${status}.description`, ""));
+  }
+
+  function flowNodeLoopPhase(id) {
+    if (id === "requirement" || id === "design") return "plan";
+    if (id === "implementation") return "implement";
+    if (id === "quality") return "verify";
+    return "finish";
+  }
+
+  function workspaceInsightsForFlowNode(id, vm, i18n) {
+    const workspace = vm.taskWorkspace || {};
+    const phase = flowNodeLoopPhase(id);
+    const insights = [];
+    if (workspace.loopPhase === phase && workspace.currentFocus) {
+      insights.push(`${lookup(i18n, "taskWorkspace.currentFocus", "current focus")}: ${workspace.currentFocus}`);
+    }
+    for (const action of (workspace.nextActions || []).slice(0, 2)) {
+      insights.push(`${lookup(i18n, "taskWorkspace.nextAction", "next action")}: ${action}`);
+    }
+    const recent = [...((vm.taskJournal || {}).events || [])].reverse().find((event) => event.loop_phase === phase);
+    if (recent) {
+      insights.push(`${lookup(i18n, "taskWorkspace.recentEvent", "recent event")}: ${recent.event || ""}`);
+    }
+    if (id === "implementation" && workspace.activeSlice && workspace.activeSlice.id) {
+      insights.push(`${lookup(i18n, "taskWorkspace.activeSlice", "active slice")}: ${workspace.activeSlice.id}`);
+    }
+    return insights.filter(Boolean);
   }
 
   function insightsForFlowNode(id, run, vm, i18n) {
@@ -584,10 +650,12 @@
 
   function engineeringForFlowNode(id, run, vm) {
     const agentIds = FLOW_NODE_AGENTS[id] || [];
+    const phase = flowNodeLoopPhase(id);
     const events = (vm.engineering.events || []).filter((event) => {
       const text = JSON.stringify(event);
       return agentIds.length ? agentIds.some((agentId) => text.includes(agentId)) : false;
     });
+    const journalEvents = ((vm.taskJournal || {}).events || []).filter((event) => event.loop_phase === phase);
     const relatedStages = (run.stages || []).filter((stage) => agentIds.includes(stage.id));
     const fallbackEvents = events.length ? events : relatedStages.map((stage) => ({
       agent_id: stage.id,
@@ -597,7 +665,8 @@
     const logs = (vm.engineering.logs || []).filter((line) => agentIds.some((agentId) => String(line).includes(agentId)));
     return {
       agentIds,
-      events: fallbackEvents,
+      events: fallbackEvents.length ? fallbackEvents : journalEvents.slice(-5),
+      journalEvents: journalEvents.slice(-5),
       logs: logs.length ? logs : (vm.engineering.logs || []).slice(0, 3),
       diffSummary: id === "implementation" || id === "quality" || id === "release" ? vm.engineering.diffSummary : {},
       run: {

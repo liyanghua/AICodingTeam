@@ -117,6 +117,53 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertTrue(record.run_dir.is_absolute())
         self.assertTrue(str(record.run_dir).endswith("runs/run-1"))
 
+    def test_runtime_writes_task_workspace_artifacts(self) -> None:
+        from growth_dev.team.models import AgentSpec, DomainSpec, TeamSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = TeamRuntime(
+                team=TeamSpec(team_id="team", agents=[AgentSpec(id="orchestrator", outputs=["task.yaml", "context.md"])]),
+                domain=DomainSpec(domain_id="demo"),
+                runs_dir=root / "runs",
+            )
+
+            record = runtime.run("demo", run_id="workspace-runtime-run")
+            run_dir = root / "runs" / "workspace-runtime-run"
+            workspace = json.loads((run_dir / "task_workspace.json").read_text(encoding="utf-8"))
+            workspace_md_exists = (run_dir / "task_workspace.md").exists()
+            journal_json_exists = (run_dir / "task_journal.jsonl").exists()
+            journal_md_exists = (run_dir / "task_journal.md").exists()
+            tool_context_exists = (run_dir / "tool_context" / "codex.md").exists()
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(workspace["run_id"], "workspace-runtime-run")
+        self.assertTrue(workspace_md_exists)
+        self.assertTrue(journal_json_exists)
+        self.assertTrue(journal_md_exists)
+        self.assertTrue(tool_context_exists)
+
+    def test_runtime_keeps_run_status_when_task_workspace_refresh_fails(self) -> None:
+        from growth_dev.team.models import AgentSpec, DomainSpec, TeamSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = TeamRuntime(
+                team=TeamSpec(team_id="team", agents=[AgentSpec(id="orchestrator", outputs=["task.yaml", "context.md"])]),
+                domain=DomainSpec(domain_id="demo"),
+                runs_dir=root / "runs",
+            )
+
+            with patch("growth_dev.team.runtime.refresh_task_workspace", side_effect=RuntimeError("workspace failed")):
+                record = runtime.run("demo", run_id="workspace-failure-run")
+
+            events = [json.loads(line) for line in (root / "runs" / "workspace-failure-run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(record.status, "completed")
+        self.assertIn("task_workspace_failed", [event["event"] for event in events])
+
     def test_runtime_persists_running_agent_before_stage_completes(self) -> None:
         from growth_dev.team.models import AgentRun, AgentSpec, DomainSpec, TeamRunRecord
         from growth_dev.team.runtime import TeamRuntime

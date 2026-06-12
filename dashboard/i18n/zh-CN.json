@@ -161,6 +161,11 @@
     "human_release_gate": {"title": "人工发布确认", "planned": "后续接入生产发布审批。"}
   },
   "artifacts": {
+    "task_workspace.md": {"title": "任务工作台", "description": "当前目标、阶段、slice、阻塞和下一步摘要。"},
+    "task_workspace.json": {"title": "任务工作台数据", "description": "任务工作台的结构化数据。"},
+    "task_journal.md": {"title": "任务日记", "description": "从需求到交付的结构化过程摘要。"},
+    "task_journal.jsonl": {"title": "任务日记数据", "description": "任务关键事件的 JSONL 记录。"},
+    "tool_context/codex.md": {"title": "Codex 上下文", "description": "从正式 artifacts 生成的 coding 工具上下文。"},
     "task.yaml": {"title": "任务包", "description": "系统拆解出的任务入口。"},
     "context.md": {"title": "上下文说明", "description": "需求背景和约束。"},
     "requirements/brief_analysis.json": {"title": "需求理解分析", "description": "对 brief 的复杂度、假设、问题和推荐 skills 的结构化分析。"},
@@ -181,6 +186,8 @@
     "eval.md": {"title": "验收标准", "description": "测试和评估口径。"},
     "coding_prompt.md": {"title": "实现任务书", "description": "交给 AI coding 的执行说明。"},
     "codex/implementation_trace.json": {"title": "AI 实现流程", "description": "AI coding 的执行步骤、证据和当前卡点。"},
+    "codex/failure_classification.md": {"title": "失败分类报告", "description": "解释 AI 实现是否真正阻塞、仅有警告或可以继续。"},
+    "codex/failure_classification.json": {"title": "失败分类数据", "description": "AI 实现失败/警告/通过判断的结构化证据。"},
     "codex/slice_loop_state.json": {"title": "Slice 执行状态", "description": "Codex slice-loop 的当前 slice、完成情况和连续性状态。"},
     "implementation_completion_gate.md": {"title": "整体完成判断", "description": "判断所有 slices 与验收标准是否支撑进入 Review/Test。"},
     "implementation_completion_gate.json": {"title": "整体完成判断数据", "description": "实现完成 Gate 的结构化检查结果。"},
@@ -253,6 +260,12 @@
       "staging": {"title": "Staging 准备", "description": "判断是否可以进入 staging。"},
       "production": {"title": "生产准备", "description": "复核手机采集工作台、云端素材中心、实机 smoke 和同步证据。"}
     }
+  },
+  "taskWorkspace": {
+    "currentFocus": "当前关注",
+    "nextAction": "下一步动作",
+    "recentEvent": "最近事件",
+    "activeSlice": "当前 slice"
   },
   "memoryRecall": {
     "title": "历史参考 / Skill 推荐",

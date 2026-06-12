@@ -96,6 +96,19 @@ def _build_parser() -> argparse.ArgumentParser:
     team_status.add_argument("--summary", action="store_true", help="Show a compact human-readable status")
     team_status.set_defaults(func=_cmd_team_status)
 
+    team_workspace = team_sub.add_parser("workspace", help="Show or refresh task workspace artifacts")
+    team_workspace_sub = team_workspace.add_subparsers(dest="workspace_command", required=True)
+    team_workspace_refresh = team_workspace_sub.add_parser("refresh", help="Refresh task workspace, journal, and tool context artifacts")
+    team_workspace_refresh.add_argument("--run-id", required=True)
+    team_workspace_refresh.add_argument("--runs-dir", default="runs")
+    team_workspace_refresh.add_argument("--json", action="store_true", dest="json_output")
+    team_workspace_refresh.set_defaults(func=_cmd_team_workspace_refresh)
+    team_workspace_show = team_workspace_sub.add_parser("show", help="Show task workspace artifacts")
+    team_workspace_show.add_argument("--run-id", required=True)
+    team_workspace_show.add_argument("--runs-dir", default="runs")
+    team_workspace_show.add_argument("--json", action="store_true", dest="json_output")
+    team_workspace_show.set_defaults(func=_cmd_team_workspace_show)
+
     team_report = team_sub.add_parser("report", help="Show the final report for a team run")
     team_report.add_argument("--run-id", required=True)
     team_report.add_argument("--runs-dir", default="runs")
@@ -686,6 +699,40 @@ def _cmd_team_release_readiness(args: argparse.Namespace) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(format_release_readiness(result), end="")
+    return 0
+
+
+def _cmd_team_workspace_refresh(args: argparse.Namespace) -> int:
+    from .team.workspace import format_task_workspace, refresh_task_workspace
+
+    try:
+        result = refresh_task_workspace(str(args.run_id), runs_dir=Path(args.runs_dir))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_task_workspace(result["task_workspace"]), end="")
+    return 0
+
+
+def _cmd_team_workspace_show(args: argparse.Namespace) -> int:
+    from .team.workspace import TASK_WORKSPACE_JSON, format_task_workspace, refresh_task_workspace
+
+    run_dir = Path(args.runs_dir) / str(args.run_id)
+    try:
+        if not (run_dir / TASK_WORKSPACE_JSON).exists():
+            result = refresh_task_workspace(str(args.run_id), runs_dir=Path(args.runs_dir))
+        else:
+            result = refresh_task_workspace(str(args.run_id), runs_dir=Path(args.runs_dir))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if getattr(args, "json_output", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_task_workspace(result["task_workspace"]), end="")
     return 0
 
 

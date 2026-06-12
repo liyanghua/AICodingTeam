@@ -164,8 +164,11 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "acceptance_coverage": _read_acceptance_coverage(run_dir),
         "tdd_plan": _read_tdd_plan(run_dir),
         "implementation_trace": _read_implementation_trace(run_dir),
+        "failure_classification": _read_failure_classification(run_dir),
         "slice_loop": _read_slice_loop_state(run_dir),
         "implementation_completion_gate": _read_implementation_completion_gate(run_dir),
+        "task_workspace": _read_task_workspace(run_dir),
+        "task_journal": _read_task_journal(run_dir),
         "memory_recall": _read_memory_recall(run_dir),
         "release_readiness": _read_release_readiness(run_dir),
         "github_pr": _read_github_pr(run_dir),
@@ -725,6 +728,11 @@ def _build_gate_view(record: dict[str, Any]) -> list[dict[str, Any]]:
 def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any]) -> list[dict[str, Any]]:
     declared = dict(record.get("artifacts") or {})
     ordered = [
+        ("task_workspace.md", "Task Workspace", "run"),
+        ("task_workspace.json", "Task Workspace JSON", "run"),
+        ("task_journal.md", "Task Journal", "run"),
+        ("task_journal.jsonl", "Task Journal JSONL", "run"),
+        ("tool_context/codex.md", "Codex Tool Context", "run"),
         ("task.yaml", "Task Package", "run"),
         ("context.md", "Context", "run"),
         ("requirements/brief_analysis.json", "Requirement Analysis", "run"),
@@ -751,6 +759,8 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("eval.md", "Eval / TDD", "run"),
         ("coding_prompt.md", "Coding Prompt", "run"),
         ("codex/implementation_trace.json", "Implementation Trace", "run"),
+        ("codex/failure_classification.md", "Failure Classification", "run"),
+        ("codex/failure_classification.json", "Failure Classification JSON", "run"),
         ("codex/slice_loop_state.json", "Slice Loop State", "run"),
         ("implementation_completion_gate.md", "Implementation Completion Gate", "run"),
         ("implementation_completion_gate.json", "Implementation Completion Gate JSON", "run"),
@@ -762,6 +772,8 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("memory_recall.json", "Memory Recall JSON", "run"),
         ("retrospective.md", "Run Retrospective", "run"),
         ("learning_summary.json", "Learning Summary", "run"),
+        ("finish_learning_suggestions.md", "Finish Learning Suggestions", "run"),
+        ("finish_learning_suggestions.json", "Finish Learning Suggestions JSON", "run"),
         ("release_readiness.md", "Release Readiness", "run"),
         ("release_readiness.json", "Release Readiness JSON", "run"),
         ("pr_draft.md", "PR Draft", "run"),
@@ -848,6 +860,14 @@ def _read_implementation_trace(run_dir: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _read_failure_classification(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "codex" / "failure_classification.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
 def _read_requirement_understanding(run_dir: Path) -> dict[str, Any]:
     analysis = _safe_read_json(run_dir / "requirements" / "brief_analysis.json")
     candidate = _safe_read_json(run_dir / "requirements" / "requirement_understanding.candidate.json")
@@ -901,6 +921,31 @@ def _read_implementation_completion_gate(run_dir: Path) -> dict[str, Any]:
         return {}
     payload = _safe_read_json(path)
     return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_task_workspace(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "task_workspace.json"
+    if not path.exists():
+        return {}
+    payload = _safe_read_json(path)
+    return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _read_task_journal(run_dir: Path, *, limit: int = 40) -> dict[str, Any]:
+    path = run_dir / "task_journal.jsonl"
+    if not path.exists():
+        return {"events": []}
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(_redact(payload))
+    return {"events": events[-limit:]}
 
 
 def _read_memory_recall(run_dir: Path) -> dict[str, Any]:

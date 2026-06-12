@@ -243,6 +243,38 @@ class TeamRetrospectiveTests(unittest.TestCase):
         self.assertIn("codex_exit_code:1", failed["failure_modes"])
         self.assertIn("debugging_and_error_recovery", failed["recommended_skills"])
 
+    def test_generate_run_retrospective_writes_finish_learning_suggestions(self) -> None:
+        from growth_dev.team.retrospective import generate_run_retrospective
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = _write_retrospective_run(runs_dir, "finish-learning-run")
+            requirements_dir = run_dir / "requirements"
+            requirements_dir.mkdir(exist_ok=True)
+            (requirements_dir / "capability_boundary.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "run_id": "finish-learning-run",
+                        "change_type": "extend_existing_capability",
+                        "required_new_capabilities": [{"id": "task_workspace", "summary": "Expose task workspace."}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = generate_run_retrospective("finish-learning-run", runs_dir=runs_dir)
+            suggestions = json.loads((run_dir / "finish_learning_suggestions.json").read_text(encoding="utf-8"))
+            suggestions_md = (run_dir / "finish_learning_suggestions.md").read_text(encoding="utf-8")
+            retrospective = (run_dir / "retrospective.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["artifacts"]["finish_learning_suggestions"], "finish_learning_suggestions.md")
+        self.assertTrue((suggestions["capability_update_suggestions"]))
+        self.assertTrue((suggestions["skill_update_suggestions"]))
+        self.assertIn("Capability / Skill Update Suggestions", suggestions_md)
+        self.assertIn("## Capability / Skill Update Suggestions", retrospective)
+
     def test_recommended_skills_are_registered_active_skill_ids(self) -> None:
         from growth_dev.team.retrospective import generate_run_retrospective
 

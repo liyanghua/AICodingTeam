@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..utils import read_json, write_json
+from ..utils import now_iso, read_json, write_json
 from .models import TeamRunRecord
 from .quality import evaluate_run_quality
 
@@ -48,16 +48,22 @@ def generate_run_retrospective(run_id: str, *, runs_dir: Path = Path("runs")) ->
         raise FileNotFoundError(f"team_run_record.json not found: {record_path}")
     record = TeamRunRecord.from_dict(read_json(record_path))
     learning = _learning_summary(record, run_dir)
-    markdown = _retrospective_markdown(learning)
+    suggestions = _finish_learning_suggestions(learning, run_dir)
+    markdown = _retrospective_markdown(learning, suggestions)
     write_json(run_dir / "learning_summary.json", learning)
+    write_json(run_dir / "finish_learning_suggestions.json", suggestions)
+    (run_dir / "finish_learning_suggestions.md").write_text(_finish_learning_suggestions_markdown(suggestions), encoding="utf-8")
     (run_dir / "retrospective.md").write_text(markdown, encoding="utf-8")
     return {
         "run_id": record.run_id,
         "artifacts": {
             "retrospective": "retrospective.md",
             "learning_summary": "learning_summary.json",
+            "finish_learning_suggestions": "finish_learning_suggestions.md",
+            "finish_learning_suggestions_json": "finish_learning_suggestions.json",
         },
         "learning_summary": learning,
+        "finish_learning_suggestions": suggestions,
     }
 
 
@@ -72,12 +78,19 @@ def generate_recent_run_retrospectives(*, runs_dir: Path = Path("runs"), limit: 
 
 def ensure_run_retrospective(run_id: str, *, runs_dir: Path = Path("runs")) -> dict[str, Any]:
     run_dir = _safe_run_dir(Path(runs_dir), run_id)
-    if (run_dir / "retrospective.md").exists() and (run_dir / "learning_summary.json").exists():
+    if (run_dir / "retrospective.md").exists() and (run_dir / "learning_summary.json").exists() and (run_dir / "finish_learning_suggestions.json").exists():
         learning = read_json(run_dir / "learning_summary.json")
+        suggestions = read_json(run_dir / "finish_learning_suggestions.json")
         return {
             "run_id": run_id,
-            "artifacts": {"retrospective": "retrospective.md", "learning_summary": "learning_summary.json"},
+            "artifacts": {
+                "retrospective": "retrospective.md",
+                "learning_summary": "learning_summary.json",
+                "finish_learning_suggestions": "finish_learning_suggestions.md",
+                "finish_learning_suggestions_json": "finish_learning_suggestions.json",
+            },
             "learning_summary": learning if isinstance(learning, dict) else {},
+            "finish_learning_suggestions": suggestions if isinstance(suggestions, dict) else {},
         }
     return generate_run_retrospective(run_id, runs_dir=runs_dir)
 
@@ -140,7 +153,7 @@ def _learning_summary(record: TeamRunRecord, run_dir: Path) -> dict[str, Any]:
     )
 
 
-def _retrospective_markdown(learning: dict[str, Any]) -> str:
+def _retrospective_markdown(learning: dict[str, Any], suggestions: dict[str, Any] | None = None) -> str:
     quality = learning.get("quality_findings") if isinstance(learning.get("quality_findings"), dict) else {}
     implementation = learning.get("implementation_findings") if isinstance(learning.get("implementation_findings"), dict) else {}
     review_test = learning.get("review_test_findings") if isinstance(learning.get("review_test_findings"), dict) else {}
@@ -194,6 +207,78 @@ def _retrospective_markdown(learning: dict[str, Any]) -> str:
         "## 可沉淀经验",
         "",
         *_list_lines("Checklist", learning.get("next_time_checklist", [])),
+        "",
+        "## Capability / Skill Update Suggestions",
+        "",
+        *_list_lines("Capability updates", (suggestions or {}).get("capability_update_suggestions", []), empty="暂无能力边界更新建议。"),
+        *_list_lines("Skill updates", (suggestions or {}).get("skill_update_suggestions", []), empty="暂无 Project Skill 更新建议。"),
+        *_list_lines("Failure classification", (suggestions or {}).get("failure_classification_suggestions", []), empty="暂无失败分类更新建议。"),
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _finish_learning_suggestions(learning: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    boundary = _safe_json(run_dir / "requirements" / "capability_boundary.json")
+    required_new = boundary.get("required_new_capabilities", []) if isinstance(boundary, dict) else []
+    capability_updates: list[str] = []
+    for item in required_new if isinstance(required_new, list) else []:
+        if isinstance(item, dict):
+            capability_id = str(item.get("id", "")).strip()
+            summary = str(item.get("summary", "")).strip()
+            if capability_id or summary:
+                capability_updates.append(f"Review whether `{capability_id or summary}` should be promoted into domain capabilities.")
+    if not capability_updates and learning.get("outcome") in {"accepted_and_verified", "completed_waiting_acceptance"}:
+        domain_id = str(learning.get("domain_id", ""))
+        if domain_id:
+            capability_updates.append(f"Review `{domain_id}` domain capabilities if this run introduced reusable behavior.")
+
+    skill_updates: list[str] = []
+    for skill in learning.get("recommended_skills", []) if isinstance(learning.get("recommended_skills"), list) else []:
+        skill_updates.append(f"Keep `{skill}` as a candidate hint for similar runs.")
+    if learning.get("outcome") == "accepted_and_verified":
+        skill_updates.append("Consider adding a skill hint only after the same pattern repeats across multiple accepted runs.")
+
+    failure_updates: list[str] = []
+    for mode in learning.get("failure_modes", []) if isinstance(learning.get("failure_modes"), list) else []:
+        failure_updates.append(f"Consider a failure classification rule for `{mode}` if it recurs.")
+    if not failure_updates:
+        failure_updates.append("No new failure classification rule suggested from this run.")
+
+    return _redact_payload(
+        {
+            "schema_version": 1,
+            "run_id": learning.get("run_id", ""),
+            "generated_at": now_iso(),
+            "policy": "Suggestions only; do not automatically edit domains or Project Skills.",
+            "capability_update_suggestions": _dedupe(capability_updates),
+            "skill_update_suggestions": _dedupe(skill_updates),
+            "failure_classification_suggestions": _dedupe(failure_updates),
+            "source_artifacts": [path for path in ("requirements/capability_boundary.json", "learning_summary.json", "retrospective.md") if (run_dir / path).exists()],
+        }
+    )
+
+
+def _finish_learning_suggestions_markdown(suggestions: dict[str, Any]) -> str:
+    lines = [
+        f"# Capability / Skill Update Suggestions: {suggestions.get('run_id', '')}",
+        "",
+        f"- Policy: {suggestions.get('policy', '')}",
+        "",
+        "## Capability Updates",
+        "",
+        *_list_lines("Suggestions", suggestions.get("capability_update_suggestions", []), empty="暂无能力边界更新建议。"),
+        "",
+        "## Skill Updates",
+        "",
+        *_list_lines("Suggestions", suggestions.get("skill_update_suggestions", []), empty="暂无 Project Skill 更新建议。"),
+        "",
+        "## Failure Classification",
+        "",
+        *_list_lines("Suggestions", suggestions.get("failure_classification_suggestions", []), empty="暂无失败分类更新建议。"),
+        "",
+        "## Source Artifacts",
+        "",
+        *_list_lines("Sources", suggestions.get("source_artifacts", []), empty="暂无来源产物。"),
     ]
     return "\n".join(lines).rstrip() + "\n"
 

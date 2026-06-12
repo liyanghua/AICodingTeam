@@ -277,6 +277,19 @@ console.log(JSON.stringify(vm));
             encoding="utf-8",
         )
         (run_dir / "memory_recall.md").write_text("# Historical Task Recall\n", encoding="utf-8")
+        (run_dir / "finish_learning_suggestions.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "capability_update_suggestions": ["Review domain capability updates."],
+                    "skill_update_suggestions": ["Keep context_engineering as hint."],
+                    "failure_classification_suggestions": ["No new rule."],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "finish_learning_suggestions.md").write_text("# Capability / Skill Update Suggestions\n", encoding="utf-8")
         (codex_dir / "implementation_trace.json").write_text(
             json.dumps(
                 {
@@ -305,6 +318,25 @@ console.log(JSON.stringify(vm));
             ),
             encoding="utf-8",
         )
+        (codex_dir / "failure_classification.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "stage": "coder",
+                    "classification_decision": "passed",
+                    "summary": "AI implementation completed without blocking failure evidence.",
+                    "primary_reason": "No blocking failure evidence.",
+                    "events": [],
+                    "evidence": {"exit_code": 0, "schema_valid": True, "changed_files": ["dashboard/app.js"]},
+                    "blocking_events": [],
+                    "warnings": [],
+                    "next_actions": ["Proceed to review."],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (codex_dir / "failure_classification.md").write_text("# Failure Classification\n", encoding="utf-8")
         (codex_dir / "slice_loop_state.json").write_text(
             json.dumps(
                 {
@@ -549,11 +581,13 @@ console.log(JSON.stringify(vm));
 
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
         from growth_dev.team.dashboard import build_dashboard_state
+        from growth_dev.team.workspace import refresh_task_workspace
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runs_dir = root / "runs"
             self._write_completed_run(runs_dir)
+            refresh_task_workspace("dashboard-run-1", runs_dir=runs_dir)
 
             state = build_dashboard_state("dashboard-run-1", runs_dir=runs_dir, repo_root=root)
             payload = json.dumps(state, ensure_ascii=False)
@@ -570,6 +604,7 @@ console.log(JSON.stringify(vm));
         self.assertIn("health_summary", state)
         self.assertIn("quality_report", state)
         self.assertEqual(state["implementation_trace"]["status"], "completed")
+        self.assertEqual(state["failure_classification"]["classification_decision"], "passed")
         self.assertEqual(state["requirement_understanding"]["candidate"]["model"], "gpt-5.3")
         self.assertEqual(state["requirement_understanding"]["capability_boundary"]["change_type"], "extend_existing_capability")
         self.assertEqual(state["tdd_plan"]["status"], "passed")
@@ -580,7 +615,11 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["staging_readiness"]["staging_decision"], "ready_for_staging")
         self.assertEqual(state["staging_rehearsal"]["status"], "completed")
         self.assertEqual(state["production_readiness"]["production_decision"], "ready_for_manual_production")
+        self.assertEqual(state["task_workspace"]["loop_phase"], "finish")
+        self.assertTrue(any(item["event"] == "run_completed" for item in state["task_journal"]["events"]))
         self.assertTrue(any(item["path"] == "codex/implementation_trace.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "codex/failure_classification.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "codex/failure_classification.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_quality_report.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_understanding.candidate.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/capability_boundary.md" for item in state["artifacts"]))
@@ -591,6 +630,8 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "memory_recall.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "retrospective.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "learning_summary.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "finish_learning_suggestions.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "finish_learning_suggestions.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "release_readiness.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "release_readiness.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "pr_draft.md" for item in state["artifacts"]))
@@ -605,6 +646,11 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "production_readiness.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "production_readiness.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "deployment_runbook.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "task_workspace.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "task_workspace.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "task_journal.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "task_journal.jsonl" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "tool_context/codex.md" for item in state["artifacts"]))
         self.assertIn(state["health_summary"]["status"], {"completed_ready", "completed_with_warnings"})
         self.assertTrue(state["quality_report"]["checks"])
         self.assertEqual(state["diff_summary"]["files_changed"], 2)
@@ -861,13 +907,16 @@ console.log(JSON.stringify(vm));
         self.assertIn('class="flow-timeline"', html)
         self.assertLess(html.index('class="task-list"'), html.index('class="flow-main"'))
         self.assertLess(html.index('class="flow-main"'), html.index('class="flow-timeline"'))
-        self.assertLess(html.index('class="summary-band"'), html.index('id="flow-node-detail"'))
         self.assertLess(html.index('id="flow-node-detail"'), html.index('class="request-panel"'))
         self.assertIn('id="flow-nodes"', html)
         self.assertIn('id="flow-node-detail"', html)
         self.assertIn('id="flow-artifact-actions"', html)
         self.assertIn('id="flow-artifact-preview"', html)
         self.assertIn('id="flow-engineering-evidence"', html)
+        self.assertNotIn('class="summary-band"', html)
+        self.assertNotIn('id="current-task"', html)
+        self.assertNotIn('id="task-headline"', html)
+        self.assertNotIn('id="status-pill"', html)
 
     def test_dashboard_html_defaults_to_business_copy_and_hides_engineering_controls(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -903,8 +952,21 @@ console.log(JSON.stringify(vm));
         self.assertIn(".flow-node-button.selected", css)
         self.assertIn(".task-list {\n  position: sticky;", css)
         self.assertIn("#runs {\n  overflow: auto;", css)
-        self.assertIn(".flow-main {\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr) auto;", css)
+        self.assertIn(".flow-main {\n  display: grid;\n  grid-template-rows: minmax(0, 1fr) auto;", css)
         self.assertIn(".request-panel {\n  position: sticky;", css)
+
+    def test_dashboard_task_records_are_compact_and_flow_detail_is_pinned(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("function taskRecordSummary", app_js)
+        self.assertIn("function truncateTaskSummary", app_js)
+        self.assertIn("（...）", app_js)
+        self.assertIn('title.className = "task-card-title"', app_js)
+        self.assertIn("button.title = run.brief || run.run_id || \"\";", app_js)
+        self.assertIn(".task-card-title", css)
+        self.assertIn(".flow-detail-header {\n  position: sticky;", css)
 
     def test_dashboard_flow_detail_has_i18n_and_render_helpers(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1122,8 +1184,25 @@ console.log(JSON.stringify(vm));
                 {"label": "PRD", "path": "prd.md", "scope": "run", "exists": True},
                 {"label": "Architecture Diagram", "path": "architecture_diagram.md", "scope": "run", "exists": False},
                 {"label": "Implementation Trace", "path": "codex/implementation_trace.json", "scope": "run", "exists": True},
+                {"label": "Failure Classification", "path": "codex/failure_classification.json", "scope": "run", "exists": True},
                 {"label": "Diff Evidence", "path": "codex/diff.patch", "scope": "run", "exists": True},
+                {"label": "Task Workspace", "path": "task_workspace.md", "scope": "run", "exists": True},
+                {"label": "Task Journal", "path": "task_journal.md", "scope": "run", "exists": True},
+                {"label": "Codex Tool Context", "path": "tool_context/codex.md", "scope": "run", "exists": True},
             ],
+            "task_workspace": {
+                "loop_phase": "finish",
+                "current_focus": "Run is completed; review finish artifacts and next release gates.",
+                "next_actions": ["生成发布准备判断"],
+                "slices": {"active": None, "completed": [{"id": "slice-001"}], "pending": [], "blocked": []},
+                "verification_commands": ["python3 -m unittest tests.test_dashboard -v"],
+            },
+            "task_journal": {
+                "events": [
+                    {"loop_phase": "finish", "event": "run_completed", "status": "completed", "summary": "Run completed."},
+                    {"loop_phase": "implement", "event": "slice_loop_observed", "status": "available", "summary": "Slice loop observed."},
+                ]
+            },
             "implementation_trace": {
                 "status": "completed",
                 "current_step": "finalize_result",
@@ -1200,7 +1279,9 @@ console.log(JSON.stringify(vm));
         self.assertEqual(design_stage["agentIds"], ["product", "architect", "ux", "qa"])
         self.assertTrue(any(artifact["path"] == "prd.md" for artifact in design_stage["artifacts"]))
         self.assertTrue(any(artifact["path"] == "codex/implementation_trace.json" for artifact in implementation_stage["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "codex/failure_classification.json" for artifact in implementation_stage["artifacts"]))
         self.assertTrue(any(artifact["path"] == "codex/diff.patch" for artifact in implementation_stage["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "tool_context/codex.md" for artifact in implementation_stage["artifacts"]))
         self.assertEqual(design_stage["artifacts"][0]["title"], "PRD")
         self.assertIn("代码差异", {artifact["title"] for artifact in implementation_stage["artifacts"]})
         delivery_node = vm["flowNodes"][4]
@@ -1211,6 +1292,8 @@ console.log(JSON.stringify(vm));
         self.assertEqual(delivery_node["status"], "waiting_confirmation")
         self.assertTrue(any(action["id"] == "acceptance" for action in delivery_node["actions"]))
         self.assertTrue(any(artifact["path"] == "final_report.md" for artifact in delivery_node["artifacts"]))
+        self.assertTrue(any(artifact["path"] == "task_workspace.md" for artifact in delivery_node["artifacts"]))
+        self.assertIn("当前关注", "\n".join(delivery_node["insights"]))
         self.assertTrue(any(action["id"] == "release_readiness" for action in release_node["actions"]))
         self.assertTrue(any(action["id"] == "github_pr" for action in github_node["actions"]))
         self.assertTrue(any(action["id"] == "github_ci" for action in github_node["actions"]))
@@ -1219,6 +1302,7 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(action["id"] == "production_readiness" for action in production_node["actions"]))
         self.assertIn("engineeringEvidence", vm["flowNodes"][2])
         self.assertTrue(vm["flowNodes"][2]["engineeringEvidence"]["events"])
+        self.assertTrue(vm["flowNodes"][2]["engineeringEvidence"]["journalEvents"])
 
     def test_business_view_model_marks_requirement_stage_failed_from_requirement_gate(self) -> None:
         run = {
