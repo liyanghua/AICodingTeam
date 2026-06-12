@@ -13,6 +13,9 @@ to explain what happened.
   APIs, add to cart, place orders, or touch payment flows.
 - Stop immediately on login, captcha, security verification, cart, order, or
   payment pages.
+- "Human-compatible" interaction means conservative public-UI gestures, readiness
+  checks, and low retry counts. It must not mean stealth, fingerprint spoofing,
+  captcha handling, or any attempt to avoid platform risk controls.
 
 ## Required Flow
 
@@ -95,13 +98,74 @@ to explain what happened.
    - Scan at most 5 hero media entries. If none is a non-video image, record
      `taobao_detail_non_video_image_not_found`, keep the result-card image, and
      do not save the video frame as a detail asset.
-   - After a non-video image is selected, long press `detail_main_image`, tap
-     `保存图片` / `保存到相册` when visible, otherwise fall back to calibrated
-     `save_image_button`.
+   - After a non-video image is selected, use the Detail Image Save Interaction
+     Contract below. In short: wait for the hero image to be stable, tap the
+     visible hero image once to activate the image/gallery area, then long press
+     the same visible image. Do not immediately long-press after page transition.
    - Use media-store diff to pull the newly saved image from the phone into
      `images/`; the final detail asset must be this pulled image, not a
      screenshot.
    - Press detail back and gate on result page before the next rank.
+
+## Detail Image Save Interaction Contract
+
+This contract exists because a human can manually tap/long-press the first
+non-video image and save it, while a too-fast or poorly targeted automation
+gesture may trigger login or another risk page. The goal is to make the program
+act like a careful public-UI user, not to bypass login or risk controls.
+
+1. Stable hero-image gate.
+   - After `taobao_detail_non_video_image_selected`, wait until the detail page
+     hierarchy is stable before touching the image.
+   - Stability means the current hierarchy still classifies as `detail`, has no
+     risk markers, and the hero media still classifies as non-video image after
+     a short re-check.
+   - Record `taobao_detail_image_stable_before_save`.
+
+2. Target the visible hero image, not a blind coordinate.
+   - Prefer the UI hierarchy bounds of `content-desc="商品图片"` or
+     `com.taobao.taobao:id/iv_image_content`.
+   - If hierarchy bounds are unavailable, fall back to calibrated
+     `detail_main_image`.
+   - The tap/long-press point must be inside the hero image area and outside
+     bottom action regions such as `加入购物车` / `立即购买`.
+
+3. Activation tap.
+   - Tap the selected non-video hero image once.
+   - Record `taobao_tap_detail_main_image` with `point_source`.
+   - Wait for the page to settle after the tap.
+   - If the tap opens a full-screen image/gallery preview, continue there only
+     after preview/image markers are visible and no risk markers appear.
+   - If login/captcha/security appears after the tap, stop the current rank with
+     `taobao_detail_save_login_triggered`; do not retry or attempt to close it.
+
+4. Long press after activation.
+   - Long press the same hero image or preview image point after the activation
+     wait.
+   - Record `taobao_long_press_detail_main_image`.
+   - Wait for a save menu marker. Valid markers are `保存图片` or `保存到相册`.
+   - If login/captcha/security appears after long press, stop the current rank
+     with `taobao_detail_save_login_triggered`; do not retry.
+
+5. Save menu click.
+   - Prefer detected save-menu bounds from UI hierarchy.
+   - Fall back to calibrated `save_image_button` only if the save menu is visible
+     but no clickable bounds can be parsed.
+   - Record `taobao_tap_save_image_button`.
+
+6. Retry limit.
+   - At most one save retry is allowed, and only when no login/risk marker is
+     present and no new media appears after a visible save-menu click.
+   - The retry must repeat the same stable gate -> activation tap -> long press
+     sequence.
+   - Never spam long-press gestures.
+
+7. Manual handoff.
+   - If a logged-in human can save but automation triggers login, keep the
+     result-card asset, write debug screenshot/XML, mark the detail asset as
+     failed for this rank, and surface a manual handoff reason.
+   - The collector must not try to log in, dismiss login, solve verification, or
+     continue touching the save flow after a login/risk marker appears.
 
 ## Page-State Gates
 
@@ -136,6 +200,8 @@ taobao_submit_keyword_search
 taobao_keyword_search_results_reached
 taobao_tap_result_card
 taobao_detail_non_video_image_selected
+taobao_detail_image_stable_before_save
+taobao_tap_detail_main_image
 taobao_long_press_detail_main_image
 taobao_tap_save_image_button
 taobao_pull_saved_detail_image
@@ -152,6 +218,7 @@ taobao_keyword_search_results_not_reached
 taobao_result_list_not_ready
 taobao_detail_page_not_reached
 taobao_detail_non_video_image_not_found
+taobao_detail_save_login_triggered
 taobao_detail_save_menu_not_found
 taobao_detail_save_no_new_media
 taobao_risk_prompt_detected
@@ -209,6 +276,11 @@ Tests must cover:
 - Result-page recognition failure stores XML/screenshot and observed markers.
 - Detail page first hero media is a video: flow swipes to the next hero media
   before long-pressing.
+- Detail page non-video image save first waits for a stable hero image, taps the
+  visible hero image once, then long-presses the same image point.
+- If activation tap or long press triggers login/security verification, the flow
+  records `taobao_detail_save_login_triggered`, keeps existing result-card
+  output, and stops the detail-save attempt without retrying.
 - Detail page all scanned hero media entries are videos: flow does not save a
   detail asset and records `taobao_detail_non_video_image_not_found`.
 - Save menu is missing: flow records `taobao_detail_save_menu_not_found`.

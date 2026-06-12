@@ -28,6 +28,16 @@ function statusClass(tone) {
   return `status-${tone || "muted"}`;
 }
 
+function truncateTaskSummary(value, maxLength = 42) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}（...）`;
+}
+
+function taskRecordSummary(run) {
+  return truncateTaskSummary(run.brief || run.domain_id || run.run_id || t("app.unknown"));
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json();
@@ -78,7 +88,9 @@ function renderRunList(runs) {
     button.addEventListener("click", () => selectRun(run.run_id));
 
     const title = document.createElement("strong");
-    title.textContent = run.brief || run.domain_id || t("app.unknown");
+    title.className = "task-card-title";
+    title.textContent = taskRecordSummary(run);
+    button.title = run.brief || run.run_id || "";
     const meta = document.createElement("span");
     meta.className = "meta";
     meta.textContent = run.run_id;
@@ -109,13 +121,6 @@ async function refreshRun() {
 }
 
 function renderBusinessRun(vm) {
-  $("current-task").textContent = vm.brief || t("app.emptySelection");
-  $("task-headline").textContent = vm.headline || "";
-
-  const pill = $("status-pill");
-  pill.className = `status-pill ${statusClass(view.lookup(state.i18n, `status.${vm.status}.tone`, "muted"))}`;
-  pill.textContent = vm.statusLabel;
-
   renderAcceptance(vm);
   renderReleaseReadiness(vm);
   renderGithubPrCi(vm);

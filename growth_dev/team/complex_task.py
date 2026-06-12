@@ -117,7 +117,7 @@ def generate_complex_task_artifacts(
     context_pack = _context_pack_markdown(artifact_brief, domain, artifact_inputs, analysis, normalized)
     (run_dir / "context_pack.md").write_text(context_pack, encoding="utf-8")
 
-    slices = _task_slices(acceptance, artifact_inputs)
+    slices = _task_slices(acceptance, artifact_inputs, domain)
     for item in slices:
         (slices_dir / f"{item['id']}.yaml").write_text(_slice_yaml(item), encoding="utf-8")
 
@@ -461,8 +461,8 @@ def _acceptance_criteria(brief: str, domain: DomainSpec, inputs: dict[str, Any],
     return criteria
 
 
-def _task_slices(acceptance: list[dict[str, Any]], inputs: dict[str, Any]) -> list[dict[str, Any]]:
-    allowed_paths = _string_list(inputs.get("allowed_paths")) or ["growth_dev/", "dashboard/", "tests/", "README.md", "AGENTS.md"]
+def _task_slices(acceptance: list[dict[str, Any]], inputs: dict[str, Any], domain: DomainSpec) -> list[dict[str, Any]]:
+    allowed_paths = _string_list(inputs.get("allowed_paths")) or _string_list(domain.metadata.get("allowed_paths")) or ["growth_dev/", "dashboard/", "tests/", "README.md", "AGENTS.md"]
     verification_commands = _string_list(inputs.get("verification_commands")) or ["python3 -m unittest discover -s tests -v"]
     slices: list[dict[str, Any]] = []
     for index, criterion in enumerate(acceptance, start=1):

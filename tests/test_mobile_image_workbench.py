@@ -24,6 +24,36 @@ def _restore_env(name: str, value: str | None) -> None:
 
 
 class MobileImageWorkbenchTests(unittest.TestCase):
+    def test_domain_pack_allows_workbench_keyword_ui_planning_boundary(self) -> None:
+        from growth_dev.team.domain import load_domain_spec
+
+        repo_root = Path(__file__).resolve().parents[1]
+        spec = load_domain_spec("xhs_mobile_collection", domains_dir=repo_root / "domains")
+
+        allowed_paths = set(spec.metadata["allowed_paths"])
+        self.assertIn(
+            "third_party/mobile_image_workbench/backend/mobile_image_workbench/",
+            allowed_paths,
+        )
+        self.assertIn("third_party/mobile_image_workbench/frontend/src/", allowed_paths)
+        self.assertIn("third_party/mobile_image_workbench/README.md", allowed_paths)
+        self.assertIn("tests/test_mobile_image_workbench.py", allowed_paths)
+        self.assertNotIn("third_party/mobile_asset_center/data/", allowed_paths)
+        self.assertNotIn("third_party/mobile_image_workbench/runs/", allowed_paths)
+
+        capabilities = spec.metadata["capabilities"]
+        planned = {item["id"]: item for item in capabilities.get("planned", [])}
+        unsupported_ids = {item["id"] for item in capabilities["unsupported"]}
+        self.assertIn("workbench_keyword_ui", planned)
+        self.assertNotIn("workbench_keyword_ui", unsupported_ids)
+        self.assertIn("keyword_only_collection", planned["workbench_keyword_ui"]["depends_on"])
+        self.assertIn("collector keyword-only", planned["workbench_keyword_ui"]["summary"])
+        self.assertIn("workbench UI job entry", planned["workbench_keyword_ui"]["summary"])
+
+        verification_commands = "\n".join(spec.metadata["verification_commands"])
+        self.assertIn("python3 -m unittest tests.test_mobile_image_workbench -v", verification_commands)
+        self.assertIn("python3 -m unittest tests.test_xhs_collector -v", verification_commands)
+
     def test_filesystem_object_storage_round_trips_private_assets(self) -> None:
         from third_party.mobile_image_workbench.backend.mobile_image_workbench.storage import (
             FilesystemObjectStorageClient,

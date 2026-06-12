@@ -57,7 +57,7 @@ class FakeTaobaoDevice:
 
     def long_press_profile_point(self, name: str, _point: tuple[float, float], duration: float = 1.0) -> None:
         self.actions.append(("long_press", name))
-        if name == "detail_main_image":
+        if name in {"detail_main_image", "detail_main_image_detected"}:
             self.state = "save_menu"
 
     def swipe_profile_points(
@@ -445,13 +445,177 @@ class TaobaoCollectorTests(unittest.TestCase):
             self.assertEqual(manifest.status, "completed")
             self.assertEqual([asset.image_type for asset in manifest.assets], ["result_card", "detail_main"])
             self.assertEqual(media_store.pulled[0][0], "/sdcard/Pictures/taobao/saved_1.jpg")
-            action_names = [action for action, _ in device.actions]
-            self.assertLess(action_names.index("swipe"), action_names.index("long_press"))
+            actions = [action for action, _ in device.actions]
+            self.assertLess(actions.index("swipe"), actions.index("long_press"))
+            self.assertIn(("tap", "detail_main_image"), device.actions)
+            detail_tap_index = device.actions.index(("tap", "detail_main_image"))
+            self.assertLess(detail_tap_index, actions.index("long_press"))
             events = (manifest.output_dir / "step_events.jsonl").read_text(encoding="utf-8")
             self.assertIn("taobao_detail_media_video_detected", events)
             self.assertIn("taobao_swipe_detail_media_next", events)
             self.assertIn("taobao_detail_non_video_image_selected", events)
+            self.assertIn("taobao_detail_image_stable_before_save", events)
+            self.assertIn("taobao_tap_detail_main_image", events)
             self.assertIn("taobao_pull_saved_detail_image", events)
+
+    def test_detail_save_uses_detected_hero_image_bounds_before_long_press(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
+        from third_party.taobao_collector.taobao_collector.models import (
+            TaobaoConfig,
+            TaobaoRequest,
+        )
+
+        class HeroBoundsDevice(FakeTaobaoDevice):
+            def dump_hierarchy(self) -> str:
+                if self.state == "detail":
+                    return """
+                    <hierarchy>
+                      <node package="com.taobao.taobao" text="宝贝详情" bounds="[0,0][1200,2400]" />
+                      <node package="com.taobao.taobao"
+                            resource-id="com.taobao.taobao:id/iv_image_content"
+                            content-desc="商品图片"
+                            bounds="[120,240][1080,1200]" />
+                      <node package="com.taobao.taobao" text="加入购物车" bounds="[0,2100][600,2400]" />
+                      <node package="com.taobao.taobao" text="立即购买" bounds="[600,2100][1200,2400]" />
+                    </hierarchy>
+                    """
+                if self.state == "save_menu":
+                    return """
+                    <hierarchy>
+                      <node package="com.taobao.taobao" text="保存图片" bounds="[240,1500][960,1620]" />
+                      <node package="com.taobao.taobao" text="取消" bounds="[240,1700][960,1820]" />
+                    </hierarchy>
+                    """
+                return super().dump_hierarchy()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = root / "taobao_coordinates.json"
+            profile.write_text(json.dumps(_profile_dict()), encoding="utf-8")
+            config = TaobaoConfig.from_dict(
+                {
+                    "mode": "keyword_search",
+                    "top_n": 1,
+                    "output_root": str(root / "runs"),
+                    "coordinate_profile": str(profile),
+                    "wait_timeout_seconds": 0,
+                }
+            )
+            device = HeroBoundsDevice()
+
+            manifest = run_taobao_flow(
+                TaobaoRequest(mode="keyword_search", keyword="红白格桌垫", top_n=1),
+                config,
+                device,
+                media_store=FakeTaobaoMediaStore(),
+            )
+
+            self.assertEqual(manifest.status, "completed")
+            self.assertIn(("tap", "detail_main_image_detected"), device.actions)
+            self.assertIn(("long_press", "detail_main_image_detected"), device.actions)
+            events = (manifest.output_dir / "step_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"point_source": "detected_hero_image"', events)
+
+    def test_detail_save_stops_when_activation_tap_triggers_login(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
+        from third_party.taobao_collector.taobao_collector.models import (
+            TaobaoConfig,
+            TaobaoRequest,
+        )
+
+        class LoginAfterTapDevice(FakeTaobaoDevice):
+            def tap_profile_point(self, name: str, point: tuple[float, float]) -> None:
+                self.actions.append(("tap", name))
+                if name.startswith("result_card"):
+                    self.state = "detail"
+                    return
+                if name == "detail_main_image":
+                    self.state = "risk"
+                    return
+                super().tap_profile_point(name, point)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = root / "taobao_coordinates.json"
+            profile.write_text(json.dumps(_profile_dict()), encoding="utf-8")
+            config = TaobaoConfig.from_dict(
+                {
+                    "mode": "keyword_search",
+                    "top_n": 1,
+                    "output_root": str(root / "runs"),
+                    "coordinate_profile": str(profile),
+                    "wait_timeout_seconds": 0,
+                }
+            )
+            device = LoginAfterTapDevice()
+
+            manifest = run_taobao_flow(
+                TaobaoRequest(mode="keyword_search", keyword="红白格桌垫", top_n=1),
+                config,
+                device,
+                media_store=FakeTaobaoMediaStore(),
+            )
+
+            self.assertEqual(manifest.status, "partial")
+            self.assertEqual([asset.image_type for asset in manifest.assets], ["result_card"])
+            self.assertIn(
+                "taobao_detail_save_login_triggered",
+                {event["event"] for event in manifest.risk_events},
+            )
+            self.assertNotIn(("long_press", "detail_main_image"), device.actions)
+            self.assertNotIn(("tap", "save_image_button"), device.actions)
+
+    def test_detail_save_stops_when_long_press_triggers_login_without_retry(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
+        from third_party.taobao_collector.taobao_collector.models import (
+            TaobaoConfig,
+            TaobaoRequest,
+        )
+
+        class LoginAfterLongPressDevice(FakeTaobaoDevice):
+            def long_press_profile_point(
+                self,
+                name: str,
+                _point: tuple[float, float],
+                duration: float = 1.0,
+            ) -> None:
+                self.actions.append(("long_press", name))
+                if name == "detail_main_image":
+                    self.state = "risk"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = root / "taobao_coordinates.json"
+            profile.write_text(json.dumps(_profile_dict()), encoding="utf-8")
+            config = TaobaoConfig.from_dict(
+                {
+                    "mode": "keyword_search",
+                    "top_n": 1,
+                    "output_root": str(root / "runs"),
+                    "coordinate_profile": str(profile),
+                    "wait_timeout_seconds": 0,
+                }
+            )
+            device = LoginAfterLongPressDevice()
+
+            manifest = run_taobao_flow(
+                TaobaoRequest(mode="keyword_search", keyword="红白格桌垫", top_n=1),
+                config,
+                device,
+                media_store=FakeTaobaoMediaStore(),
+            )
+
+            self.assertEqual(manifest.status, "partial")
+            self.assertEqual([asset.image_type for asset in manifest.assets], ["result_card"])
+            self.assertIn(
+                "taobao_detail_save_login_triggered",
+                {event["event"] for event in manifest.risk_events},
+            )
+            self.assertEqual(
+                [action for action, point in device.actions if action == "long_press"],
+                ["long_press"],
+            )
+            self.assertNotIn(("tap", "save_image_button"), device.actions)
 
     def test_detail_gallery_selected_with_unselected_video_tab_is_not_video(self) -> None:
         from third_party.taobao_collector.taobao_collector.flow import (

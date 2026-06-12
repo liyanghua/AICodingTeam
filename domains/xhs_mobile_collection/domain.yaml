@@ -66,7 +66,11 @@ allowed_paths:
   - third_party/xhs_collector/xhs_collector/
   - third_party/xhs_collector/config/
   - third_party/xhs_collector/README.md
+  - third_party/mobile_image_workbench/backend/mobile_image_workbench/
+  - third_party/mobile_image_workbench/frontend/src/
+  - third_party/mobile_image_workbench/README.md
   - tests/test_xhs_collector.py
+  - tests/test_mobile_image_workbench.py
   - domains/xhs_mobile_collection/
 modification_policy:
   default: deny
@@ -85,6 +89,7 @@ artifact_contract:
   collected_items: items/
   run_root: third_party/xhs_collector/runs/xhs_collector/{collector_run_id}
 verification_commands:
+  - python3 -m unittest tests.test_mobile_image_workbench -v
   - python3 -m unittest tests.test_xhs_collector -v
   - cd third_party/xhs_collector && python3 -m xhs_collector run-keyword --help
   - cd third_party/xhs_collector && python3 -m xhs_collector validate --input "../../input_image/买家秀场景图/桌垫买家秀_TOP10关键词组合.xlsx" --config config/xhs_collector.json

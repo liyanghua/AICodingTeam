@@ -158,7 +158,6 @@ h3 {
 .request-panel,
 .task-list,
 .panel,
-.summary-band,
 .engineering-card {
   border: var(--component-card-border);
   border-radius: var(--radius-card);
@@ -260,7 +259,7 @@ h3 {
 
 .flow-main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 14px;
   min-height: calc(100vh - 28px);
   max-height: calc(100vh - 28px);
@@ -335,10 +334,17 @@ h3 {
 }
 
 .flow-detail-header {
+  position: sticky;
+  top: -14px;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
   align-items: flex-start;
+  margin: -14px -14px 0;
+  border-bottom: var(--component-card-border);
+  background: var(--color-surface);
+  padding: 14px;
 }
 
 .flow-detail-grid {
@@ -464,15 +470,6 @@ h3 {
   display: none;
 }
 
-.summary-band {
-  display: flex;
-  min-height: 82px;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 14px;
-}
-
 .panel {
   padding: 14px;
 }
@@ -519,8 +516,19 @@ h3 {
   background: #f9fbfc;
 }
 
-.task-card strong {
-  overflow-wrap: anywhere;
+.task-card-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-card .meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .implementation-flow {
@@ -1025,7 +1033,6 @@ h3 {
     margin: var(--space-2) auto;
   }
 
-  .summary-band,
   .form-actions {
     align-items: stretch;
     flex-direction: column;

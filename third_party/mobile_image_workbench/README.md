@@ -48,6 +48,16 @@ npm run dev
 
 ## CLI
 
+## 关键词采集入口状态
+
+当前已验证的关键词采集能力在 `xhs_collector` CLI：
+
+```bash
+python3 -m xhs_collector run-keyword --keyword "<关键词>" --top-n <N> --config config/xhs_collector.json --mode deterministic
+```
+
+`mobile_image_workbench` 的关键词-only UI job entry 已纳入 `xhs_mobile_collection` domain pack 的允许修改边界，后续实现应复用该 collector keyword-only 能力，并继续保持手动登录、不绕验证码、不使用私有接口的安全边界。
+
 配置文件模式：
 
 ```bash

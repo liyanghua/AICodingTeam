@@ -20,13 +20,25 @@ supported:
     verification_commands:
       - cd third_party/xhs_collector && python3 -m xhs_collector run-keyword --help
       - python3 -m unittest tests.test_xhs_collector -v
+planned:
+  - id: workbench_keyword_ui
+    summary: Planned workbench UI job entry for collector keyword-only collection; the existing capability is the xhs_collector run-keyword CLI, and this new capability will expose it through mobile_image_workbench without changing manual-login safety gates.
+    entrypoint: mobile_image_workbench UI job type for keyword-only collection
+    depends_on:
+      - keyword_only_collection
+    evidence:
+      - third_party/mobile_image_workbench/backend/mobile_image_workbench/
+      - third_party/mobile_image_workbench/frontend/src/
+      - third_party/mobile_image_workbench/README.md
+      - tests/test_mobile_image_workbench.py
+    verification_commands:
+      - python3 -m unittest tests.test_mobile_image_workbench -v
+      - python3 -m unittest tests.test_xhs_collector -v
 unsupported:
   - id: captcha_or_risk_bypass
     summary: Captcha solving, risk-control bypass, fingerprint spoofing, proxy rotation, and anti-bot evasion are prohibited.
   - id: automatic_login
     summary: XHS login remains manual and must not be automated.
-  - id: workbench_keyword_ui
-    summary: The mobile image workbench does not yet expose a production UI job type for keyword-only collection.
 manual_gates:
   - doctor_before_real_device_smoke
   - manual_login_confirmed

@@ -604,8 +604,42 @@ def _attempt_detail_image_save(
     query: str,
     save_attempt: int,
 ) -> dict | None:
-    point = profile.point("detail_main_image")
-    device.long_press_profile_point("detail_main_image", point, duration=1.0)
+    target = _wait_for_stable_detail_image(
+        manifest=manifest,
+        device=device,
+        profile=profile,
+        config=config,
+        rank=rank,
+        query=query,
+        save_attempt=save_attempt,
+    )
+    if isinstance(target, dict):
+        return target
+    point_name, point_source, point = target
+    device.tap_profile_point(point_name, point)
+    _event(
+        manifest,
+        "taobao_tap_detail_main_image",
+        {
+            "rank": rank,
+            "query": query,
+            "point": list(point),
+            "point_source": point_source,
+            "save_attempt": save_attempt,
+        },
+    )
+    if config.throttle_seconds:
+        time.sleep(min(config.throttle_seconds, 0.5))
+    login_failure = _detail_save_login_failure_if_risk(
+        device,
+        rank=rank,
+        query=query,
+        save_attempt=save_attempt,
+        phase="activation_tap",
+    )
+    if login_failure is not None:
+        return login_failure
+    device.long_press_profile_point(point_name, point, duration=1.0)
     _event(
         manifest,
         "taobao_long_press_detail_main_image",
@@ -613,11 +647,21 @@ def _attempt_detail_image_save(
             "rank": rank,
             "query": query,
             "point": list(point),
+            "point_source": point_source,
             "save_attempt": save_attempt,
         },
     )
     if config.throttle_seconds:
         time.sleep(min(config.throttle_seconds, 0.5))
+    login_failure = _detail_save_login_failure_if_risk(
+        device,
+        rank=rank,
+        query=query,
+        save_attempt=save_attempt,
+        phase="long_press",
+    )
+    if login_failure is not None:
+        return login_failure
     hierarchy = device.dump_hierarchy()
     if not _has_any(hierarchy, SAVE_MENU_MARKERS):
         return {
@@ -650,6 +694,101 @@ def _attempt_detail_image_save(
     if record is not None:
         record()
     return None
+
+
+def _wait_for_stable_detail_image(
+    *,
+    manifest: TaobaoManifest,
+    device: TaobaoDevice,
+    profile: CoordinateProfile,
+    config: TaobaoConfig,
+    rank: int,
+    query: str,
+    save_attempt: int,
+) -> tuple[str, str, tuple[float, float]] | dict:
+    deadline = time.monotonic() + min(config.wait_timeout_seconds, 1.0)
+    while True:
+        hierarchy = device.dump_hierarchy()
+        login_failure = _detail_save_login_failure_from_hierarchy(
+            hierarchy,
+            rank=rank,
+            query=query,
+            save_attempt=save_attempt,
+            phase="stable_gate",
+        )
+        if login_failure is not None:
+            return login_failure
+        detected_point = detect_detail_main_image_point(hierarchy)
+        has_detail_surface = _has_any(hierarchy, DETAIL_MARKERS) or detected_point is not None
+        if has_detail_surface and not is_detail_video_media(hierarchy):
+            if detected_point is not None:
+                point_name = "detail_main_image_detected"
+                point_source = "detected_hero_image"
+                point = detected_point
+            else:
+                point_name = "detail_main_image"
+                point_source = "coordinate_profile"
+                point = profile.point("detail_main_image")
+            _event(
+                manifest,
+                "taobao_detail_image_stable_before_save",
+                {
+                    "rank": rank,
+                    "query": query,
+                    "point": [round(point[0], 4), round(point[1], 4)],
+                    "point_source": point_source,
+                    "save_attempt": save_attempt,
+                },
+            )
+            return point_name, point_source, point
+        if config.wait_timeout_seconds <= 0 or time.monotonic() >= deadline:
+            return {
+                "event": "taobao_detail_save_menu_not_found",
+                "rank": rank,
+                "query": query,
+                "save_attempt": save_attempt,
+                "reason": "detail image was not stable before save",
+            }
+        time.sleep(0.25)
+
+
+def _detail_save_login_failure_if_risk(
+    device: TaobaoDevice,
+    *,
+    rank: int,
+    query: str,
+    save_attempt: int,
+    phase: str,
+) -> dict | None:
+    return _detail_save_login_failure_from_hierarchy(
+        device.dump_hierarchy(),
+        rank=rank,
+        query=query,
+        save_attempt=save_attempt,
+        phase=phase,
+    )
+
+
+def _detail_save_login_failure_from_hierarchy(
+    hierarchy: str,
+    *,
+    rank: int,
+    query: str,
+    save_attempt: int,
+    phase: str,
+) -> dict | None:
+    matched_risks = _matched_risk_markers(hierarchy, allow_detail_buy_markers=True)
+    if not matched_risks:
+        return None
+    return {
+        "event": "taobao_detail_save_login_triggered",
+        "rank": rank,
+        "query": query,
+        "save_attempt": save_attempt,
+        "phase": phase,
+        "matched_markers": matched_risks,
+        "reason": "login or security prompt appeared during detail image save",
+    }
 
 
 def is_detail_video_media(hierarchy: str) -> bool:
@@ -711,6 +850,38 @@ def _is_hero_video_node(node: ET.Element, label: str, resource_id: str) -> bool:
     return any(marker in label for marker in DETAIL_VIDEO_MARKERS) or bool(
         re.search(r"\b\d{1,2}:\d{2}\b", label)
     )
+
+
+def detect_detail_main_image_point(hierarchy: str) -> tuple[float, float] | None:
+    try:
+        root = ET.fromstring(hierarchy)
+    except ET.ParseError:
+        return None
+    screen = _screen_size_from_xml(root)
+    if screen is None:
+        return None
+    width, height = screen
+    for node in root.iter():
+        if node.attrib.get("package") not in {"", "com.taobao.taobao"}:
+            continue
+        if node.attrib.get("visible-to-user") == "false":
+            continue
+        desc = node.attrib.get("content-desc", "")
+        resource_id = node.attrib.get("resource-id", "")
+        if desc != "商品图片" and not resource_id.endswith(":id/iv_image_content"):
+            continue
+        bounds = _parse_bounds(node.attrib.get("bounds", ""))
+        if bounds is None:
+            continue
+        x1, y1, x2, y2 = bounds
+        if x2 <= x1 or y2 <= y1:
+            continue
+        center_x = (x1 + x2) / 2 / width
+        center_y = (y1 + y2) / 2 / height
+        if center_y >= 0.8:
+            continue
+        return center_x, center_y
+    return None
 
 
 def detect_save_image_menu_point(hierarchy: str) -> tuple[float, float] | None:

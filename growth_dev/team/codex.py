@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -34,6 +35,19 @@ CODEX_RESPONSE_SCHEMA: dict[str, Any] = {
 
 DEFAULT_ALLOWED_PATHS = ["growth_dev/", "dashboard/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md", "DESIGN.md"]
 DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
+TASK_ALLOWED_PATH_MARKERS = ("allowed_paths", "allowed paths", "allowed_files", "allowed files", "允许路径")
+TASK_ALLOWED_PATH_SAFE_ROOTS = ("third_party", "tests", "domains", "growth_dev", "dashboard", "skills", "docs", "tasks", ".github")
+TASK_ALLOWED_PATH_SAFE_ROOT_FILES = ("README.md", "AGENTS.md", "DESIGN.md", "pyproject.toml")
+TASK_ALLOWED_PATH_FORBIDDEN_PREFIXES = (
+    "runs/",
+    "third_party/mobile_asset_center/data/",
+    "third_party/mobile_image_workbench/runs/",
+    "third_party/xhs_collector/runs/",
+)
+TASK_ALLOWED_PATH_FORBIDDEN_SUFFIXES = (".key", ".pem", ".p12", ".pfx")
+TASK_ALLOWED_PATH_PATTERN = re.compile(
+    r"(?<![\w./-])(?:(?:third_party|tests|domains|growth_dev|dashboard|skills|docs|tasks|\.github)(?:/[\w.-]+)+/?|(?:README|AGENTS|DESIGN)\.md|pyproject\.toml)(?![\w./-])"
+)
 UPSTREAM_CONTEXT_ARTIFACTS = [
     "task.yaml",
     "context.md",
@@ -48,6 +62,8 @@ UPSTREAM_CONTEXT_ARTIFACTS = [
 ]
 
 IMPLEMENTATION_TRACE_PATH = "codex/implementation_trace.json"
+FAILURE_CLASSIFICATION_JSON_PATH = "codex/failure_classification.json"
+FAILURE_CLASSIFICATION_MD_PATH = "codex/failure_classification.md"
 SLICE_LOOP_STATE_PATH = "codex/slice_loop_state.json"
 IMPLEMENTATION_COMPLETION_GATE_JSON_PATH = "implementation_completion_gate.json"
 IMPLEMENTATION_COMPLETION_GATE_MD_PATH = "implementation_completion_gate.md"
@@ -91,11 +107,26 @@ IMPLEMENTATION_RISK_PATTERNS = [
     "private api reverse",
 ]
 
+SAFE_RISK_CONTEXT_MARKERS = [
+    "prohibited",
+    "forbidden",
+    "unsupported",
+    "do not",
+    "must not",
+    "no_",
+    "not allowed",
+    "禁止",
+    "不支持",
+    "不允许",
+    "不得",
+]
+
 NON_BLOCKING_CODEX_RISK_NOTE_MARKERS = [
     ("outside the high-level allowed list", "nearby supporting location"),
     ("outside the high-level allowed list", "required to implement"),
     ("nearby_supporting", "required"),
     ("nearby supporting", "required"),
+    ("modified tests/", "supporting test boundary", "no runs", "env-file", "remote key"),
 ]
 
 
@@ -337,7 +368,9 @@ class CodexExecutor:
             _attach_slice_loop_artifacts(record, slice_loop_output_paths)
             _finalize_slice_loop_failure(self.run_dir, self.codex_dir, slice_loop, "codex_binary_missing")
             _trace_fail(trace, "check_executor", "Codex 执行器不可用。", record["risk_events"], record["blockers"], "fix_executor")
+            trace["failure_classification"] = record.get("failure_classification", {})
             _write_implementation_trace(trace_path, trace)
+            output_paths.extend([FAILURE_CLASSIFICATION_JSON_PATH, FAILURE_CLASSIFICATION_MD_PATH])
             output_paths.append(context.write_json("code_run_record.json", record))
             return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
         _trace_step(trace, "check_executor", "completed", "本地 Codex 执行器可用。")
@@ -353,7 +386,9 @@ class CodexExecutor:
             _attach_slice_loop_artifacts(record, slice_loop_output_paths)
             _finalize_slice_loop_failure(self.run_dir, self.codex_dir, slice_loop, record["risk_events"][0])
             _trace_fail(trace, "prepare_worktree", "隔离工作区准备失败。", record["risk_events"], record["blockers"], "fix_worktree")
+            trace["failure_classification"] = record.get("failure_classification", {})
             _write_implementation_trace(trace_path, trace)
+            output_paths.extend([FAILURE_CLASSIFICATION_JSON_PATH, FAILURE_CLASSIFICATION_MD_PATH])
             output_paths.append(context.write_json("code_run_record.json", record))
             return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
         _trace_step(trace, "prepare_worktree", "completed", "隔离 worktree 已准备好。")
@@ -391,22 +426,41 @@ class CodexExecutor:
         diff_path, status_path = _write_diff_artifacts(worktree_dir, self.codex_dir)
         response_risk_events = _string_list(response.get("risk_events", []))
         response_blocking_risk_events, non_blocking_risk_events = classify_codex_risk_events(response_risk_events)
-        risk_events = list(response_blocking_risk_events)
-        risk_events.extend(validation_events)
-        risk_events.extend(_scan_implementation_risks(diff_path.read_text(encoding="utf-8") if diff_path.exists() else ""))
-        risk_events = _dedupe(risk_events)
-        non_blocking_risk_events = _dedupe(non_blocking_risk_events)
+        diff_policy_hits = _scan_implementation_risks(diff_path.read_text(encoding="utf-8") if diff_path.exists() else "")
         blockers = _string_list(response.get("blockers", []))
-        if completed.returncode != 0:
-            risk_events.append(f"codex_exit_code:{completed.returncode}")
-            blockers.append(f"codex exited with {completed.returncode}")
+        response_blockers = list(blockers)
         failure_category = classify_codex_failure(completed.stderr, completed.returncode, "coder")
-        if not changed_files:
-            blockers.append("no_changed_files")
-
-        status = "completed" if not risk_events and not blockers else "failed"
         files_changed = sorted(set(changed_files + _string_list(response.get("files_changed", []))))
         tests_run = _string_list(response.get("tests_run", []))
+        boundary_violations = _unrelated_changed_files(changed_files, bundle.allowed_paths)
+        classification = _build_failure_classification(
+            run_id=context.run_id,
+            exit_code=completed.returncode,
+            validation_events=validation_events,
+            changed_files=files_changed,
+            tests_run=tests_run,
+            codex_blockers=response_blockers,
+            codex_risk_events=response_risk_events,
+            codex_blocking_risk_events=response_blocking_risk_events,
+            codex_non_blocking_risk_events=non_blocking_risk_events,
+            diff_policy_hits=diff_policy_hits,
+            allowed_paths=bundle.allowed_paths,
+            boundary_violations=boundary_violations,
+            no_changed_files=not changed_files,
+        )
+        classification_json_path = self.codex_dir / "failure_classification.json"
+        classification_md_path = self.codex_dir / "failure_classification.md"
+        write_json(classification_json_path, classification)
+        classification_md_path.write_text(_failure_classification_markdown(classification), encoding="utf-8")
+        risk_events = _string_list(classification.get("blocking_events", []))
+        non_blocking_risk_events = _string_list(classification.get("warnings", []))
+        blockers = list(response_blockers)
+        if completed.returncode != 0:
+            blockers.append(f"codex exited with {completed.returncode}")
+        if not changed_files:
+            blockers.append("no_changed_files")
+        blockers = _dedupe(blockers)
+        status = "failed" if classification.get("classification_decision") == "failed" else "completed"
         trace["evidence"].update(
             {
                 "changed_files": files_changed,
@@ -414,6 +468,7 @@ class CodexExecutor:
                 "verification_commands": bundle.verification_commands,
                 "diff_path": _relative_to(diff_path, self.run_dir),
                 "exit_code": completed.returncode,
+                "failure_classification": FAILURE_CLASSIFICATION_JSON_PATH,
             }
         )
         _trace_step(
@@ -444,6 +499,7 @@ class CodexExecutor:
             "blocking_risk_events": risk_events,
             "non_blocking_risk_events": non_blocking_risk_events,
             "blockers": blockers,
+            "failure_classification": classification,
             "next_action": str(response.get("next_action", "")),
             "prompt_hash": bundle.prompt_hash,
             "state_hash": bundle.state_hash,
@@ -459,6 +515,7 @@ class CodexExecutor:
                 "status": _relative_to(status_path, self.run_dir),
                 "command": _relative_to(bundle.command_path, self.run_dir),
                 "implementation_trace": IMPLEMENTATION_TRACE_PATH,
+                "failure_classification": FAILURE_CLASSIFICATION_JSON_PATH,
             },
         }
         completion_paths: list[str] = []
@@ -497,17 +554,25 @@ class CodexExecutor:
         trace["blocking_risk_events"] = risk_events
         trace["non_blocking_risk_events"] = non_blocking_risk_events
         trace["blockers"] = blockers
+        trace["failure_classification"] = classification
         trace["next_action"] = str(response.get("next_action", ""))
         _trace_step(
             trace,
             "finalize_result",
             status,
             "AI 实现结果已整理完成。" if status == "completed" else "AI 实现结果需要处理阻塞或风险。",
-            artifacts=["code_run_record.json"],
+            artifacts=["code_run_record.json", FAILURE_CLASSIFICATION_JSON_PATH],
         )
         trace["status"] = status
         _write_implementation_trace(trace_path, trace)
-        output_paths.extend([_relative_to(diff_path, self.run_dir), _relative_to(status_path, self.run_dir)])
+        output_paths.extend(
+            [
+                _relative_to(diff_path, self.run_dir),
+                _relative_to(status_path, self.run_dir),
+                FAILURE_CLASSIFICATION_JSON_PATH,
+                FAILURE_CLASSIFICATION_MD_PATH,
+            ]
+        )
         output_paths.append(context.write_json("code_run_record.json", record))
         return CodexStageResult(status, _dedupe(output_paths), risk_events, record["summary"], record)
 
@@ -771,6 +836,9 @@ class CodexExecutor:
         return env
 
     def _failure_record(self, stage: str, bundle: CodexPromptBundle, reason: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        classification = _build_preflight_failure_classification(self.run_dir.name, reason)
+        write_json(self.codex_dir / "failure_classification.json", classification)
+        (self.codex_dir / "failure_classification.md").write_text(_failure_classification_markdown(classification), encoding="utf-8")
         return {
             "agent": stage,
             "executor": "codex",
@@ -780,7 +848,10 @@ class CodexExecutor:
             "tests_run": [],
             "verification_commands": bundle.verification_commands,
             "risk_events": [reason],
+            "blocking_risk_events": [reason],
+            "non_blocking_risk_events": [],
             "blockers": [reason],
+            "failure_classification": classification,
             "next_action": "fix_executor",
             "prompt_hash": bundle.prompt_hash,
             "state_hash": bundle.state_hash,
@@ -792,6 +863,7 @@ class CodexExecutor:
                 "prompt": _relative_to(bundle.prompt_path, self.run_dir),
                 "state_summary": _relative_to(bundle.state_summary_path, self.run_dir),
                 "stderr": _relative_to(bundle.stderr_path, self.run_dir),
+                "failure_classification": FAILURE_CLASSIFICATION_JSON_PATH,
             },
             **(extra or {}),
         }
@@ -835,7 +907,57 @@ def _allowed_paths(context: Any) -> list[str]:
     inputs = getattr(context, "inputs", {}) or {}
     domain = getattr(context, "domain", None)
     metadata = getattr(domain, "metadata", {}) or {}
-    return _string_list(inputs.get("allowed_paths") or inputs.get("allowed_files") or metadata.get("allowed_paths") or metadata.get("allowed_files") or DEFAULT_ALLOWED_PATHS)
+    base_paths = _string_list(inputs.get("allowed_paths") or inputs.get("allowed_files"))
+    if not base_paths:
+        base_paths = _string_list(metadata.get("allowed_paths") or metadata.get("allowed_files"))
+    if not base_paths:
+        base_paths = list(DEFAULT_ALLOWED_PATHS)
+    return _dedupe(base_paths + _task_level_allowed_paths(context) + _slice_declared_allowed_paths(context))
+
+
+def _task_level_allowed_paths(context: Any) -> list[str]:
+    text = _task_level_allowed_path_text(context)
+    lowered = text.lower()
+    if not any(marker in lowered for marker in TASK_ALLOWED_PATH_MARKERS):
+        return []
+    return _dedupe([path for path in TASK_ALLOWED_PATH_PATTERN.findall(text) if _is_safe_task_allowed_path(path)])
+
+
+def _task_level_allowed_path_text(context: Any) -> str:
+    values = [str(getattr(context, "brief", "") or "")]
+    record = getattr(context, "record", None)
+    if record is not None:
+        values.append(str(getattr(record, "brief", "") or ""))
+    return "\n".join(value for value in values if value)
+
+
+def _slice_declared_allowed_paths(context: Any) -> list[str]:
+    run_dir = Path(getattr(context, "run_dir", "."))
+    paths: list[str] = []
+    for slice_item in _read_slice_definitions(run_dir):
+        paths.extend(_string_list(slice_item.get("allowed_paths", [])))
+    return _dedupe([path for path in paths if _is_safe_task_allowed_path(path)])
+
+
+def _is_safe_task_allowed_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip().strip("`'\".,;:，。、")
+    normalized = re.sub(r"/+", "/", normalized)
+    if not normalized or normalized.startswith(("/", "~")) or "://" in normalized:
+        return False
+    parts = [part for part in normalized.split("/") if part]
+    if not parts or any(part == ".." for part in parts):
+        return False
+    lowered = normalized.lower()
+    lowered_parts = [part.lower() for part in parts]
+    if any(lowered == prefix.rstrip("/") or lowered.startswith(prefix) for prefix in TASK_ALLOWED_PATH_FORBIDDEN_PREFIXES):
+        return False
+    if any(part == ".env" or part.startswith(".env.") or part.endswith(".env") for part in lowered_parts):
+        return False
+    if lowered.endswith(TASK_ALLOWED_PATH_FORBIDDEN_SUFFIXES):
+        return False
+    if parts[0] in TASK_ALLOWED_PATH_SAFE_ROOTS:
+        return len(parts) > 1 or normalized.endswith("/")
+    return normalized in TASK_ALLOWED_PATH_SAFE_ROOT_FILES
 
 
 def _verification_commands(context: Any) -> list[str]:
@@ -1680,8 +1802,210 @@ def _write_diff_artifacts(worktree_dir: Path, codex_dir: Path) -> tuple[Path, Pa
 
 
 def _scan_implementation_risks(text: str) -> list[str]:
-    lowered = text.lower()
-    return [f"prohibited_implementation_pattern:{pattern}" for pattern in IMPLEMENTATION_RISK_PATTERNS if pattern in lowered]
+    matched: set[str] = set()
+    for line in _added_diff_lines(text):
+        lowered = line.lower()
+        if _is_safe_risk_context(lowered):
+            continue
+        for pattern in IMPLEMENTATION_RISK_PATTERNS:
+            if pattern in lowered:
+                matched.add(pattern)
+    return [
+        f"prohibited_implementation_pattern:{pattern}"
+        for pattern in IMPLEMENTATION_RISK_PATTERNS
+        if pattern in matched
+    ]
+
+
+def _added_diff_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for line in text.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        lines.append(line[1:])
+    return lines
+
+
+def _is_safe_risk_context(lowered_line: str) -> bool:
+    return any(marker in lowered_line for marker in SAFE_RISK_CONTEXT_MARKERS)
+
+
+def _build_failure_classification(
+    *,
+    run_id: str,
+    exit_code: int,
+    validation_events: list[str],
+    changed_files: list[str],
+    tests_run: list[str],
+    codex_blockers: list[str],
+    codex_risk_events: list[str],
+    codex_blocking_risk_events: list[str],
+    codex_non_blocking_risk_events: list[str],
+    diff_policy_hits: list[str],
+    allowed_paths: list[str],
+    boundary_violations: list[str],
+    no_changed_files: bool,
+) -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    for event in validation_events:
+        events.append(_classification_event(event, "blocking", "schema", event, [event]))
+    if exit_code != 0:
+        event_id = f"codex_exit_code:{exit_code}"
+        events.append(_classification_event(event_id, "blocking", "executor", f"Codex exited with {exit_code}.", [event_id]))
+    for blocker in codex_blockers:
+        events.append(_classification_event("codex_blocker_reported", "blocking", "codex_response", blocker, [blocker]))
+    for event in codex_blocking_risk_events:
+        events.append(_classification_event(event, "blocking", "codex_response", event, [event]))
+    for event in diff_policy_hits:
+        events.append(_classification_event(event, "blocking", "diff_scan", event, [event]))
+    for file_name in boundary_violations:
+        event_id = f"changed_file_outside_allowed_paths:{file_name}"
+        events.append(_classification_event(event_id, "blocking", "file_boundary", f"Changed file is outside allowed paths: {file_name}", [file_name]))
+    if no_changed_files:
+        events.append(_classification_event("no_changed_files", "blocking", "file_boundary", "No code changes were detected.", []))
+    for event in codex_non_blocking_risk_events:
+        events.append(_classification_event(_non_blocking_risk_event_id(event), "warning", "codex_response", event, [event]))
+
+    blocking_events = _dedupe(str(event["id"]) for event in events if event.get("severity") == "blocking")
+    warnings = _dedupe(str(event["reason"]) for event in events if event.get("severity") == "warning")
+    if blocking_events:
+        decision = "failed"
+        summary = f"AI implementation is blocked by {len(blocking_events)} deterministic event(s)."
+        primary_reason = blocking_events[0]
+    elif warnings:
+        decision = "passed_with_warnings"
+        summary = f"AI implementation completed with {len(warnings)} non-blocking warning(s)."
+        primary_reason = warnings[0]
+    else:
+        decision = "passed"
+        summary = "AI implementation completed without blocking failure evidence."
+        primary_reason = "No blocking failure evidence."
+
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "stage": "coder",
+        "generated_at": now_iso(),
+        "classification_decision": decision,
+        "summary": summary,
+        "primary_reason": primary_reason,
+        "events": events,
+        "evidence": {
+            "exit_code": exit_code,
+            "schema_valid": not validation_events,
+            "changed_files": changed_files,
+            "tests_run": tests_run,
+            "codex_blockers": codex_blockers,
+            "codex_risk_events": codex_risk_events,
+            "diff_policy_hits": diff_policy_hits,
+            "working_tree": {
+                "allowed_paths": allowed_paths,
+                "boundary_violations": boundary_violations,
+                "no_changed_files": no_changed_files,
+            },
+        },
+        "blocking_events": blocking_events,
+        "warnings": warnings,
+        "next_actions": _failure_classification_next_actions(decision, blocking_events),
+    }
+
+
+def _build_preflight_failure_classification(run_id: str, reason: str) -> dict[str, Any]:
+    event = _classification_event(reason, "blocking", "executor", reason, [reason])
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "stage": "coder",
+        "generated_at": now_iso(),
+        "classification_decision": "failed",
+        "summary": "AI implementation could not start because a preflight check failed.",
+        "primary_reason": reason,
+        "events": [event],
+        "evidence": {
+            "exit_code": 1,
+            "schema_valid": False,
+            "changed_files": [],
+            "tests_run": [],
+            "codex_blockers": [reason],
+            "codex_risk_events": [],
+            "diff_policy_hits": [],
+            "working_tree": {
+                "allowed_paths": [],
+                "boundary_violations": [],
+                "no_changed_files": True,
+            },
+        },
+        "blocking_events": [reason],
+        "warnings": [],
+        "next_actions": [f"Resolve blocking event `{reason}` before review/test."],
+    }
+
+
+def _classification_event(event_id: str, severity: str, source: str, reason: str, evidence: list[str]) -> dict[str, Any]:
+    return {
+        "id": event_id,
+        "severity": severity,
+        "source": source,
+        "reason": reason,
+        "evidence": _string_list(evidence),
+    }
+
+
+def _non_blocking_risk_event_id(event: str) -> str:
+    lowered = event.lower()
+    if "modified tests/" in lowered and "supporting test boundary" in lowered:
+        return "supporting_test_boundary_note"
+    if "nearby supporting" in lowered or "nearby_supporting" in lowered:
+        return "supporting_location_note"
+    if lowered.startswith("no ") and all(marker in lowered for marker in ("scraping", "captcha", "proxy")):
+        return "safety_boundary_note"
+    if lowered.startswith("note:"):
+        return "codex_note"
+    return "codex_non_blocking_risk_note"
+
+
+def _failure_classification_next_actions(decision: str, blocking_events: list[str]) -> list[str]:
+    if decision == "failed":
+        return [f"Resolve blocking event `{event}` before review/test." for event in blocking_events]
+    if decision == "passed_with_warnings":
+        return ["Review non-blocking warnings, then proceed to review/test."]
+    return ["Proceed to review/test."]
+
+
+def _failure_classification_markdown(classification: dict[str, Any]) -> str:
+    lines = [
+        "# Failure Classification",
+        "",
+        f"- Run: `{classification.get('run_id', '')}`",
+        f"- Stage: `{classification.get('stage', '')}`",
+        f"- Decision: `{classification.get('classification_decision', '')}`",
+        f"- Summary: {classification.get('summary', '')}",
+        f"- Primary reason: {classification.get('primary_reason', '')}",
+        "",
+        "## Blocking Events",
+    ]
+    blocking = _string_list(classification.get("blocking_events", []))
+    lines.extend([f"- `{event}`" for event in blocking] or ["- None"])
+    warnings = _string_list(classification.get("warnings", []))
+    lines.extend(["", "## Warnings"])
+    lines.extend([f"- {warning}" for warning in warnings] or ["- None"])
+    evidence = classification.get("evidence", {}) if isinstance(classification.get("evidence"), dict) else {}
+    working_tree = evidence.get("working_tree", {}) if isinstance(evidence.get("working_tree"), dict) else {}
+    lines.extend(
+        [
+            "",
+            "## Evidence",
+            f"- Exit code: `{evidence.get('exit_code', '')}`",
+            f"- Schema valid: `{str(evidence.get('schema_valid', ''))}`",
+            f"- Changed files: {', '.join(_string_list(evidence.get('changed_files', []))) or 'none'}",
+            f"- Tests run: {', '.join(_string_list(evidence.get('tests_run', []))) or 'none'}",
+            f"- Boundary violations: {', '.join(_string_list(working_tree.get('boundary_violations', []))) or 'none'}",
+            "",
+            "## Next Actions",
+        ]
+    )
+    lines.extend([f"- {action}" for action in _string_list(classification.get("next_actions", []))] or ["- None"])
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def classify_codex_risk_events(events: list[str]) -> tuple[list[str], list[str]]:

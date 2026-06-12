@@ -137,6 +137,115 @@ sys.exit(2)
     return script
 
 
+def _write_outside_allowed_fake_codex(path: Path) -> Path:
+    script = path / "codex-outside-allowed"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    target = os.path.join(workspace, "README.md")
+    with open(target, "a", encoding="utf-8") as handle:
+        handle.write("\\n# outside allowed path change\\n")
+
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {
+        "summary": "fake codex changed an unrelated file",
+        "files_changed": ["README.md"],
+        "tests_run": ["python3 -c \\"print('ok')\\""],
+        "risk_events": [],
+        "blockers": [],
+        "next_action": "fix changed file boundary",
+    }
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({"event": "exec.completed", "target": "README.md"}))
+    sys.exit(0)
+
+if "review" in args:
+    print("# Fake Codex Review\\n\\nNo blocking issues found.")
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
+def _write_workbench_test_fake_codex(path: Path) -> Path:
+    script = path / "codex-workbench-test"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    target = os.path.join(workspace, "tests", "test_mobile_image_workbench.py")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "a", encoding="utf-8") as handle:
+        handle.write("\\nimport unittest\\n\\n\\nclass WorkbenchKeywordBoundaryTests(unittest.TestCase):\\n    def test_keyword_boundary_fixture(self):\\n        self.assertTrue(True)\\n")
+
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {
+        "summary": "fake codex added the workbench keyword UI boundary test",
+        "files_changed": ["tests/test_mobile_image_workbench.py"],
+        "tests_run": ["python3 -m unittest tests.test_mobile_image_workbench -v"],
+        "risk_events": [
+            "Modified tests/test_mobile_image_workbench.py as the newly requested supporting test boundary; no runs, data, env-file, or remote key files were modified."
+        ],
+        "blockers": [],
+        "next_action": "review",
+    }
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({"event": "exec.completed", "target": "tests/test_mobile_image_workbench.py"}))
+    sys.exit(0)
+
+if "review" in args:
+    print("# Fake Codex Review\\n\\nNo blocking issues found.")
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_provider_asserting_fake_codex(path: Path, expected_key: str) -> Path:
     script = path / "codex-provider"
     script.write_text(
@@ -256,6 +365,56 @@ class CodexExecutorTests(unittest.TestCase):
             ],
         )
         self.assertEqual(blocking, ["prohibited_implementation_pattern:proxy rotation", "codex_response_missing_field:summary"])
+
+    def test_codex_risk_classifier_treats_supporting_test_boundary_note_as_non_blocking(self) -> None:
+        from growth_dev.team.codex import classify_codex_risk_events
+
+        event = (
+            "Modified tests/test_mobile_image_workbench.py as the newly requested supporting "
+            "test boundary; no runs, data, env-file, or remote key files were modified."
+        )
+
+        blocking, non_blocking = classify_codex_risk_events([event])
+
+        self.assertEqual(blocking, [])
+        self.assertEqual(non_blocking, [event])
+
+    def test_codex_diff_risk_scan_ignores_context_deletions_and_safety_boundary_text(self) -> None:
+        from growth_dev.team.codex import _scan_implementation_risks
+
+        diff_text = """
+diff --git a/domains/xhs_mobile_collection/capabilities.yaml b/domains/xhs_mobile_collection/capabilities.yaml
+@@ -1,8 +1,10 @@
+ unsupported:
+   - id: captcha_or_risk_bypass
+     summary: Captcha solving, fingerprint spoofing, proxy rotation, and anti-bot evasion are prohibited.
+-legacy_note: proxy rotation was previously mentioned in documentation
++planned:
++  - summary: This UI must not implement fingerprint spoofing, proxy rotation, or anti-detect behavior.
++risk_rules:
++  - no_fingerprint_spoofing
++  - no_proxy_rotation
+"""
+
+        self.assertEqual(_scan_implementation_risks(diff_text), [])
+
+    def test_codex_diff_risk_scan_keeps_added_dangerous_patterns_blocking(self) -> None:
+        from growth_dev.team.codex import _scan_implementation_risks
+
+        diff_text = """
+diff --git a/scraper.py b/scraper.py
+@@ -1,2 +1,4 @@
++proxy_pool = load_proxy_pool()
++driver.install("puppeteer-extra-plugin-stealth")
+"""
+
+        self.assertEqual(
+            _scan_implementation_risks(diff_text),
+            [
+                "prohibited_implementation_pattern:puppeteer-extra-plugin-stealth",
+                "prohibited_implementation_pattern:proxy_pool",
+            ],
+        )
 
     def test_codex_exec_command_contains_context_controls(self) -> None:
         from growth_dev.team.codex import CodexExecutorConfig, build_codex_exec_command
@@ -447,6 +606,107 @@ class CodexExecutorTests(unittest.TestCase):
         self.assertIn("Build it.", summary_text)
         self.assertEqual(schema["required"], ["summary", "files_changed", "tests_run", "risk_events", "blockers", "next_action"])
 
+    def test_prompt_bundle_merges_task_level_allowed_paths_from_brief(self) -> None:
+        from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import default_team_spec
+        from growth_dev.team.agents import AgentContext
+        from growth_dev.team.models import TeamRunRecord
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            brief = (
+                "扩展 domain pack。allowed_paths 需要允许： "
+                "- third_party/mobile_image_workbench/backend/mobile_image_workbench/ "
+                "- third_party/mobile_image_workbench/frontend/src/ "
+                "- third_party/mobile_image_workbench/README.md "
+                "- tests/test_mobile_image_workbench.py "
+                "不允许修改 .env、runs/、third_party/mobile_asset_center/data/、remote.key"
+            )
+            record = TeamRunRecord(run_id="run-1", domain_id="demo", brief=brief, run_dir=run_dir)
+            context = AgentContext(
+                run_id="run-1",
+                run_dir=run_dir,
+                repo_root=root,
+                executor="codex",
+                brief=brief,
+                team=default_team_spec(),
+                domain=DomainSpec(
+                    domain_id="demo",
+                    risk_rules=["manual_login_only"],
+                    metadata={"allowed_paths": ["domains/demo/"]},
+                ),
+                inputs={},
+                record=record,
+            )
+
+            bundle = CodexExecutor(CodexExecutorConfig(), repo_root=root, run_dir=run_dir).write_prompt_bundle("coder", context)
+            prompt_bundle = json.loads((run_dir / "codex" / "prompt_bundle.json").read_text(encoding="utf-8"))
+
+        self.assertIn("domains/demo/", prompt_bundle["allowed_paths"])
+        self.assertIn("third_party/mobile_image_workbench/backend/mobile_image_workbench/", prompt_bundle["allowed_paths"])
+        self.assertIn("third_party/mobile_image_workbench/frontend/src/", prompt_bundle["allowed_paths"])
+        self.assertIn("third_party/mobile_image_workbench/README.md", prompt_bundle["allowed_paths"])
+        self.assertIn("tests/test_mobile_image_workbench.py", prompt_bundle["allowed_paths"])
+        self.assertNotIn(".env", prompt_bundle["allowed_paths"])
+        self.assertNotIn("runs/", prompt_bundle["allowed_paths"])
+        self.assertNotIn("third_party/mobile_asset_center/data/", prompt_bundle["allowed_paths"])
+        self.assertNotIn("remote.key", prompt_bundle["allowed_paths"])
+
+    def test_prompt_bundle_merges_allowed_paths_from_planned_slices(self) -> None:
+        from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
+        from growth_dev.team.models import DomainSpec, TeamRunRecord
+        from growth_dev.team.runtime import default_team_spec
+        from growth_dev.team.agents import AgentContext
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "runs" / "run-1"
+            slices_dir = run_dir / "slices"
+            slices_dir.mkdir(parents=True)
+            (slices_dir / "slice-001.yaml").write_text(
+                "\n".join(
+                    [
+                        "slice_id: slice-001",
+                        "title: Workbench entry",
+                        "allowed_paths:",
+                        "  - tests/test_mobile_image_workbench.py",
+                        "  - .env",
+                        "  - runs/",
+                        "  - third_party/mobile_asset_center/data/",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            record = TeamRunRecord(run_id="run-1", domain_id="demo", brief="Add a workbench entry.", run_dir=run_dir)
+            context = AgentContext(
+                run_id="run-1",
+                run_dir=run_dir,
+                repo_root=root,
+                executor="codex",
+                brief="Add a workbench entry.",
+                team=default_team_spec(),
+                domain=DomainSpec(
+                    domain_id="demo",
+                    risk_rules=["manual_login_only"],
+                    metadata={"allowed_paths": ["domains/demo/"]},
+                ),
+                inputs={},
+                record=record,
+            )
+
+            CodexExecutor(CodexExecutorConfig(), repo_root=root, run_dir=run_dir).write_prompt_bundle("coder", context)
+            prompt_bundle = json.loads((run_dir / "codex" / "prompt_bundle.json").read_text(encoding="utf-8"))
+
+        self.assertIn("domains/demo/", prompt_bundle["allowed_paths"])
+        self.assertIn("tests/test_mobile_image_workbench.py", prompt_bundle["allowed_paths"])
+        self.assertNotIn(".env", prompt_bundle["allowed_paths"])
+        self.assertNotIn("runs/", prompt_bundle["allowed_paths"])
+        self.assertNotIn("third_party/mobile_asset_center/data/", prompt_bundle["allowed_paths"])
+
     def test_missing_codex_binary_writes_failed_code_record(self) -> None:
         from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
         from growth_dev.team.models import DomainSpec, TeamRunRecord
@@ -476,6 +736,7 @@ class CodexExecutorTests(unittest.TestCase):
             ).run_coder(context)
             code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
             trace = json.loads((run_dir / "codex" / "implementation_trace.json").read_text(encoding="utf-8"))
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
             prompt_exists = (run_dir / "codex" / "codex_prompt.md").exists()
 
             self.assertEqual(result.status, "failed")
@@ -483,6 +744,9 @@ class CodexExecutorTests(unittest.TestCase):
             self.assertEqual(trace["current_step"], "check_executor")
             self.assertIn("codex_binary_missing", trace["blockers"])
             self.assertIn("codex_binary_missing", code_record["risk_events"])
+            self.assertEqual(classification["classification_decision"], "failed")
+            self.assertIn("codex_binary_missing", classification["blocking_events"])
+            self.assertEqual(code_record["artifacts"]["failure_classification"], "codex/failure_classification.json")
             self.assertTrue(prompt_exists)
 
     def test_team_runtime_codex_executor_records_diff_review_and_verification(self) -> None:
@@ -654,9 +918,104 @@ class CodexExecutorTests(unittest.TestCase):
             self.assertEqual(code_record["risk_events"], [])
             self.assertEqual(code_record["blocking_risk_events"], [])
             self.assertEqual(len(code_record["non_blocking_risk_events"]), 3)
+            self.assertEqual(code_record["failure_classification"]["classification_decision"], "passed_with_warnings")
+            self.assertEqual(code_record["artifacts"]["failure_classification"], "codex/failure_classification.json")
             self.assertEqual(trace["status"], "completed")
             self.assertEqual(trace["risk_events"], [])
             self.assertEqual(len(trace["non_blocking_risk_events"]), 3)
+            self.assertEqual(trace["failure_classification"]["classification_decision"], "passed_with_warnings")
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
+            classification_md = (run_dir / "codex" / "failure_classification.md").read_text(encoding="utf-8")
+            self.assertEqual(classification["classification_decision"], "passed_with_warnings")
+            self.assertEqual(classification["blocking_events"], [])
+            self.assertEqual(len(classification["warnings"]), 3)
+            self.assertIn("supporting_location_note", {event["id"] for event in classification["events"]})
+            self.assertIn("# Failure Classification", classification_md)
+
+    def test_codex_failure_classification_blocks_changed_files_outside_allowed_paths(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_outside_allowed_fake_codex(root)
+
+            runtime = TeamRuntime(
+                team=default_team_spec(),
+                domain=DomainSpec(domain_id="demo", summary="Demo coding domain", risk_rules=["manual_login_only"]),
+                runs_dir=root / "runs",
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+                codex_reasoning_effort="medium",
+            )
+            record = runtime.run(
+                "Implement a tiny change",
+                inputs={
+                    "allowed_paths": ["growth_dev/fake_target.py"],
+                    "verification_commands": ["python3 -c \"print('ok')\""],
+                },
+                run_id="run-1",
+            )
+
+            run_dir = root / "runs" / "run-1"
+            code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            trace = json.loads((run_dir / "codex" / "implementation_trace.json").read_text(encoding="utf-8"))
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(record.status, "failed")
+            self.assertEqual(code_record["status"], "failed")
+            self.assertEqual(classification["classification_decision"], "failed")
+            self.assertIn("changed_file_outside_allowed_paths:README.md", classification["blocking_events"])
+            self.assertIn("changed_file_outside_allowed_paths:README.md", code_record["risk_events"])
+            self.assertEqual(trace["failure_classification"]["classification_decision"], "failed")
+
+    def test_task_level_allowed_paths_override_unblocks_domain_expansion_supporting_tests(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_workbench_test_fake_codex(root)
+            brief = (
+                "扩展 xhs_mobile_collection domain pack。allowed_paths 需要允许： "
+                "- tests/test_mobile_image_workbench.py "
+                "不允许修改 .env、runs/、third_party/mobile_asset_center/data/。"
+            )
+
+            runtime = TeamRuntime(
+                team=default_team_spec(),
+                domain=DomainSpec(
+                    domain_id="xhs_mobile_collection",
+                    summary="Demo xhs domain",
+                    risk_rules=["manual_login_only"],
+                    metadata={"allowed_paths": ["domains/xhs_mobile_collection/", "tests/test_xhs_collector.py"]},
+                ),
+                runs_dir=root / "runs",
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+                codex_reasoning_effort="medium",
+            )
+            record = runtime.run(brief, run_id="run-1")
+
+            run_dir = root / "runs" / "run-1"
+            prompt_bundle = json.loads((run_dir / "codex" / "prompt_bundle.json").read_text(encoding="utf-8"))
+            code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(record.status, "completed")
+            self.assertIn("tests/test_mobile_image_workbench.py", prompt_bundle["allowed_paths"])
+            self.assertNotIn("dashboard/", prompt_bundle["allowed_paths"])
+            self.assertNotIn("growth_dev/", prompt_bundle["allowed_paths"])
+            self.assertEqual(classification["classification_decision"], "passed_with_warnings")
+            self.assertEqual(classification["blocking_events"], [])
+            self.assertEqual(code_record["risk_events"], [])
+            self.assertIn("tests/test_mobile_image_workbench.py", code_record["files_changed"])
 
     def test_team_runtime_aicodemirror_provider_uses_env_key_without_recording_secret(self) -> None:
         from growth_dev.team.models import DomainSpec
