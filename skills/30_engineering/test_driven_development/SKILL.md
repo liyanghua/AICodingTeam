@@ -17,7 +17,7 @@ Convert acceptance criteria into behavior-focused tests and keep implementation 
 - Acceptance criteria.
 - Tech or UI spec.
 - Existing nearby tests.
-- Optional: `tdd_cases_template.md`, `eval_template.md`.
+- Optional: `tdd_cases_template.md`, `eval_template.md`, `pm_test_scenarios_template.md`.
 
 ## Outputs
 - `tasks/current/tdd_cases.md`.
@@ -30,12 +30,15 @@ Convert acceptance criteria into behavior-focused tests and keep implementation 
 3. Verify the failure mode is meaningful.
 4. Implement the minimal change.
 5. Run the test and relevant regression suite.
+6. For product-shaped requirements, map acceptance criteria to happy path, edge case, error state, regression, and manual validation scenarios.
 
 ## Quality Gate
 - Tests assert behavior, not private implementation.
 - Red failure is observed or explicitly simulated in planning artifacts.
 - UI states cover loading, empty, error, and success when applicable.
 - Verification command is reproducible.
+- Each PM test scenario maps to at least one acceptance criterion.
+- New behavior has at least one red-first scenario before implementation.
 
 ## Context Hygiene
 - Read nearby test patterns before inventing new ones.

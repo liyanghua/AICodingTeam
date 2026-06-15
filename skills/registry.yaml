@@ -57,6 +57,9 @@ skills:
     templates:
       - spec_template.md
       - acceptance_criteria_template.md
+      - pm_prd_template.md
+      - user_story_template.md
+      - prd_red_team_template.md
     context_budget:
       default: read brief, context, and only design docs relevant to the task
 
@@ -191,6 +194,7 @@ skills:
     templates:
       - tdd_cases_template.md
       - eval_template.md
+      - pm_test_scenarios_template.md
     context_budget:
       default: read nearby test files and public contracts only
 
@@ -257,6 +261,43 @@ skills:
       - review_report_template.md
     context_budget:
       default: read diff, tests, and acceptance criteria before broad source context
+
+  - id: ai_coding_quality_review
+    stage: review
+    priority: P1
+    source_inspiration: hyhmrright/brooks-lint
+    path: skills/50_review/ai_coding_quality_review
+    replaces: []
+    inputs:
+      - diff
+      - existing review report
+      - tests run
+      - risk events
+      - acceptance criteria
+      - changed files
+      - run artifacts
+    outputs:
+      - quality_report.md
+      - health score
+      - risk-ranked findings
+      - recommendation
+    triggers:
+      - large AI-generated diff is ready for quality review
+      - user asks for AI coding quality review
+      - collector, asset center, Mobilerun runtime, or deployment scripts changed
+      - before-publish quality trend review is needed
+    quality_gates:
+      - fixed risk taxonomy is used
+      - findings are backed by current artifacts
+      - health score is present
+      - companion relationship with code_review_and_quality is explicit
+      - chat history is not used as source of truth
+    templates:
+      - risk_taxonomy.md
+      - quality_report_template.md
+      - review_examples.md
+    context_budget:
+      default: read diff, existing review report, targeted changed files, and selected references only
 
 memory_skills:
   - id: run_retrospective

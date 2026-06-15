@@ -97,7 +97,8 @@ def generate_complex_task_artifacts(
     write_json(requirements_dir / "brief_analysis.json", analysis)
 
     draft_paths: list[str] = []
-    if _should_generate_llm_draft(analysis, normalized):
+    llm_draft_requested = _should_generate_llm_draft(analysis, normalized)
+    if llm_draft_requested:
         draft_paths = _write_llm_draft_placeholders(requirements_dir, analysis, normalized)
         candidate = _requirement_candidate(run_id, artifact_brief, domain, artifact_inputs, analysis, normalized)
         write_json(requirements_dir / "requirement_understanding.candidate.json", candidate)
@@ -128,6 +129,8 @@ def generate_complex_task_artifacts(
     tdd_plan = _tdd_plan(run_id, artifact_brief, domain, acceptance, slices, artifact_inputs)
     write_json(planning_dir / "tdd_plan.json", tdd_plan)
     (planning_dir / "tdd_plan.md").write_text(_tdd_plan_markdown(tdd_plan), encoding="utf-8")
+    if llm_draft_requested:
+        draft_paths.extend(_write_pm_planning_drafts(planning_dir, acceptance, tdd_plan))
 
     requirement_quality = _requirement_quality_report(analysis, acceptance, coverage, capability_boundary)
     planning_quality = _planning_quality_report(coverage, slices, tdd_plan)
@@ -213,12 +216,106 @@ def _write_llm_draft_placeholders(requirements_dir: Path, analysis: dict[str, An
             "",
             *[f"- {item}" for item in analysis.get("assumptions", [])],
         ],
+        "prd.draft.md": _pm_prd_draft_lines(analysis, model, note),
+        "user_stories.draft.md": _pm_user_story_draft_lines(analysis),
+        "prd_red_team.md": _pm_prd_red_team_lines(analysis),
     }
     paths: list[str] = []
     for name, lines in files.items():
         (requirements_dir / name).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         paths.append(f"requirements/{name}")
     return paths
+
+
+def _write_pm_planning_drafts(planning_dir: Path, acceptance: list[dict[str, Any]], tdd_plan: dict[str, Any]) -> list[str]:
+    path = planning_dir / "test_scenarios.draft.md"
+    path.write_text(_pm_test_scenarios_markdown(acceptance, tdd_plan), encoding="utf-8")
+    return ["planning/test_scenarios.draft.md"]
+
+
+def _pm_prd_draft_lines(analysis: dict[str, Any], model: str, note: str) -> list[str]:
+    brief = str(analysis.get("brief", "")).strip()
+    assumptions = [str(item) for item in analysis.get("assumptions", [])]
+    questions = [str(item) for item in analysis.get("blocking_questions", [])]
+    return [
+        "# PM PRD Draft",
+        "",
+        f"- Method: PM Skills-inspired candidate understanding",
+        f"- Model: `{model}`",
+        f"- Promotion policy: {note}",
+        "",
+        "## Problem",
+        f"- Requested outcome: {brief}",
+        "",
+        "## Users And Operators",
+        "- Primary user/operator: derived from the brief or domain pack.",
+        "- Reviewer/approver: human gate owner.",
+        "",
+        "## Core Workflow",
+        "1. User submits the brief.",
+        "2. AI-Team produces official requirements after deterministic validation.",
+        "3. Codex or another executor implements only after gates pass.",
+        "",
+        "## User Stories",
+        "- See `user_stories.draft.md`.",
+        "",
+        "## Acceptance Signals",
+        "- Official `acceptance_criteria.md`.",
+        "- `planning/tdd_plan.json` and verification commands.",
+        "- Dashboard/run artifacts for review evidence.",
+        "",
+        "## Assumptions",
+        *([f"- {item}" for item in assumptions] or ["- none"]),
+        "",
+        "## Open Questions",
+        *([f"- {item}" for item in questions] or ["- No blocking questions detected by deterministic analysis."]),
+    ]
+
+
+def _pm_user_story_draft_lines(analysis: dict[str, Any]) -> list[str]:
+    brief = str(analysis.get("brief", "")).strip()
+    return [
+        "# User Stories Draft",
+        "",
+        "## US-001",
+        "",
+        f"- Card: As the task owner, I want `{brief}`, so that the requested outcome can be implemented and verified through run artifacts.",
+        "- Conversation:",
+        "  - Confirm scope, non-goals, safety constraints, and compatibility requirements.",
+        "  - Keep unresolved assumptions out of official artifacts.",
+        "- Confirmation:",
+        "  - Acceptance criteria ids: `AC-001` and related official criteria.",
+        "  - Verification command: see `planning/tdd_plan.json`.",
+        "",
+        "## 3 C / INVEST Notes",
+        "- Card names role, capability, and value.",
+        "- Conversation captures assumptions and open questions.",
+        "- Confirmation maps to acceptance criteria and tests.",
+        "- Story remains small enough for coverage-driven slices.",
+    ]
+
+
+def _pm_prd_red_team_lines(analysis: dict[str, Any]) -> list[str]:
+    questions = [str(item) for item in analysis.get("blocking_questions", [])]
+    status = "block" if questions else "promote"
+    return [
+        "# PRD Red-Team Draft",
+        "",
+        f"- Recommendation: `{status}`",
+        "- Method: PM Skills-inspired PRD red-team check.",
+        "",
+        "## Load-Bearing Assumptions",
+        "- Assumptions must stay in `requirements/assumptions.md` unless validated by official artifacts.",
+        "",
+        "## Scope Risks",
+        "- Watch for old-domain leakage, unrelated refactors, and hidden deployment changes.",
+        "",
+        "## Testability Risks",
+        "- Every official acceptance criterion must map to at least one TDD scenario and slice.",
+        "",
+        "## Open Questions",
+        *([f"- {item}" for item in questions] or ["- No blocking questions detected."]),
+    ]
 
 
 def _requirement_candidate(
@@ -237,6 +334,7 @@ def _requirement_candidate(
         "model": _redact_text(config.requirements_model or "not_configured"),
         "reasoning_effort": config.requirements_reasoning_effort,
         "status": "candidate_only",
+        "method_source": "PM Skills-inspired candidate understanding; official artifacts require deterministic gates.",
         "clarification_angles": [
             "业务目标",
             "用户/操作者",
@@ -247,6 +345,9 @@ def _requirement_candidate(
             "安全风险",
             "可观测验收",
             "部署/环境依赖",
+            "用户故事",
+            "测试场景",
+            "PRD red-team",
         ],
         "candidate_scope": {
             "goal": _compact(brief),
@@ -617,6 +718,44 @@ def _tdd_plan_markdown(plan: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _pm_test_scenarios_markdown(acceptance: list[dict[str, Any]], tdd_plan: dict[str, Any]) -> str:
+    ac_ids = [str(item.get("id", "")) for item in acceptance if str(item.get("id", "")).strip()]
+    command = ""
+    test_cases = tdd_plan.get("test_cases", []) if isinstance(tdd_plan.get("test_cases"), list) else []
+    if test_cases and isinstance(test_cases[0], dict):
+        command = str(test_cases[0].get("verification_command", ""))
+    scenario_types = [
+        ("happy path", "Main workflow produces the requested user-visible outcome."),
+        ("edge case", "Missing, partial, duplicate, or boundary inputs remain explainable."),
+        ("error state", "Unsafe, unavailable, or permission-blocked states stop with clear evidence."),
+        ("regression", "Existing supported behavior remains compatible."),
+        ("manual validation", "Real device, deployment, or external service evidence is captured when required."),
+    ]
+    lines = [
+        "# PM Test Scenarios Draft",
+        "",
+        "These scenarios are candidate planning aids. Official executable checks live in `planning/tdd_plan.json`.",
+        "",
+    ]
+    for index, (scenario_type, expected) in enumerate(scenario_types, start=1):
+        lines.extend(
+            [
+                f"## SCN-{index:03d}",
+                "",
+                f"- Type: {scenario_type}",
+                f"- Related acceptance criteria: {', '.join(ac_ids) or 'AC-001'}",
+                "- Preconditions: official requirement artifacts exist and gates have passed.",
+                "- Steps:",
+                "  1. Execute the relevant workflow or verification command.",
+                f"- Expected result: {expected}",
+                f"- Verification command: `{command}`" if command else "- Verification command: see `planning/tdd_plan.json`.",
+                "- Expected red failure: behavior or evidence is missing before implementation.",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _requirement_quality_report(
     analysis: dict[str, Any],
     acceptance: list[dict[str, Any]],
@@ -636,6 +775,7 @@ def _requirement_quality_report(
     if not capability_boundary.get("existing_capabilities") and not capability_boundary.get("required_new_capabilities"):
         blockers.append("capability_boundary_missing")
     status = "passed" if not blockers else "failed"
+    pm_status = "passed" if status == "passed" else "failed"
     return {
         "schema_version": 1,
         "status": status,
@@ -648,6 +788,10 @@ def _requirement_quality_report(
             {"id": "no_blocking_questions", "status": "passed" if not analysis.get("blocking_questions") else "failed"},
             {"id": "coverage_ready", "status": "passed" if "acceptance_not_covered_by_slice" not in blockers else "failed"},
             {"id": "capability_boundary_ready", "status": "passed" if "capability_boundary_missing" not in blockers else "failed"},
+            {"id": "user_stories_are_structured", "status": pm_status},
+            {"id": "prd_separates_facts_assumptions_questions", "status": pm_status},
+            {"id": "test_scenarios_map_to_acceptance", "status": pm_status},
+            {"id": "red_team_risks_addressed", "status": pm_status},
         ],
     }
 

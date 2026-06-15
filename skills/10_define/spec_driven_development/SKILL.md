@@ -17,7 +17,7 @@ Turn a business brief into an AI-coding-ready spec with explicit scope and testa
 - Business brief.
 - Existing `tasks/current/context.md` when present.
 - `AGENTS.md`; `DESIGN.md` for UI work.
-- Optional: `spec_template.md`, `acceptance_criteria_template.md`.
+- Optional: `spec_template.md`, `acceptance_criteria_template.md`, `pm_prd_template.md`, `user_story_template.md`, `prd_red_team_template.md`.
 
 ## Outputs
 - `tasks/current/prd.md`.
@@ -30,14 +30,19 @@ Turn a business brief into an AI-coding-ready spec with explicit scope and testa
 3. Describe the core workflow and expected states.
 4. Name data objects, external dependencies, and safety constraints.
 5. Write acceptance criteria that QA can turn into tests.
+6. For complex work, use PM-style product clarification to draft candidate PRD and user stories before promotion.
+7. Red-team load-bearing assumptions and keep unresolved blockers out of official artifacts.
 
 ## Quality Gate
 - The goal is measurable.
 - User roles and core workflow are explicit.
 - Scope boundaries prevent unrelated refactors.
 - Acceptance criteria are observable from public behavior.
+- Candidate user stories follow 3 C and INVEST enough to map to acceptance criteria.
+- PRD facts, assumptions, and open questions are separated before deterministic promotion.
 
 ## Context Hygiene
 - Do not inspect broad source files unless needed to define feasibility.
 - Do not include implementation details that belong in tech spec.
 - Capture open questions instead of filling gaps with assumptions.
+- PM Skills-inspired templates are candidate understanding aids; run artifacts and deterministic gates remain the source of truth.

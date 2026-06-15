@@ -33,7 +33,9 @@ It turns a single business brief into gated engineering artifacts, then compares
 - For skill routing, spec writing, context engineering, task breakdown, incremental implementation, TDD planning, failure recovery, or code review, read `skills/registry.yaml` first and then the corresponding `SKILL.md`.
 - Skills define the project method layer; they do not replace per-run artifacts in `tasks/current/` or execution evidence in `runs/<run_id>/`.
 - The first batch call order is `using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality`.
+- `ai_coding_quality_review` is a P1 companion after normal review for AI-coding architecture drift, contract drift, safety, data-integrity, and deployment-secret risk.
 - Skills are not better because there are more of them. Default to one primary skill per phase and at most one companion skill to avoid context pollution.
+- PM Skills-inspired PRD, user story, red-team, and test scenario templates are candidate understanding aids under existing P0 skills; they are not active skills and do not override deterministic gates or run artifacts.
 - Complex tasks should use coverage-driven slice planning: acceptance criteria map to `slices/*.yaml`, Codex slice-loop traces, and an implementation completion gate.
 
 ## Coding Rules

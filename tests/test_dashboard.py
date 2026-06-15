@@ -149,6 +149,9 @@ console.log(JSON.stringify(vm));
             encoding="utf-8",
         )
         (requirements_dir / "clarification.md").write_text("# Requirement Clarification\n", encoding="utf-8")
+        (requirements_dir / "prd.draft.md").write_text("# PM PRD Draft\n", encoding="utf-8")
+        (requirements_dir / "user_stories.draft.md").write_text("# User Stories Draft\n", encoding="utf-8")
+        (requirements_dir / "prd_red_team.md").write_text("# PRD Red-Team Draft\n", encoding="utf-8")
         (requirements_dir / "acceptance_criteria.draft.md").write_text("# Draft Acceptance Criteria\n", encoding="utf-8")
         (requirements_dir / "open_questions.md").write_text("# Open Questions\n", encoding="utf-8")
         (requirements_dir / "assumptions.md").write_text("# Assumptions\n", encoding="utf-8")
@@ -207,6 +210,7 @@ console.log(JSON.stringify(vm));
             encoding="utf-8",
         )
         (planning_dir / "acceptance_coverage_matrix.md").write_text("# Acceptance Coverage Matrix\n", encoding="utf-8")
+        (planning_dir / "test_scenarios.draft.md").write_text("# PM Test Scenarios Draft\n", encoding="utf-8")
         (planning_dir / "planning_quality_report.json").write_text(
             json.dumps({"schema_version": 1, "status": "passed", "summary": "Planning is ready for implementation.", "blockers": []}),
             encoding="utf-8",
@@ -607,6 +611,9 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["failure_classification"]["classification_decision"], "passed")
         self.assertEqual(state["requirement_understanding"]["candidate"]["model"], "gpt-5.3")
         self.assertEqual(state["requirement_understanding"]["capability_boundary"]["change_type"], "extend_existing_capability")
+        self.assertTrue(state["requirement_understanding"]["draft_artifacts"]["pm_prd_draft"])
+        self.assertTrue(state["requirement_understanding"]["draft_artifacts"]["user_stories_draft"])
+        self.assertTrue(state["requirement_understanding"]["draft_artifacts"]["prd_red_team"])
         self.assertEqual(state["tdd_plan"]["status"], "passed")
         self.assertEqual(state["memory_recall"]["matches"][0]["run_id"], "historical-dashboard-run")
         self.assertEqual(state["release_readiness"]["release_decision"], "ready_for_pr_ci")
@@ -622,8 +629,12 @@ console.log(JSON.stringify(vm));
         self.assertTrue(any(item["path"] == "codex/failure_classification.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_quality_report.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/requirement_understanding.candidate.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/prd.draft.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/user_stories.draft.md" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "requirements/prd_red_team.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/capability_boundary.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "requirements/capability_boundary.json" for item in state["artifacts"]))
+        self.assertTrue(any(item["path"] == "planning/test_scenarios.draft.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "planning/tdd_plan.md" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "planning/tdd_plan.json" for item in state["artifacts"]))
         self.assertTrue(any(item["path"] == "memory_recall.md" for item in state["artifacts"]))

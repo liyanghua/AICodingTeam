@@ -12,7 +12,13 @@ EXPECTED_SKILLS = {
     },
     "spec_driven_development": {
         "dir": "skills/10_define/spec_driven_development",
-        "templates": ["spec_template.md", "acceptance_criteria_template.md"],
+        "templates": [
+            "spec_template.md",
+            "acceptance_criteria_template.md",
+            "pm_prd_template.md",
+            "user_story_template.md",
+            "prd_red_team_template.md",
+        ],
     },
     "context_engineering": {
         "dir": "skills/10_define/context_engineering",
@@ -38,7 +44,7 @@ EXPECTED_SKILLS = {
     },
     "test_driven_development": {
         "dir": "skills/30_engineering/test_driven_development",
-        "templates": ["tdd_cases_template.md", "eval_template.md"],
+        "templates": ["tdd_cases_template.md", "eval_template.md", "pm_test_scenarios_template.md"],
     },
     "debugging_and_error_recovery": {
         "dir": "skills/40_execution/debugging_and_error_recovery",
@@ -47,6 +53,10 @@ EXPECTED_SKILLS = {
     "code_review_and_quality": {
         "dir": "skills/50_review/code_review_and_quality",
         "templates": ["review_checklist.md", "review_report_template.md"],
+    },
+    "ai_coding_quality_review": {
+        "dir": "skills/50_review/ai_coding_quality_review",
+        "templates": ["risk_taxonomy.md", "quality_report_template.md", "review_examples.md"],
     },
 }
 
@@ -64,6 +74,8 @@ EXPECTED_ORDER = (
     "planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> "
     "debugging_and_error_recovery -> code_review_and_quality"
 )
+
+EXPECTED_REVIEW_COMPANION_ORDER = "code_review_and_quality -> ai_coding_quality_review"
 
 MEMORY_SKILLS = {
     "run_retrospective": {
@@ -101,7 +113,6 @@ class ProjectSkillsTests(unittest.TestCase):
             self.assertIn(f"path: {spec['dir']}", block)
             for field in (
                 "stage:",
-                "priority: P0",
                 "source_inspiration:",
                 "replaces:",
                 "inputs:",
@@ -112,6 +123,8 @@ class ProjectSkillsTests(unittest.TestCase):
                 "context_budget:",
             ):
                 self.assertIn(field, block, f"{skill_id} missing registry field {field}")
+            expected_priority = "priority: P1" if skill_id == "ai_coding_quality_review" else "priority: P0"
+            self.assertIn(expected_priority, block)
             for template in spec["templates"]:
                 self.assertIn(template, block)
 
@@ -169,6 +182,7 @@ class ProjectSkillsTests(unittest.TestCase):
         readme_text = (root / "skills" / "README.md").read_text(encoding="utf-8")
 
         self.assertIn(EXPECTED_ORDER, readme_text)
+        self.assertIn(EXPECTED_REVIEW_COMPANION_ORDER, readme_text)
         self.assertIn("文档/注册表接入", readme_text)
         self.assertIn("不自动执行", readme_text)
         self.assertIn("不是越多越好", readme_text)
@@ -183,6 +197,7 @@ class ProjectSkillsTests(unittest.TestCase):
             self.assertIn("skills/registry.yaml", text)
             self.assertIn("Project Skills", text)
             self.assertIn(EXPECTED_ORDER, text)
+            self.assertIn("ai_coding_quality_review", text)
             self.assertIn("coverage-driven slice planning", text)
 
         self.assertIn("implementation completion gate", readme_text)
@@ -198,6 +213,31 @@ class ProjectSkillsTests(unittest.TestCase):
         for skill_id, spec in EXPECTED_SKILLS.items():
             self.assertRegex(skill_id, r"^[a-z0-9]+(_[a-z0-9]+)*$")
             self.assertEqual(Path(spec["dir"]).name, skill_id)
+
+    def test_ai_coding_quality_gate_documents_risk_model_and_report_policy(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        gate_text = (root / "docs" / "ai_coding_quality_gate.md").read_text(encoding="utf-8")
+        skill_dir = root / EXPECTED_SKILLS["ai_coding_quality_review"]["dir"]
+        skill_text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        taxonomy = (skill_dir / "risk_taxonomy.md").read_text(encoding="utf-8")
+        template = (skill_dir / "quality_report_template.md").read_text(encoding="utf-8")
+
+        for phrase in (
+            "AIQ-ARCH-DRIFT",
+            "MOB-SAFETY-BOUNDARY",
+            "MOB-NONDET-BUDGET",
+            "ASSET-DATA-INTEGRITY",
+            "DEPLOY-SECRET-BOUNDARY",
+            "health score",
+            "block / revise / ready_with_risk / ready",
+        ):
+            self.assertIn(phrase, gate_text)
+
+        self.assertIn("Do not use chat history as evidence", skill_text)
+        self.assertIn("companion", skill_text)
+        self.assertIn("MOB-CHANNEL-COUPLING", taxonomy)
+        for field in ("Risk Code", "Severity", "Symptom", "Root Cause", "Consequence", "Fix", "Evidence", "Recommendation"):
+            self.assertIn(field, template)
 
     def test_slice_planning_skill_requires_acceptance_coverage(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -262,3 +302,36 @@ class ProjectSkillsTests(unittest.TestCase):
             "final_report_mentions_coverage",
         ):
             self.assertIn(gate, gate_template)
+
+    def test_pm_skills_methods_are_absorbed_as_templates_not_active_skills(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        registry_text = (root / "skills" / "registry.yaml").read_text(encoding="utf-8")
+        spec_dir = root / EXPECTED_SKILLS["spec_driven_development"]["dir"]
+        tdd_dir = root / EXPECTED_SKILLS["test_driven_development"]["dir"]
+        spec_text = (spec_dir / "SKILL.md").read_text(encoding="utf-8")
+        tdd_text = (tdd_dir / "SKILL.md").read_text(encoding="utf-8")
+        readme_text = (root / "skills" / "README.md").read_text(encoding="utf-8")
+
+        for skill_id in ("create-prd", "user-stories", "test-scenarios", "strategy-red-team"):
+            self.assertNotIn(f"- id: {skill_id}", registry_text)
+
+        for template in ("pm_prd_template.md", "user_story_template.md", "prd_red_team_template.md"):
+            self.assertTrue((spec_dir / template).exists())
+            self.assertIn(template, registry_text)
+
+        self.assertTrue((tdd_dir / "pm_test_scenarios_template.md").exists())
+        self.assertIn("pm_test_scenarios_template.md", registry_text)
+
+        for phrase in (
+            "PM Skills",
+            "candidate understanding",
+            "deterministic gate",
+            "run artifacts",
+        ):
+            self.assertIn(phrase, readme_text)
+
+        self.assertIn("PM-style product clarification", spec_text)
+        self.assertIn("3 C", spec_text)
+        self.assertIn("INVEST", spec_text)
+        self.assertIn("happy path", tdd_text)
+        self.assertIn("edge case", tdd_text)

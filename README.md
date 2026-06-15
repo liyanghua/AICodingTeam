@@ -69,12 +69,16 @@ Current call order:
 using_agent_skills -> spec_driven_development -> context_engineering -> planning_and_task_breakdown -> incremental_implementation -> test_driven_development -> debugging_and_error_recovery -> code_review_and_quality
 ```
 
-Skills are not better because there are more of them: the active registry keeps only 8 P0 skills, defaults to one primary skill per phase, and allows at most one companion skill when a gate needs it.
+Skills are not better because there are more of them: the active registry keeps 8 P0 skills plus one P1 review companion, defaults to one primary skill per phase, and allows at most one companion skill when a gate needs it.
+
+For AI-coding quality trend review, `ai_coding_quality_review` is registered as a P1 companion after `code_review_and_quality`. It produces a report-only health score and fixed-risk-model findings for architecture drift, contract drift, safety boundaries, asset data integrity, and deployment-secret boundaries.
+
+For product-shaped requirements, the define and TDD skills now include PM Skills-inspired templates for PM-style PRD drafts, user stories, PRD red-team checks, and test scenarios. These templates only feed candidate understanding for strong LLM planning; official artifacts still require deterministic gates and are sourced from `runs/<run_id>/`.
 
 For complex tasks, the runtime now writes a deterministic requirement and planning layer before coding, using coverage-driven slice planning as the Project Skills method. `--planning-mode auto` keeps simple briefs on the deterministic path and prepares a draft-only strong-LLM channel for complex briefs; `--planning-mode llm_assisted` always prepares that draft channel. Official artifacts are promoted only after deterministic gates pass. The intended验收 path is:
 
 ```text
-brief analysis -> official acceptance criteria -> coverage matrix -> slices -> per-slice trace -> implementation completion gate
+brief analysis -> PM-style draft understanding -> official acceptance criteria -> coverage matrix -> slices -> per-slice trace -> implementation completion gate
 ```
 
 The source of truth remains `runs/<run_id>/`: `requirements/brief_analysis.json`, `acceptance_criteria.md`, `context_pack.md`, `planning/acceptance_coverage_matrix.*`, `slices/*.yaml`, `codex/slices/*/slice_trace.json`, and `implementation_completion_gate.*`. Codex continuity must come from those run artifacts, current diff, blockers, and verification evidence rather than chat history.
