@@ -185,10 +185,12 @@
     const payload = run.requirement_understanding || {};
     const analysis = payload.brief_analysis || {};
     const quality = payload.quality_report || {};
+    const candidate = payload.candidate || {};
     const blockers = Array.isArray(quality.blockers) ? quality.blockers : [];
     const warnings = Array.isArray(quality.warnings) ? quality.warnings : [];
     const skills = Array.isArray(analysis.recommended_skills) ? analysis.recommended_skills : [];
     const status = quality.status || (Object.keys(analysis).length ? "unknown" : "not_generated");
+    const validation = candidate.validation || quality.candidate_validation || {};
     return {
       status,
       statusLabel: lookup(i18n, `complexTask.status.${status}`, status),
@@ -196,6 +198,9 @@
       complexity: analysis.complexity || "",
       planningMode: analysis.planning_mode || "",
       llmDraftRequested: Boolean(analysis.llm_draft_requested),
+      candidateSource: quality.candidate_source || candidate.candidate_source || "deterministic_only",
+      requirementsModel: quality.requirements_model || candidate.model || analysis.requirements_model || "",
+      candidateValidationStatus: validation.status || "",
       blockingQuestions: analysis.blocking_questions || [],
       assumptions: analysis.assumptions || [],
       recommendedSkills: skills,
@@ -574,6 +579,9 @@
         `${lookup(i18n, "complexTask.statusLabel", "状态")}: ${vm.requirementUnderstanding.statusLabel || ""}`,
         vm.requirementUnderstanding.complexity ? `${lookup(i18n, "complexTask.complexity", "复杂度")}: ${vm.requirementUnderstanding.complexity}` : "",
         vm.requirementUnderstanding.planningMode ? `${lookup(i18n, "complexTask.planningMode", "规划模式")}: ${vm.requirementUnderstanding.planningMode}` : "",
+        vm.requirementUnderstanding.candidateSource ? `${lookup(i18n, "complexTask.candidateSource", "候选来源")}: ${vm.requirementUnderstanding.candidateSource}` : "",
+        vm.requirementUnderstanding.requirementsModel ? `${lookup(i18n, "complexTask.requirementsModel", "需求模型")}: ${vm.requirementUnderstanding.requirementsModel}` : "",
+        vm.requirementUnderstanding.candidateValidationStatus ? `${lookup(i18n, "complexTask.candidateValidation", "候选校验")}: ${vm.requirementUnderstanding.candidateValidationStatus}` : "",
         ...(vm.requirementUnderstanding.blockingQuestions || []).map((item) => `${lookup(i18n, "complexTask.blockingQuestion", "阻塞问题")}: ${item}`),
         ...(vm.memoryRecall.recommendedSkills || []).slice(0, 3).map((item) => `${lookup(i18n, "memoryRecall.skills", "推荐 Project Skills")}: ${item.id || ""}`),
       ].filter(Boolean);

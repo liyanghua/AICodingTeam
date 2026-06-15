@@ -75,6 +75,9 @@ For AI-coding quality trend review, `ai_coding_quality_review` is registered as 
 
 For product-shaped requirements, the define and TDD skills now include PM Skills-inspired templates for PM-style PRD drafts, user stories, PRD red-team checks, and test scenarios. These templates only feed candidate understanding for strong LLM planning; official artifacts still require deterministic gates and are sourced from `runs/<run_id>/`.
 
+The requirements-model integration contract is documented in `docs/requirements_model_candidate_understanding_spec.md`: the model may propose candidate understanding, but deterministic gates decide what becomes official.
+Use `--requirements-model <model>` with `--planning-mode llm_assisted|auto` to enable candidate understanding. Provider settings may come from `--requirements-env-file`, or from `--env-file` when omitted; v1 accepts `REQUIREMENTS_MODEL_BASE_URL` / `REQUIREMENTS_MODEL_API_KEY` and can also reuse `AICODEMIRROR_BASE_URL` / `AICODEMIRROR_KEY`. The recorded request/response artifacts are sanitized summaries, not raw prompts or secrets.
+
 For complex tasks, the runtime now writes a deterministic requirement and planning layer before coding, using coverage-driven slice planning as the Project Skills method. `--planning-mode auto` keeps simple briefs on the deterministic path and prepares a draft-only strong-LLM channel for complex briefs; `--planning-mode llm_assisted` always prepares that draft channel. Official artifacts are promoted only after deterministic gates pass. The intended验收 path is:
 
 ```text

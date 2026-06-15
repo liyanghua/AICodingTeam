@@ -141,6 +141,9 @@ console.log(JSON.stringify(vm));
                     "schema_version": 1,
                     "status": "passed",
                     "summary": "Requirement understanding is ready for planning.",
+                    "candidate_source": "model",
+                    "requirements_model": "gpt-5.3",
+                    "candidate_validation": {"status": "passed", "blockers": [], "warnings": []},
                     "blockers": [],
                     "warnings": ["llm_draft_channel_used_but_not_promoted"],
                     "checks": [{"id": "stable_acceptance_ids", "status": "passed"}],
@@ -161,6 +164,8 @@ console.log(JSON.stringify(vm));
                     "schema_version": 1,
                     "run_id": run_id,
                     "model": "gpt-5.3",
+                    "candidate_source": "model",
+                    "validation": {"status": "passed", "blockers": [], "warnings": []},
                     "clarification_angles": ["业务目标", "输入输出", "可观测验收"],
                     "blocking_questions": [],
                 }
@@ -610,6 +615,7 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["implementation_trace"]["status"], "completed")
         self.assertEqual(state["failure_classification"]["classification_decision"], "passed")
         self.assertEqual(state["requirement_understanding"]["candidate"]["model"], "gpt-5.3")
+        self.assertEqual(state["requirement_understanding"]["quality_report"]["candidate_source"], "model")
         self.assertEqual(state["requirement_understanding"]["capability_boundary"]["change_type"], "extend_existing_capability")
         self.assertTrue(state["requirement_understanding"]["draft_artifacts"]["pm_prd_draft"])
         self.assertTrue(state["requirement_understanding"]["draft_artifacts"]["user_stories_draft"])
@@ -1189,6 +1195,19 @@ console.log(JSON.stringify(vm));
                 {"id": "before_coding", "status": "passed", "missing_artifacts": []},
                 {"id": "before_publish", "status": "passed", "missing_artifacts": []},
             ],
+            "requirement_understanding": {
+                "brief_analysis": {"complexity": "complex", "planning_mode": "llm_assisted", "llm_draft_requested": True},
+                "candidate": {"candidate_source": "model", "model": "gpt-5.3", "validation": {"status": "passed"}},
+                "quality_report": {
+                    "status": "passed",
+                    "summary": "Requirement understanding is ready for planning.",
+                    "candidate_source": "model",
+                    "requirements_model": "gpt-5.3",
+                    "candidate_validation": {"status": "passed"},
+                    "blockers": [],
+                    "warnings": [],
+                },
+            },
             "apply_gate": {"status": "passed", "reason": "ready"},
             "artifacts": [
                 {"label": "Task Package", "path": "task.yaml", "scope": "run", "exists": True},
@@ -1283,6 +1302,9 @@ console.log(JSON.stringify(vm));
         self.assertEqual(vm["health"]["label"], "已完成可采纳")
         self.assertEqual(vm["artifactQuality"]["status"], "passed")
         self.assertEqual(vm["implementationFlow"]["status"], "completed")
+        self.assertEqual(vm["requirementUnderstanding"]["candidateSource"], "model")
+        self.assertEqual(vm["requirementUnderstanding"]["requirementsModel"], "gpt-5.3")
+        self.assertEqual(vm["requirementUnderstanding"]["candidateValidationStatus"], "passed")
         self.assertEqual(vm["memoryRecall"]["matches"][0]["run_id"], "similar-run")
         self.assertEqual(vm["memoryRecall"]["recommendedSkills"][0]["id"], "context_engineering")
         design_stage = vm["stages"][1]
@@ -1354,6 +1376,7 @@ console.log(JSON.stringify(vm));
 
         self.assertEqual(vm["status"], "needs_attention")
         self.assertEqual(vm["recommendedFlowNodeId"], "requirement")
+        self.assertEqual(vm["requirementUnderstanding"]["candidateSource"], "deterministic_only")
         self.assertEqual(requirement_stage["status"], "needs_attention")
         self.assertEqual(requirement_stage["statusLabel"], "需要处理")
         self.assertTrue(any(artifact["path"] == "requirements/brief_analysis.json" for artifact in requirement_stage["artifacts"]))

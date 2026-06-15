@@ -423,6 +423,9 @@ function renderFlowNodeSpecifics(node, vm) {
       vm.requirementUnderstanding.summary,
       vm.requirementUnderstanding.complexity ? `${t("complexTask.complexity")}: ${vm.requirementUnderstanding.complexity}` : "",
       vm.requirementUnderstanding.planningMode ? `${t("complexTask.planningMode")}: ${vm.requirementUnderstanding.planningMode}` : "",
+      vm.requirementUnderstanding.candidateSource ? `${t("complexTask.candidateSource")}: ${vm.requirementUnderstanding.candidateSource}` : "",
+      vm.requirementUnderstanding.requirementsModel ? `${t("complexTask.requirementsModel")}: ${vm.requirementUnderstanding.requirementsModel}` : "",
+      vm.requirementUnderstanding.candidateValidationStatus ? `${t("complexTask.candidateValidation")}: ${vm.requirementUnderstanding.candidateValidationStatus}` : "",
       ...(vm.requirementUnderstanding.blockingQuestions || []).slice(0, 3).map((item) => `${t("complexTask.blockingQuestion")}: ${item}`),
     ]);
     renderFlowNodeSpecificRows(container, t("memoryRecall.title"), [
@@ -626,6 +629,9 @@ function renderRequirementUnderstanding(requirement) {
   ];
   if (requirement.complexity) rows.push(`${t("complexTask.complexity")}: ${requirement.complexity}`);
   if (requirement.planningMode) rows.push(`${t("complexTask.planningMode")}: ${requirement.planningMode}`);
+  if (requirement.candidateSource) rows.push(`${t("complexTask.candidateSource")}: ${requirement.candidateSource}`);
+  if (requirement.requirementsModel) rows.push(`${t("complexTask.requirementsModel")}: ${requirement.requirementsModel}`);
+  if (requirement.candidateValidationStatus) rows.push(`${t("complexTask.candidateValidation")}: ${requirement.candidateValidationStatus}`);
   rows.push(`${t("complexTask.llmDraft")}: ${requirement.llmDraftRequested ? t("githubPr.yes") : t("githubPr.no")}`);
   for (const question of (requirement.blockingQuestions || []).slice(0, 2)) rows.push(`${t("complexTask.blockingQuestion")}: ${question}`);
   for (const blocker of (requirement.blockers || []).slice(0, 2)) rows.push(`${t("complexTask.blocker")}: ${blocker}`);

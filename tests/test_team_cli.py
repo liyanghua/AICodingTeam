@@ -71,6 +71,8 @@ class TeamCliTests(unittest.TestCase):
                 "gpt-5.3",
                 "--requirements-reasoning-effort",
                 "high",
+                "--requirements-env-file",
+                ".env.requirements",
             ],
             ["team", "status", "--run-id", "team-run-1"],
             ["team", "status", "--run-id", "team-run-1", "--summary"],
@@ -196,6 +198,8 @@ class TeamCliTests(unittest.TestCase):
                     "gpt-5.3",
                     "--requirements-reasoning-effort",
                     "high",
+                    "--requirements-env-file",
+                    str(root / ".env.requirements"),
                 ]
             )
 
@@ -210,6 +214,7 @@ class TeamCliTests(unittest.TestCase):
         self.assertEqual(payload["executor_config"]["complex_task"]["planning_mode"], "llm_assisted")
         self.assertEqual(payload["executor_config"]["complex_task"]["requirements_model"], "gpt-5.3")
         self.assertEqual(payload["executor_config"]["complex_task"]["requirements_reasoning_effort"], "high")
+        self.assertEqual(payload["executor_config"]["complex_task"]["requirements_env_file"], str(root / ".env.requirements"))
         self.assertTrue(draft_exists)
         self.assertTrue(coverage_exists)
         self.assertTrue(slice_exists)

@@ -99,6 +99,7 @@ class TeamRuntime:
         planning_mode: str = "auto",
         requirements_model: str = "",
         requirements_reasoning_effort: str = "medium",
+        requirements_env_file: Path | str | None = None,
     ) -> None:
         self.team = team if team is not None else team_spec
         self.domain = domain if domain is not None else domain_spec
@@ -132,6 +133,7 @@ class TeamRuntime:
             planning_mode=planning_mode,
             requirements_model=requirements_model,
             requirements_reasoning_effort=requirements_reasoning_effort,
+            requirements_env_file=str(requirements_env_file or codex_env_file or ""),
         ).normalized()
 
     @classmethod
@@ -151,6 +153,7 @@ class TeamRuntime:
         planning_mode: str = "auto",
         requirements_model: str = "",
         requirements_reasoning_effort: str = "medium",
+        requirements_env_file: Path | str | None = None,
     ) -> "TeamRuntime":
         return cls(
             team=load_team_spec(team_path),
@@ -166,6 +169,7 @@ class TeamRuntime:
             planning_mode=planning_mode,
             requirements_model=requirements_model,
             requirements_reasoning_effort=requirements_reasoning_effort,
+            requirements_env_file=requirements_env_file,
         )
 
     @classmethod
@@ -185,6 +189,7 @@ class TeamRuntime:
         planning_mode: str = "auto",
         requirements_model: str = "",
         requirements_reasoning_effort: str = "medium",
+        requirements_env_file: Path | str | None = None,
     ) -> "TeamRuntime":
         return cls(
             team=team or default_team_spec(),
@@ -200,6 +205,7 @@ class TeamRuntime:
             planning_mode=planning_mode,
             requirements_model=requirements_model,
             requirements_reasoning_effort=requirements_reasoning_effort,
+            requirements_env_file=requirements_env_file,
         )
 
     def run(

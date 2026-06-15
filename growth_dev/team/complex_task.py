@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib import error, request
 
 from ..utils import ensure_dir, now_iso, write_json
 from .models import DomainSpec
@@ -51,6 +53,7 @@ class ComplexTaskConfig:
     planning_mode: str = "auto"
     requirements_model: str = ""
     requirements_reasoning_effort: str = "medium"
+    requirements_env_file: str = ""
 
     def normalized(self) -> "ComplexTaskConfig":
         mode = self.planning_mode or "auto"
@@ -63,6 +66,7 @@ class ComplexTaskConfig:
             planning_mode=mode,
             requirements_model=self.requirements_model or "",
             requirements_reasoning_effort=effort,
+            requirements_env_file=self.requirements_env_file or "",
         )
 
     def to_dict(self) -> dict[str, str]:
@@ -71,6 +75,7 @@ class ComplexTaskConfig:
             "planning_mode": config.planning_mode,
             "requirements_model": config.requirements_model,
             "requirements_reasoning_effort": config.requirements_reasoning_effort,
+            "requirements_env_file": config.requirements_env_file,
         }
 
 
@@ -96,14 +101,7 @@ def generate_complex_task_artifacts(
     analysis = _brief_analysis(run_id, artifact_brief, domain, inputs, normalized)
     write_json(requirements_dir / "brief_analysis.json", analysis)
 
-    draft_paths: list[str] = []
     llm_draft_requested = _should_generate_llm_draft(analysis, normalized)
-    if llm_draft_requested:
-        draft_paths = _write_llm_draft_placeholders(requirements_dir, analysis, normalized)
-        candidate = _requirement_candidate(run_id, artifact_brief, domain, artifact_inputs, analysis, normalized)
-        write_json(requirements_dir / "requirement_understanding.candidate.json", candidate)
-        draft_paths.append(REQUIREMENT_CANDIDATE_ARTIFACT)
-
     capability_boundary = _capability_boundary(run_id, artifact_brief, domain, artifact_inputs, run_dir)
     write_json(requirements_dir / "capability_boundary.json", capability_boundary)
     (requirements_dir / "capability_boundary.md").write_text(
@@ -111,7 +109,24 @@ def generate_complex_task_artifacts(
         encoding="utf-8",
     )
 
-    acceptance = _acceptance_criteria(artifact_brief, domain, artifact_inputs, analysis)
+    draft_paths: list[str] = []
+    candidate_result = _empty_candidate_result()
+    if llm_draft_requested:
+        candidate_result = _prepare_requirement_candidate(
+            run_id=run_id,
+            run_dir=run_dir,
+            requirements_dir=requirements_dir,
+            brief=artifact_brief,
+            domain=domain,
+            inputs=artifact_inputs,
+            analysis=analysis,
+            config=normalized,
+            capability_boundary=capability_boundary,
+        )
+        draft_paths.extend(candidate_result["artifact_paths"])
+
+    candidate = candidate_result.get("candidate") if isinstance(candidate_result.get("candidate"), dict) else None
+    acceptance = _acceptance_criteria(artifact_brief, domain, artifact_inputs, analysis, candidate)
     acceptance_md = _acceptance_criteria_markdown(acceptance)
     (run_dir / "acceptance_criteria.md").write_text(acceptance_md, encoding="utf-8")
 
@@ -126,13 +141,13 @@ def generate_complex_task_artifacts(
     write_json(planning_dir / "acceptance_coverage_matrix.json", coverage)
     (planning_dir / "acceptance_coverage_matrix.md").write_text(_coverage_matrix_markdown(coverage), encoding="utf-8")
 
-    tdd_plan = _tdd_plan(run_id, artifact_brief, domain, acceptance, slices, artifact_inputs)
+    tdd_plan = _tdd_plan(run_id, artifact_brief, domain, acceptance, slices, artifact_inputs, candidate)
     write_json(planning_dir / "tdd_plan.json", tdd_plan)
     (planning_dir / "tdd_plan.md").write_text(_tdd_plan_markdown(tdd_plan), encoding="utf-8")
     if llm_draft_requested:
-        draft_paths.extend(_write_pm_planning_drafts(planning_dir, acceptance, tdd_plan))
+        draft_paths.extend(_write_pm_planning_drafts(planning_dir, acceptance, tdd_plan, candidate))
 
-    requirement_quality = _requirement_quality_report(analysis, acceptance, coverage, capability_boundary)
+    requirement_quality = _requirement_quality_report(analysis, acceptance, coverage, capability_boundary, candidate_result)
     planning_quality = _planning_quality_report(coverage, slices, tdd_plan)
     write_json(requirements_dir / "requirement_quality_report.json", requirement_quality)
     write_json(planning_dir / "planning_quality_report.json", planning_quality)
@@ -186,6 +201,362 @@ def _brief_analysis(run_id: str, brief: str, domain: DomainSpec, inputs: dict[st
     }
 
 
+def _empty_candidate_result() -> dict[str, Any]:
+    return {
+        "source": "deterministic_only",
+        "candidate": None,
+        "validation": {"status": "not_started", "blockers": [], "warnings": []},
+        "artifact_paths": [],
+    }
+
+
+def _prepare_requirement_candidate(
+    *,
+    run_id: str,
+    run_dir: Path,
+    requirements_dir: Path,
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    config: ComplexTaskConfig,
+    capability_boundary: dict[str, Any],
+) -> dict[str, Any]:
+    raw_candidate: dict[str, Any] | None = None
+    source = "fallback_placeholder"
+    warnings: list[str] = []
+    blockers: list[str] = []
+
+    injected = inputs.get("requirements_model_candidate")
+    if isinstance(injected, dict):
+        raw_candidate = injected
+        source = "model"
+    elif config.requirements_model:
+        model_result = _call_requirements_model(
+            run_dir=run_dir,
+            brief=brief,
+            domain=domain,
+            inputs=inputs,
+            analysis=analysis,
+            config=config,
+            capability_boundary=capability_boundary,
+        )
+        raw_candidate = model_result.get("candidate") if isinstance(model_result.get("candidate"), dict) else None
+        source = str(model_result.get("source") or "fallback_placeholder")
+        warnings.extend(_string_list(model_result.get("warnings")))
+        blockers.extend(_string_list(model_result.get("blockers")))
+
+    if raw_candidate is None:
+        raw_candidate = _fallback_requirement_candidate(run_id, brief, domain, inputs, analysis, config, warning="requirements_model_unavailable")
+        source = "fallback_placeholder"
+        warnings.append("requirements_model_unavailable")
+
+    candidate = _normalize_requirement_candidate(raw_candidate, run_id, brief, domain, inputs, analysis, config, source=source)
+    validation = _validate_requirement_candidate(candidate)
+    validation["warnings"] = _dedupe([*warnings, *_string_list(validation.get("warnings"))])
+    validation["blockers"] = _dedupe([*blockers, *_string_list(validation.get("blockers"))])
+    candidate["validation"] = validation
+    write_json(requirements_dir / "requirement_understanding.candidate.json", candidate)
+    artifact_paths = [REQUIREMENT_CANDIDATE_ARTIFACT]
+    artifact_paths.extend(_render_requirement_candidate_markdown(requirements_dir, candidate))
+    return {
+        "source": source,
+        "candidate": candidate,
+        "validation": validation,
+        "artifact_paths": artifact_paths,
+    }
+
+
+def _call_requirements_model(
+    *,
+    run_dir: Path,
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    config: ComplexTaskConfig,
+    capability_boundary: dict[str, Any],
+) -> dict[str, Any]:
+    env_values = _read_env_file_values(Path(config.requirements_env_file)) if config.requirements_env_file else {}
+    base_url = (
+        env_values.get("REQUIREMENTS_MODEL_BASE_URL")
+        or env_values.get("requirements_model_base_url")
+        or env_values.get("AICODEMIRROR_BASE_URL")
+        or env_values.get("aicodemirror_base_url")
+        or os.environ.get("REQUIREMENTS_MODEL_BASE_URL", "")
+        or os.environ.get("AICODEMIRROR_BASE_URL", "")
+    )
+    api_key = (
+        env_values.get("REQUIREMENTS_MODEL_API_KEY")
+        or env_values.get("requirements_model_api_key")
+        or env_values.get("AICODEMIRROR_KEY")
+        or env_values.get("aicodemirror_key")
+        or os.environ.get("REQUIREMENTS_MODEL_API_KEY", "")
+        or os.environ.get("AICODEMIRROR_KEY", "")
+    )
+    if not base_url or not api_key:
+        return {"source": "fallback_placeholder", "warnings": ["requirements_model_not_configured"]}
+
+    request_payload = _requirements_model_request_payload(brief, domain, inputs, analysis, config, capability_boundary)
+    messages = request_payload.get("messages", []) if isinstance(request_payload.get("messages"), list) else []
+    safe_request = _redact_payload(
+        {
+            "model": config.requirements_model,
+            "base_url": base_url,
+            "message_count": len(messages),
+            "domain_id": domain.domain_id,
+            "input_keys": sorted(str(key) for key in inputs.keys()),
+            "required_contract": "docs/requirements_model_candidate_understanding_spec.md#Candidate Output Contract",
+        }
+    )
+    write_json(run_dir / "requirements" / "requirements_model_request.json", safe_request)
+    try:
+        body = json.dumps(request_payload).encode("utf-8")
+        req = request.Request(
+            base_url.rstrip("/") + "/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with request.urlopen(req, timeout=30) as response:  # nosec - URL is user-configured provider endpoint.
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, error.URLError, json.JSONDecodeError) as exc:
+        write_json(
+            run_dir / "requirements" / "requirements_model_error.json",
+            {"type": type(exc).__name__, "message": _redact_text(str(exc))},
+        )
+        return {"source": "fallback_placeholder", "warnings": ["requirements_model_call_failed"]}
+
+    content = _extract_model_content(payload)
+    try:
+        candidate = json.loads(content)
+    except json.JSONDecodeError:
+        write_json(
+            run_dir / "requirements" / "requirements_model_error.json",
+            {"type": "JSONDecodeError", "message": "requirements model did not return JSON"},
+        )
+        return {"source": "fallback_placeholder", "warnings": ["requirements_model_invalid_json"]}
+    write_json(
+        run_dir / "requirements" / "requirements_model_response.json",
+        {"model": _redact_text(config.requirements_model), "candidate_keys": sorted(candidate.keys()) if isinstance(candidate, dict) else []},
+    )
+    return {"source": "model", "candidate": candidate if isinstance(candidate, dict) else None}
+
+
+def _requirements_model_request_payload(
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    config: ComplexTaskConfig,
+    capability_boundary: dict[str, Any],
+) -> dict[str, Any]:
+    system = (
+        "Return JSON only. You produce candidate requirement understanding for an AI coding runtime. "
+        "Do not write code. Do not promote assumptions as facts. Respect safety boundaries."
+    )
+    user = {
+        "brief": brief,
+        "analysis": analysis,
+        "domain": {
+            "domain_id": domain.domain_id,
+            "summary": domain.summary,
+            "risk_rules": list(domain.risk_rules),
+            "evaluation_rules": list(domain.evaluation_rules),
+            "metadata": _redact_payload(domain.metadata),
+        },
+        "inputs": inputs,
+        "capability_boundary": capability_boundary,
+        "required_contract": "docs/requirements_model_candidate_understanding_spec.md#Candidate Output Contract",
+    }
+    return {
+        "model": config.requirements_model,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+        ],
+    }
+
+
+def _extract_model_content(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            message = first.get("message")
+            if isinstance(message, dict) and isinstance(message.get("content"), str):
+                return message["content"]
+            if isinstance(first.get("text"), str):
+                return first["text"]
+    if isinstance(payload.get("content"), str):
+        return str(payload["content"])
+    return ""
+
+
+def _fallback_requirement_candidate(
+    run_id: str,
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    config: ComplexTaskConfig,
+    *,
+    warning: str,
+) -> dict[str, Any]:
+    candidate = _requirement_candidate(run_id, brief, domain, inputs, analysis, config)
+    candidate.update(
+        {
+            "status": "fallback_placeholder",
+            "summary": _compact(brief, 240),
+            "warnings": [warning],
+            "clarification": {
+                "business_goal": _compact(brief, 240),
+                "users": ["task owner"],
+                "operators": ["AI-Team operator"],
+                "core_workflow": ["submit brief", "generate gated artifacts", "review official outputs"],
+                "inputs": sorted(str(key) for key in inputs.keys()),
+                "outputs": ["official requirements", "coverage matrix", "TDD plan", "slices"],
+                "non_goals": ["do not bypass deterministic gates"],
+                "compatibility_requirements": ["preserve existing supported domain flows"],
+                "safety_constraints": list(domain.risk_rules),
+                "environment_dependencies": [],
+            },
+            "open_questions": [{"id": "Q-001", "question": item, "blocking": True, "why_it_matters": "Needs human clarification."} for item in analysis.get("blocking_questions", [])],
+            "assumptions": [{"id": f"ASM-{index:03d}", "statement": item, "risk": "medium", "needs_validation": True} for index, item in enumerate(analysis.get("assumptions", []), start=1)],
+            "acceptance_criteria_draft": [],
+            "user_stories": [],
+            "prd_red_team": {
+                "recommendation": "block" if analysis.get("blocking_questions") else "promote",
+                "load_bearing_assumptions": list(analysis.get("assumptions", [])),
+                "scope_risks": ["old-domain leakage", "unrelated refactors"],
+                "testability_risks": ["acceptance criteria must map to tests"],
+                "cheapest_validation": ["review official artifacts and run declared verification commands"],
+            },
+            "test_scenarios": [],
+            "promotion_notes": {"facts": [], "assumptions": list(analysis.get("assumptions", [])), "must_not_promote": []},
+        }
+    )
+    return candidate
+
+
+def _normalize_requirement_candidate(
+    raw: dict[str, Any],
+    run_id: str,
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    config: ComplexTaskConfig,
+    *,
+    source: str,
+) -> dict[str, Any]:
+    candidate = dict(raw)
+    candidate.setdefault("schema_version", 1)
+    candidate.setdefault("run_id", run_id)
+    candidate.setdefault("domain_id", domain.domain_id)
+    candidate.setdefault("generated_at", now_iso())
+    candidate.setdefault("model", _redact_text(config.requirements_model or "not_configured"))
+    candidate.setdefault("reasoning_effort", config.requirements_reasoning_effort)
+    candidate.setdefault("status", "candidate_only" if source == "model" else "fallback_placeholder")
+    candidate.setdefault("summary", _compact(brief, 240))
+    candidate.setdefault("method_source", "PM Skills-inspired candidate understanding; official artifacts require deterministic gates.")
+    candidate.setdefault(
+        "clarification_angles",
+        ["业务目标", "用户/操作者", "输入输出", "主流程", "边界/非目标", "兼容性", "安全风险", "可观测验收", "部署/环境依赖", "用户故事", "测试场景", "PRD red-team"],
+    )
+    candidate.setdefault(
+        "candidate_scope",
+        {
+            "goal": _compact(brief),
+            "domain_id": domain.domain_id,
+            "allowed_paths": _string_list(inputs.get("allowed_paths")) or _string_list(domain.metadata.get("allowed_paths")),
+            "verification_commands": _string_list(inputs.get("verification_commands")) or _string_list(domain.metadata.get("verification_commands")),
+        },
+    )
+    candidate.setdefault("blocking_questions", list(analysis.get("blocking_questions", [])))
+    candidate.setdefault("safety_boundaries", list(domain.risk_rules))
+    candidate.setdefault("promotion_policy", "Do not promote this candidate unless deterministic requirement quality gates pass.")
+    candidate["candidate_source"] = source
+    return _redact_payload(candidate)
+
+
+def _validate_requirement_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if candidate.get("schema_version") != 1:
+        blockers.append("candidate_schema_invalid")
+    if candidate.get("status") not in {"candidate_only", "fallback_placeholder"}:
+        blockers.append("candidate_status_invalid")
+    if _candidate_open_questions(candidate, blocking_only=True):
+        blockers.append("candidate_blocking_questions_present")
+    red_team = candidate.get("prd_red_team") if isinstance(candidate.get("prd_red_team"), dict) else {}
+    if str(red_team.get("recommendation", "")).lower() == "block":
+        blockers.append("candidate_red_team_block")
+    for story in _candidate_list(candidate, "user_stories"):
+        if not all(str(story.get(field, "")).strip() for field in ("id", "role", "capability", "value")):
+            warnings.append("user_story_incomplete")
+    for item in _candidate_list(candidate, "acceptance_criteria_draft"):
+        if not item.get("observable") or not item.get("testable"):
+            blockers.append(f"candidate_acceptance_not_testable:{item.get('id', '')}")
+    if _contains_secret(json.dumps(candidate, ensure_ascii=False)):
+        blockers.append("candidate_contains_secret")
+    status = "passed" if not blockers else "failed"
+    return {"status": status, "blockers": _dedupe(blockers), "warnings": _dedupe(warnings)}
+
+
+def _candidate_list(candidate: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:
+    if not isinstance(candidate, dict):
+        return []
+    value = candidate.get(key)
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _candidate_open_questions(candidate: dict[str, Any] | None, *, blocking_only: bool = False) -> list[dict[str, Any]]:
+    questions = _candidate_list(candidate, "open_questions")
+    if not blocking_only:
+        return questions
+    return [item for item in questions if bool(item.get("blocking"))]
+
+
+def _contains_secret(value: str) -> bool:
+    redacted = _redact_text(value)
+    return redacted != value
+
+
+def _read_env_file_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def _render_requirement_candidate_markdown(requirements_dir: Path, candidate: dict[str, Any]) -> list[str]:
+    files = {
+        "clarification.md": _candidate_clarification_lines(candidate),
+        "acceptance_criteria.draft.md": _candidate_acceptance_draft_lines(candidate),
+        "open_questions.md": _candidate_open_questions_lines(candidate),
+        "assumptions.md": _candidate_assumptions_lines(candidate),
+        "prd.draft.md": _candidate_prd_draft_lines(candidate),
+        "user_stories.draft.md": _candidate_user_story_lines(candidate),
+        "prd_red_team.md": _candidate_red_team_lines(candidate),
+    }
+    paths: list[str] = []
+    for name, lines in files.items():
+        (requirements_dir / name).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        paths.append(f"requirements/{name}")
+    return paths
+
+
 def _write_llm_draft_placeholders(requirements_dir: Path, analysis: dict[str, Any], config: ComplexTaskConfig) -> list[str]:
     model = _redact_text(config.requirements_model or "not_configured")
     note = (
@@ -227,9 +598,10 @@ def _write_llm_draft_placeholders(requirements_dir: Path, analysis: dict[str, An
     return paths
 
 
-def _write_pm_planning_drafts(planning_dir: Path, acceptance: list[dict[str, Any]], tdd_plan: dict[str, Any]) -> list[str]:
+def _write_pm_planning_drafts(planning_dir: Path, acceptance: list[dict[str, Any]], tdd_plan: dict[str, Any], candidate: dict[str, Any] | None = None) -> list[str]:
     path = planning_dir / "test_scenarios.draft.md"
-    path.write_text(_pm_test_scenarios_markdown(acceptance, tdd_plan), encoding="utf-8")
+    candidate_markdown = _candidate_test_scenarios_markdown(candidate or {})
+    path.write_text(candidate_markdown or _pm_test_scenarios_markdown(acceptance, tdd_plan), encoding="utf-8")
     return ["planning/test_scenarios.draft.md"]
 
 
@@ -270,6 +642,160 @@ def _pm_prd_draft_lines(analysis: dict[str, Any], model: str, note: str) -> list
         "## Open Questions",
         *([f"- {item}" for item in questions] or ["- No blocking questions detected by deterministic analysis."]),
     ]
+
+
+def _candidate_clarification_lines(candidate: dict[str, Any]) -> list[str]:
+    clarification = candidate.get("clarification") if isinstance(candidate.get("clarification"), dict) else {}
+    lines = [
+        "# Requirement Clarification",
+        "",
+        f"- Candidate source: `{candidate.get('candidate_source', '')}`",
+        f"- Model: `{candidate.get('model', '')}`",
+        f"- Status: `{candidate.get('status', '')}`",
+        "",
+        "## Business Goal",
+        str(clarification.get("business_goal") or candidate.get("summary") or ""),
+        "",
+        "## Users",
+        *(_markdown_bullets(clarification.get("users")) or ["- none"]),
+        "",
+        "## Operators",
+        *(_markdown_bullets(clarification.get("operators")) or ["- none"]),
+        "",
+        "## Core Workflow",
+        *(_ordered_markdown(clarification.get("core_workflow")) or ["1. none"]),
+        "",
+        "## Non-Goals",
+        *(_markdown_bullets(clarification.get("non_goals")) or ["- none"]),
+        "",
+        "## Safety Constraints",
+        *(_markdown_bullets(clarification.get("safety_constraints") or candidate.get("safety_boundaries")) or ["- none"]),
+    ]
+    return lines
+
+
+def _candidate_acceptance_draft_lines(candidate: dict[str, Any]) -> list[str]:
+    lines = ["# Draft Acceptance Criteria", "", "Candidate-only. Official criteria live in `acceptance_criteria.md`.", ""]
+    for item in _candidate_list(candidate, "acceptance_criteria_draft"):
+        evidence = ", ".join(_string_list(item.get("evidence"))) or "not specified"
+        lines.append(f"- `{item.get('id', '')}` {item.get('description', '')} Evidence: {evidence}")
+    if len(lines) == 4:
+        lines.append("- none")
+    return lines
+
+
+def _candidate_open_questions_lines(candidate: dict[str, Any]) -> list[str]:
+    lines = ["# Open Questions", ""]
+    questions = _candidate_open_questions(candidate)
+    for item in questions:
+        blocking = "blocking" if item.get("blocking") else "non-blocking"
+        lines.append(f"- `{item.get('id', '')}` ({blocking}) {item.get('question', '')}")
+        if item.get("why_it_matters"):
+            lines.append(f"  - Why: {item.get('why_it_matters')}")
+    if not questions:
+        lines.append("- No blocking questions detected by candidate understanding.")
+    return lines
+
+
+def _candidate_assumptions_lines(candidate: dict[str, Any]) -> list[str]:
+    lines = ["# Assumptions", ""]
+    assumptions = _candidate_list(candidate, "assumptions")
+    for item in assumptions:
+        lines.append(f"- `{item.get('id', '')}` {item.get('statement', '')}")
+        lines.append(f"  - Risk: `{item.get('risk', 'medium')}`")
+        lines.append(f"  - Needs validation: `{bool(item.get('needs_validation'))}`")
+    if not assumptions:
+        lines.append("- none")
+    return lines
+
+
+def _candidate_prd_draft_lines(candidate: dict[str, Any]) -> list[str]:
+    clarification = candidate.get("clarification") if isinstance(candidate.get("clarification"), dict) else {}
+    lines = [
+        "# PM PRD Draft",
+        "",
+        f"- Method: {candidate.get('method_source', 'PM Skills-inspired candidate understanding')}",
+        f"- Candidate source: `{candidate.get('candidate_source', '')}`",
+        f"- Model: `{candidate.get('model', '')}`",
+        "- Promotion policy: candidate-only; official artifacts require deterministic validation.",
+        "",
+        "## Problem",
+        f"- {clarification.get('business_goal') or candidate.get('summary', '')}",
+        "",
+        "## Users And Operators",
+        *(_markdown_bullets([*_string_list(clarification.get("users")), *_string_list(clarification.get("operators"))]) or ["- none"]),
+        "",
+        "## Core Workflow",
+        *(_ordered_markdown(clarification.get("core_workflow")) or ["1. none"]),
+        "",
+        "## User Stories",
+        *[f"- `{item.get('id', '')}` As {item.get('role', '')}, I want {item.get('capability', '')}, so that {item.get('value', '')}." for item in _candidate_list(candidate, "user_stories")],
+        "",
+        "## Acceptance Signals",
+        *[f"- `{item.get('id', '')}` {item.get('description', '')}" for item in _candidate_list(candidate, "acceptance_criteria_draft")],
+        "",
+        "## Assumptions",
+        *[f"- `{item.get('id', '')}` {item.get('statement', '')}" for item in _candidate_list(candidate, "assumptions")],
+        "",
+        "## Open Questions",
+        *[f"- `{item.get('id', '')}` {item.get('question', '')}" for item in _candidate_open_questions(candidate)],
+    ]
+    return lines
+
+
+def _candidate_user_story_lines(candidate: dict[str, Any]) -> list[str]:
+    lines = ["# User Stories Draft", ""]
+    stories = _candidate_list(candidate, "user_stories")
+    for item in stories:
+        lines.extend(
+            [
+                f"## {item.get('id', '')}",
+                "",
+                f"- Card: As {item.get('role', '')}, I want {item.get('capability', '')}, so that {item.get('value', '')}.",
+                "- Conversation:",
+                *[f"  - {entry}" for entry in _string_list(item.get("conversation"))],
+                "- Confirmation:",
+            ]
+        )
+        confirmation = item.get("confirmation") if isinstance(item.get("confirmation"), dict) else {}
+        lines.append(f"  - Acceptance criteria ids: {', '.join(_string_list(confirmation.get('acceptance_criteria_ids'))) or 'none'}")
+        lines.append(f"  - Verification: {', '.join(_string_list(confirmation.get('verification'))) or 'none'}")
+        lines.append("")
+    if not stories:
+        return _pm_user_story_draft_lines({"brief": candidate.get("summary", "")})
+    lines.extend(
+        [
+            "## 3 C / INVEST Notes",
+            "- Card names role, capability, and value.",
+            "- Conversation captures assumptions and open questions.",
+            "- Confirmation maps to acceptance criteria and tests.",
+            "- Story remains small enough for coverage-driven slices.",
+        ]
+    )
+    return lines
+
+
+def _candidate_red_team_lines(candidate: dict[str, Any]) -> list[str]:
+    red_team = candidate.get("prd_red_team") if isinstance(candidate.get("prd_red_team"), dict) else {}
+    lines = [
+        "# PRD Red-Team Draft",
+        "",
+        f"- Recommendation: `{red_team.get('recommendation', 'revise')}`",
+        "- Method: PM Skills-inspired PRD red-team check.",
+        "",
+        "## Load-Bearing Assumptions",
+        *(_markdown_bullets(red_team.get("load_bearing_assumptions")) or ["- none"]),
+        "",
+        "## Scope Risks",
+        *(_markdown_bullets(red_team.get("scope_risks")) or ["- none"]),
+        "",
+        "## Testability Risks",
+        *(_markdown_bullets(red_team.get("testability_risks")) or ["- none"]),
+        "",
+        "## Cheapest Validation",
+        *(_markdown_bullets(red_team.get("cheapest_validation")) or ["- none"]),
+    ]
+    return lines
 
 
 def _pm_user_story_draft_lines(analysis: dict[str, Any]) -> list[str]:
@@ -514,7 +1040,16 @@ def _capability_markdown_lines(capabilities: Any) -> list[str]:
     return lines or ["- none"]
 
 
-def _acceptance_criteria(brief: str, domain: DomainSpec, inputs: dict[str, Any], analysis: dict[str, Any]) -> list[dict[str, Any]]:
+def _acceptance_criteria(
+    brief: str,
+    domain: DomainSpec,
+    inputs: dict[str, Any],
+    analysis: dict[str, Any],
+    candidate: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    candidate_criteria = _promotable_candidate_acceptance(candidate)
+    if candidate_criteria:
+        return candidate_criteria
     task_text = _compact(brief)
     criteria = [
         {
@@ -621,11 +1156,15 @@ def _tdd_plan(
     acceptance: list[dict[str, Any]],
     slices: list[dict[str, Any]],
     inputs: dict[str, Any],
+    candidate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     verification_commands = _string_list(inputs.get("verification_commands")) or _string_list(domain.metadata.get("verification_commands")) or ["python3 -m unittest discover -s tests -v"]
     cases: list[dict[str, Any]] = []
+    candidate_cases = _promotable_candidate_tdd_cases(candidate, acceptance, slices, verification_commands)
     xhs_keyword_cases = _xhs_keyword_tdd_cases(brief, acceptance, verification_commands)
-    if xhs_keyword_cases:
+    if candidate_cases:
+        cases.extend(candidate_cases)
+    elif xhs_keyword_cases:
         cases.extend(xhs_keyword_cases)
     else:
         for index, criterion in enumerate(acceptance, start=1):
@@ -756,12 +1295,122 @@ def _pm_test_scenarios_markdown(acceptance: list[dict[str, Any]], tdd_plan: dict
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _candidate_test_scenarios_markdown(candidate: dict[str, Any]) -> str:
+    scenarios = _candidate_list(candidate, "test_scenarios")
+    if not scenarios:
+        return ""
+    lines = [
+        "# PM Test Scenarios Draft",
+        "",
+        "These scenarios are candidate planning aids. Official executable checks live in `planning/tdd_plan.json`.",
+        "",
+    ]
+    for item in scenarios:
+        lines.extend(
+            [
+                f"## {item.get('id', '')}",
+                "",
+                f"- Type: {item.get('type', '')}",
+                f"- Related acceptance criteria: {', '.join(_string_list(item.get('related_acceptance_criteria_ids')))}",
+                "- Preconditions:",
+                *[f"  - {entry}" for entry in _string_list(item.get("preconditions"))],
+                "- Steps:",
+                *[f"  {index}. {entry}" for index, entry in enumerate(_string_list(item.get("steps")), start=1)],
+                f"- Expected result: {item.get('expected_result', '')}",
+                f"- Evidence: {', '.join(_string_list(item.get('evidence'))) or 'not specified'}",
+                f"- Verification command: `{item.get('verification_command', '')}`",
+                f"- Expected red failure: {item.get('expected_red_failure', '')}",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _candidate_is_promotable(candidate: dict[str, Any] | None) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    validation = candidate.get("validation") if isinstance(candidate.get("validation"), dict) else {}
+    if validation.get("status") != "passed":
+        return False
+    if _candidate_open_questions(candidate, blocking_only=True):
+        return False
+    red_team = candidate.get("prd_red_team") if isinstance(candidate.get("prd_red_team"), dict) else {}
+    return str(red_team.get("recommendation", "")).lower() != "block"
+
+
+def _promotable_candidate_acceptance(candidate: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not _candidate_is_promotable(candidate):
+        return []
+    criteria: list[dict[str, Any]] = []
+    for index, item in enumerate(_candidate_list(candidate, "acceptance_criteria_draft"), start=1):
+        if not item.get("observable") or not item.get("testable"):
+            continue
+        criteria.append(
+            {
+                "id": f"AC-{index:03d}",
+                "description": _redact_text(str(item.get("description", "")).strip()),
+                "observable": True,
+                "testable": True,
+                "source": "requirements_model_candidate",
+                "candidate_id": str(item.get("id", "")).strip(),
+                "evidence": [_redact_text(str(value)) for value in _string_list(item.get("evidence"))],
+            }
+        )
+    return [item for item in criteria if item["description"]]
+
+
+def _promotable_candidate_tdd_cases(
+    candidate: dict[str, Any] | None,
+    acceptance: list[dict[str, Any]],
+    slices: list[dict[str, Any]],
+    verification_commands: list[str],
+) -> list[dict[str, Any]]:
+    if not _candidate_is_promotable(candidate):
+        return []
+    ac_by_candidate_id = {str(item.get("candidate_id", "")): str(item.get("id", "")) for item in acceptance if item.get("candidate_id")}
+    official_ids = {str(item.get("id", "")) for item in acceptance}
+    cases: list[dict[str, Any]] = []
+    for index, scenario in enumerate(_candidate_list(candidate, "test_scenarios"), start=1):
+        related: list[str] = []
+        for ac_id in _string_list(scenario.get("related_acceptance_criteria_ids")):
+            mapped = ac_by_candidate_id.get(ac_id, ac_id)
+            if mapped in official_ids:
+                related.append(mapped)
+        if not related:
+            related = sorted(official_ids)
+        command = str(scenario.get("verification_command") or "").strip() or verification_commands[0]
+        cases.append(
+            {
+                "id": f"TDD-{index:03d}",
+                "acceptance_criteria_ids": _dedupe(related),
+                "related_slice_ids": [item["id"] for item in slices if set(_dedupe(related)).intersection(set(item.get("acceptance_criteria_ids", [])))],
+                "test_intent": _redact_text(str(scenario.get("expected_result") or scenario.get("type") or f"Validate scenario {index}")),
+                "expected_red_failure": _redact_text(str(scenario.get("expected_red_failure") or "The behavior is missing before implementation.")),
+                "verification_command": command,
+                "red_first_required": True,
+                "executor": "codex_cli",
+                "scenario_id": str(scenario.get("id", "")),
+                "scenario_type": str(scenario.get("type", "")),
+            }
+        )
+    return cases
+
+
 def _requirement_quality_report(
     analysis: dict[str, Any],
     acceptance: list[dict[str, Any]],
     coverage: dict[str, Any],
     capability_boundary: dict[str, Any],
+    candidate_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    candidate_result = candidate_result or _empty_candidate_result()
+    candidate = candidate_result.get("candidate") if isinstance(candidate_result.get("candidate"), dict) else None
+    candidate_source = str(candidate_result.get("source") or "deterministic_only")
+    validation = candidate_result.get("validation") if isinstance(candidate_result.get("validation"), dict) else {}
+    validation_status = str(validation.get("status") or "not_started")
+    validation_blockers = _string_list(validation.get("blockers"))
+    validation_warnings = _string_list(validation.get("warnings"))
+
     blockers: list[str] = []
     if analysis.get("blocking_questions"):
         blockers.append("blocking_questions_present")
@@ -774,26 +1423,97 @@ def _requirement_quality_report(
         blockers.append("acceptance_not_covered_by_slice")
     if not capability_boundary.get("existing_capabilities") and not capability_boundary.get("required_new_capabilities"):
         blockers.append("capability_boundary_missing")
+
+    if candidate_source == "model":
+        blockers.extend(validation_blockers)
+    elif candidate_source == "fallback_placeholder":
+        fatal_fallback_blockers = [
+            blocker
+            for blocker in validation_blockers
+            if blocker in {"candidate_blocking_questions_present", "candidate_red_team_block", "candidate_contains_secret"}
+        ]
+        blockers.extend(fatal_fallback_blockers)
+
+    blockers = _dedupe(blockers)
     status = "passed" if not blockers else "failed"
+    warnings: list[str] = []
+    if analysis.get("llm_draft_requested"):
+        warnings.append("llm_draft_channel_used_but_not_promoted")
+    if candidate_source == "fallback_placeholder":
+        warnings.extend(validation_warnings or _string_list(candidate.get("warnings") if isinstance(candidate, dict) else []))
+    elif candidate_source == "model":
+        warnings.extend(validation_warnings)
+    warnings = _dedupe(warnings)
+
+    schema_status = _candidate_check_status(candidate_source, validation_status, validation_blockers, "candidate_schema_invalid")
+    redacted_status = _candidate_check_status(candidate_source, validation_status, validation_blockers, "candidate_contains_secret")
+    stories_status = _candidate_story_check_status(candidate_source, candidate, validation_blockers)
+    scenarios_status = _candidate_scenario_check_status(candidate_source, candidate, acceptance)
+    red_team_status = _candidate_red_team_check_status(candidate_source, candidate, validation_blockers)
     pm_status = "passed" if status == "passed" else "failed"
     return {
         "schema_version": 1,
         "status": status,
         "summary": "Requirement understanding is ready for planning." if status == "passed" else "Requirement understanding needs more input.",
+        "candidate_source": candidate_source,
+        "requirements_model": str((candidate or {}).get("model") or analysis.get("requirements_model") or ""),
+        "candidate_validation": validation,
         "blockers": blockers,
-        "warnings": ["llm_draft_channel_used_but_not_promoted"] if analysis.get("llm_draft_requested") else [],
+        "warnings": warnings,
         "checks": [
             {"id": "stable_acceptance_ids", "status": "passed" if not any("invalid_acceptance_id" in item for item in blockers) else "failed"},
             {"id": "testable_acceptance", "status": "passed" if not any("untestable_acceptance" in item for item in blockers) else "failed"},
             {"id": "no_blocking_questions", "status": "passed" if not analysis.get("blocking_questions") else "failed"},
             {"id": "coverage_ready", "status": "passed" if "acceptance_not_covered_by_slice" not in blockers else "failed"},
             {"id": "capability_boundary_ready", "status": "passed" if "capability_boundary_missing" not in blockers else "failed"},
-            {"id": "user_stories_are_structured", "status": pm_status},
+            {"id": "candidate_schema_valid", "status": schema_status},
+            {"id": "candidate_redacted", "status": redacted_status},
+            {"id": "user_stories_are_structured", "status": stories_status},
             {"id": "prd_separates_facts_assumptions_questions", "status": pm_status},
-            {"id": "test_scenarios_map_to_acceptance", "status": pm_status},
-            {"id": "red_team_risks_addressed", "status": pm_status},
+            {"id": "test_scenarios_map_to_acceptance", "status": scenarios_status},
+            {"id": "red_team_risks_addressed", "status": red_team_status},
         ],
     }
+
+
+def _candidate_check_status(candidate_source: str, validation_status: str, blockers: list[str], blocker_id: str) -> str:
+    if candidate_source == "deterministic_only":
+        return "warning"
+    if blocker_id in blockers:
+        return "failed"
+    return "passed" if validation_status == "passed" else "warning"
+
+
+def _candidate_story_check_status(candidate_source: str, candidate: dict[str, Any] | None, blockers: list[str]) -> str:
+    if "user_story_incomplete" in blockers:
+        return "failed"
+    if candidate_source == "deterministic_only":
+        return "warning"
+    return "passed" if _candidate_list(candidate, "user_stories") else "warning"
+
+
+def _candidate_scenario_check_status(candidate_source: str, candidate: dict[str, Any] | None, acceptance: list[dict[str, Any]]) -> str:
+    if candidate_source == "deterministic_only":
+        return "warning"
+    scenarios = _candidate_list(candidate, "test_scenarios")
+    if not scenarios:
+        return "warning"
+    candidate_ac_ids = {str(item.get("candidate_id", "")) for item in acceptance if item.get("candidate_id")}
+    official_ids = {str(item.get("id", "")) for item in acceptance}
+    for scenario in scenarios:
+        related = set(_string_list(scenario.get("related_acceptance_criteria_ids")))
+        if not related or not related.intersection(candidate_ac_ids | official_ids):
+            return "failed"
+    return "passed"
+
+
+def _candidate_red_team_check_status(candidate_source: str, candidate: dict[str, Any] | None, blockers: list[str]) -> str:
+    if candidate_source == "deterministic_only":
+        return "warning"
+    if "candidate_red_team_block" in blockers:
+        return "failed"
+    red_team = candidate.get("prd_red_team") if isinstance(candidate, dict) and isinstance(candidate.get("prd_red_team"), dict) else {}
+    return "passed" if red_team else "warning"
 
 
 def _planning_quality_report(coverage: dict[str, Any], slices: list[dict[str, Any]], tdd_plan: dict[str, Any]) -> dict[str, Any]:
@@ -922,6 +1642,14 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return [str(value)]
+
+
+def _markdown_bullets(value: Any) -> list[str]:
+    return [f"- {item}" for item in _string_list(value)]
+
+
+def _ordered_markdown(value: Any) -> list[str]:
+    return [f"{index}. {item}" for index, item in enumerate(_string_list(value), start=1)]
 
 
 def _dedupe(values: list[str]) -> list[str]:

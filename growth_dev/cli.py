@@ -267,6 +267,7 @@ def _add_complex_task_args(command: argparse.ArgumentParser) -> None:
     command.add_argument("--planning-mode", choices=["deterministic", "llm_assisted", "auto"], default="auto")
     command.add_argument("--requirements-model", default="")
     command.add_argument("--requirements-reasoning-effort", choices=["low", "medium", "high"], default="medium")
+    command.add_argument("--requirements-env-file", default="", help="Optional env file for the requirements model provider; defaults to --env-file when omitted")
 
 
 def _load_task(path_value: str | None) -> TaskSpec:
@@ -414,6 +415,7 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
         planning_mode=args.planning_mode,
         requirements_model=args.requirements_model,
         requirements_reasoning_effort=args.requirements_reasoning_effort,
+        requirements_env_file=Path(args.requirements_env_file) if args.requirements_env_file else None,
     )
     record = runtime.run(args.brief, inputs=inputs, run_id=args.run_id)
     print(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))
@@ -521,6 +523,8 @@ def _background_team_run_command(args: argparse.Namespace, run_id: str) -> list[
         "--requirements-reasoning-effort",
         args.requirements_reasoning_effort,
     ]
+    if args.requirements_env_file:
+        command.extend(["--requirements-env-file", args.requirements_env_file])
     return command
 
 
@@ -531,7 +535,7 @@ def _redacted_command(command: list[str]) -> list[str]:
         if skip_next:
             skip_next = False
             continue
-        if item in {"--env-file"} and index + 1 < len(command):
+        if item in {"--env-file", "--requirements-env-file"} and index + 1 < len(command):
             redacted.extend([item, "<env-file>"])
             skip_next = True
         else:
@@ -851,6 +855,7 @@ def _cmd_team_serve_dashboard(args: argparse.Namespace) -> int:
         planning_mode=args.planning_mode,
         requirements_model=args.requirements_model,
         requirements_reasoning_effort=args.requirements_reasoning_effort,
+        requirements_env_file=args.requirements_env_file,
     )
     run_dashboard_server(config, open_browser=args.open_browser)
     return 0

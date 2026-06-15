@@ -61,6 +61,7 @@ class DashboardConfig:
     planning_mode: str = "auto"
     requirements_model: str = ""
     requirements_reasoning_effort: str = "medium"
+    requirements_env_file: str = ""
 
 
 def list_dashboard_runs(runs_dir: Path = Path("runs"), limit: int = 30) -> list[dict[str, Any]]:
@@ -277,6 +278,9 @@ def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dic
         "--requirements-reasoning-effort",
         str(payload.get("requirements_reasoning_effort") or config.requirements_reasoning_effort),
     ]
+    requirements_env_file = str(payload.get("requirements_env_file") or config.requirements_env_file or "")
+    if requirements_env_file:
+        command.extend(["--requirements-env-file", requirements_env_file])
     process_record = {
         "run_id": run_id,
         "pid": 0,

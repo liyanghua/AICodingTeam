@@ -38,6 +38,133 @@ def _check_gate(runtime: Any, run_dir: Path, gate_id: str) -> None:
     raise AssertionError("TeamRuntime needs a public gate-checking method")
 
 
+def _keyword_workbench_candidate() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "status": "candidate_only",
+        "summary": "在采集工作台增加关键词图片采集入口，复用 keyword-only collector 能力。",
+        "clarification": {
+            "business_goal": "让操作者在 mobile_image_workbench 中输入关键词和 TOP N 后启动关键词图片采集。",
+            "users": ["采集运营"],
+            "operators": ["Mac mini 工作台操作者"],
+            "core_workflow": [
+                "打开采集工作台",
+                "选择关键词图片采集",
+                "输入关键词和 TOP N",
+                "启动 keyword-only 采集 job",
+                "查看状态、manifest、risk_events 和输出目录",
+            ],
+            "inputs": ["keyword", "top_n", "collector config"],
+            "outputs": ["workbench job", "manifest", "risk_events", "output directory"],
+            "non_goals": ["不做图搜入口", "不上传参考图", "不进入相册"],
+            "compatibility_requirements": ["保留现有 Excel/图搜采集入口"],
+            "safety_constraints": ["manual_login_only", "no_captcha_bypass"],
+            "environment_dependencies": ["本机工作台", "xhs_collector keyword-only CLI"],
+        },
+        "open_questions": [],
+        "assumptions": [
+            {"id": "ASM-001", "statement": "xhs_collector 已支持 run-keyword。", "risk": "medium", "needs_validation": True}
+        ],
+        "acceptance_criteria_draft": [
+            {
+                "id": "AC-DRAFT-001",
+                "description": "Workbench exposes a separate keyword image collection entry with keyword and TOP N fields.",
+                "observable": True,
+                "testable": True,
+                "evidence": ["workbench form state", "tests/test_mobile_image_workbench.py"],
+            },
+            {
+                "id": "AC-DRAFT-002",
+                "description": "Submitting keyword collection starts xhs_collector keyword-only flow and does not use image search or reference image upload.",
+                "observable": True,
+                "testable": True,
+                "evidence": ["job request payload", "collector command args"],
+            },
+            {
+                "id": "AC-DRAFT-003",
+                "description": "The keyword job filters video notes and continues until TOP N image notes are collected or a clear partial result is recorded.",
+                "observable": True,
+                "testable": True,
+                "evidence": ["manifest.json", "risk_events.jsonl"],
+            },
+            {
+                "id": "AC-DRAFT-004",
+                "description": "Existing Excel/image-search workbench entry remains compatible.",
+                "observable": True,
+                "testable": True,
+                "evidence": ["regression test"],
+            },
+            {
+                "id": "AC-DRAFT-005",
+                "description": "Workbench displays keyword job status, manifest path, risk events, and output directory without exposing secrets.",
+                "observable": True,
+                "testable": True,
+                "evidence": ["API response", "UI render test"],
+            },
+        ],
+        "user_stories": [
+            {
+                "id": "US-001",
+                "role": "采集运营",
+                "capability": "输入关键词和 TOP N 启动图片采集",
+                "value": "快速采集指定主题的图文笔记图片",
+                "conversation": ["关键词采集是独立入口，不复用图搜按钮。"],
+                "confirmation": {
+                    "acceptance_criteria_ids": ["AC-DRAFT-001", "AC-DRAFT-002", "AC-DRAFT-005"],
+                    "verification": ["python3 -m unittest tests.test_mobile_image_workbench -v"],
+                },
+            }
+        ],
+        "prd_red_team": {
+            "recommendation": "promote",
+            "load_bearing_assumptions": ["collector keyword-only CLI exists or is already accepted."],
+            "scope_risks": ["不要混入 Mac mini deploy 或素材中心改造。"],
+            "testability_risks": ["UI 和 API 都需要可观察证据。"],
+            "cheapest_validation": ["run workbench unit tests and inspect generated job args."],
+        },
+        "test_scenarios": [
+            {
+                "id": "SCN-001",
+                "type": "happy_path",
+                "related_acceptance_criteria_ids": ["AC-DRAFT-001", "AC-DRAFT-002"],
+                "preconditions": ["workbench server can create jobs"],
+                "steps": ["submit keyword and top_n"],
+                "expected_result": "Keyword job command uses run-keyword with keyword and top_n.",
+                "evidence": ["job record"],
+                "verification_command": "python3 -m unittest tests.test_mobile_image_workbench -v",
+                "expected_red_failure": "keyword collection entry or run-keyword command wiring is missing.",
+            },
+            {
+                "id": "SCN-002",
+                "type": "regression",
+                "related_acceptance_criteria_ids": ["AC-DRAFT-004"],
+                "preconditions": ["existing image-search entry exists"],
+                "steps": ["run existing workbench tests"],
+                "expected_result": "Existing Excel/image-search job behavior remains unchanged.",
+                "evidence": ["regression test"],
+                "verification_command": "python3 -m unittest tests.test_mobile_image_workbench -v",
+                "expected_red_failure": "legacy job payload changed unexpectedly.",
+            },
+            {
+                "id": "SCN-003",
+                "type": "error_state",
+                "related_acceptance_criteria_ids": ["AC-DRAFT-003", "AC-DRAFT-005"],
+                "preconditions": ["collector returns partial result or risk event"],
+                "steps": ["render job details"],
+                "expected_result": "Workbench shows partial/risk status and output directory.",
+                "evidence": ["API response"],
+                "verification_command": "python3 -m unittest tests.test_mobile_image_workbench -v",
+                "expected_red_failure": "risk events are hidden from keyword job details.",
+            },
+        ],
+        "promotion_notes": {
+            "facts": ["Requirement is scoped to mobile_image_workbench keyword entry."],
+            "assumptions": ["Collector keyword-only command is available."],
+            "must_not_promote": ["Do not automate captcha or platform evasion."],
+        },
+    }
+
+
 class TeamRuntimeTests(unittest.TestCase):
     def test_gate_fails_when_required_artifact_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -316,6 +443,176 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertIn("test_scenarios_map_to_acceptance", quality_check_ids)
         self.assertIn("red_team_risks_addressed", quality_check_ids)
         self.assertIn("tdd_plan_ready", planning_quality["checks"])
+
+    def test_requirements_model_candidate_improves_official_ac_and_tdd_plan(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, _ = _load_specs(root)
+            domain_spec = DomainSpec.from_dict(
+                {
+                    "domain_id": "xhs_mobile_collection",
+                    "summary": "XHS collector and mobile image workbench domain",
+                    "risk_rules": ["manual_login_only", "no_captcha_bypass"],
+                    "evaluation_rules": ["keyword_collection_entry_is_auditable"],
+                    "capabilities": {
+                        "supported": [{"id": "keyword_only_collection", "summary": "Collector CLI can run keyword-only text search."}],
+                        "unsupported": [{"id": "workbench_keyword_ui", "summary": "Workbench has no separate keyword collection entry yet."}],
+                    },
+                }
+            )
+            runtime = TeamRuntime(
+                team_spec=team_spec,
+                domain_spec=domain_spec,
+                runs_dir=root / "runs",
+                planning_mode="llm_assisted",
+                requirements_model="fake-requirements-model",
+            )
+
+            record = runtime.run(
+                "在采集工作台上添加单独的关键词图片采集入口",
+                inputs={
+                    "requirements_model_candidate": _keyword_workbench_candidate(),
+                    "allowed_paths": ["third_party/mobile_image_workbench/", "tests/test_mobile_image_workbench.py"],
+                    "verification_commands": ["python3 -m unittest tests.test_mobile_image_workbench -v"],
+                },
+                run_id="keyword-workbench-candidate-run",
+            )
+
+            run_dir = root / "runs" / "keyword-workbench-candidate-run"
+            quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+            candidate = json.loads((run_dir / "requirements" / "requirement_understanding.candidate.json").read_text(encoding="utf-8"))
+            acceptance_md = (run_dir / "acceptance_criteria.md").read_text(encoding="utf-8")
+            tdd_plan = json.loads((run_dir / "planning" / "tdd_plan.json").read_text(encoding="utf-8"))
+            prd_draft = (run_dir / "requirements" / "prd.draft.md").read_text(encoding="utf-8")
+            scenarios = (run_dir / "planning" / "test_scenarios.draft.md").read_text(encoding="utf-8")
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(candidate["candidate_source"], "model")
+        self.assertEqual(quality["candidate_source"], "model")
+        self.assertEqual(quality["status"], "passed")
+        self.assertIn("separate keyword image collection entry", acceptance_md)
+        self.assertIn("does not use image search", acceptance_md)
+        self.assertIn("filters video notes", acceptance_md)
+        self.assertIn("Existing Excel/image-search", acceptance_md)
+        self.assertIn("job status, manifest path, risk events", acceptance_md)
+        self.assertIn("采集运营", prd_draft)
+        self.assertIn("SCN-001", scenarios)
+        self.assertIn("SCN-003", scenarios)
+        self.assertEqual(tdd_plan["status"], "passed")
+        self.assertTrue(all(case["scenario_id"] for case in tdd_plan["test_cases"]))
+        self.assertIn("keyword collection entry or run-keyword command wiring is missing", json.dumps(tdd_plan, ensure_ascii=False))
+
+    def test_requirements_model_provider_generates_candidate_without_raw_prompt_artifact(self) -> None:
+        from growth_dev.team.models import DomainSpec
+        from growth_dev.team.runtime import TeamRuntime
+
+        received_requests: list[dict[str, Any]] = []
+        candidate_content = json.dumps(_keyword_workbench_candidate(), ensure_ascii=False)
+
+        class FakeRequirementsModelResponse:
+            def __enter__(self) -> "FakeRequirementsModelResponse":
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": candidate_content}}]}, ensure_ascii=False).encode("utf-8")
+
+        def fake_urlopen(req: Any, timeout: int = 0) -> FakeRequirementsModelResponse:
+            received_requests.append(json.loads(req.data.decode("utf-8")))
+            return FakeRequirementsModelResponse()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env_path = root / ".env.requirements"
+            env_path.write_text(
+                "REQUIREMENTS_MODEL_BASE_URL=http://requirements-provider.invalid\n"
+                "REQUIREMENTS_MODEL_API_KEY=sk-test-secret123\n",
+                encoding="utf-8",
+            )
+            team_spec, _ = _load_specs(root)
+            domain_spec = DomainSpec.from_dict(
+                {
+                    "domain_id": "xhs_mobile_collection",
+                    "summary": "XHS collector and mobile image workbench domain",
+                    "risk_rules": ["manual_login_only", "no_captcha_bypass"],
+                    "evaluation_rules": ["keyword_collection_entry_is_auditable"],
+                }
+            )
+            runtime = TeamRuntime(
+                team_spec=team_spec,
+                domain_spec=domain_spec,
+                runs_dir=root / "runs",
+                planning_mode="llm_assisted",
+                requirements_model="fake-requirements-model",
+                requirements_env_file=env_path,
+            )
+
+            with patch("growth_dev.team.complex_task.request.urlopen", side_effect=fake_urlopen):
+                record = runtime.run(
+                    "在采集工作台上添加单独的关键词图片采集入口",
+                    inputs={
+                        "allowed_paths": ["third_party/mobile_image_workbench/", "tests/test_mobile_image_workbench.py"],
+                        "verification_commands": ["python3 -m unittest tests.test_mobile_image_workbench -v"],
+                    },
+                    run_id="provider-candidate-run",
+                )
+
+                run_dir = root / "runs" / "provider-candidate-run"
+                quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+                request_summary = json.loads((run_dir / "requirements" / "requirements_model_request.json").read_text(encoding="utf-8"))
+                response_summary = json.loads((run_dir / "requirements" / "requirements_model_response.json").read_text(encoding="utf-8"))
+                request_artifact_text = json.dumps(request_summary, ensure_ascii=False)
+                response_artifact_text = json.dumps(response_summary, ensure_ascii=False)
+
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(len(received_requests), 1)
+        self.assertEqual(received_requests[0]["model"], "fake-requirements-model")
+        self.assertEqual(quality["candidate_source"], "model")
+        self.assertEqual(request_summary["message_count"], 2)
+        self.assertIn("acceptance_criteria_draft", response_summary["candidate_keys"])
+        self.assertNotIn("sk-test-secret123", request_artifact_text)
+        self.assertNotIn("sk-test-secret123", response_artifact_text)
+        self.assertNotIn("messages", request_summary)
+        self.assertNotIn("在采集工作台上添加单独的关键词图片采集入口", request_artifact_text)
+
+    def test_requirements_model_blocking_candidate_stops_before_coding(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime
+
+        candidate = _keyword_workbench_candidate()
+        candidate["open_questions"] = [{"id": "Q-001", "question": "关键词入口是否需要批量模式？", "blocking": True, "why_it_matters": "scope changes tests"}]
+        candidate["prd_red_team"]["recommendation"] = "block"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            team_spec, domain_spec = _load_specs(root)
+            runtime = TeamRuntime(
+                team_spec=team_spec,
+                domain_spec=domain_spec,
+                runs_dir=root / "runs",
+                planning_mode="llm_assisted",
+                requirements_model="fake-requirements-model",
+            )
+
+            record = runtime.run(
+                "实现关键词采集入口",
+                inputs={"requirements_model_candidate": candidate},
+                run_id="blocking-candidate-run",
+            )
+
+            run_dir = root / "runs" / "blocking-candidate-run"
+            quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+            agent_ids = [agent.agent_id for agent in record.agent_runs]
+
+        self.assertEqual(record.status, "failed")
+        self.assertEqual(quality["candidate_source"], "model")
+        self.assertIn("candidate_blocking_questions_present", quality["blockers"])
+        self.assertIn("candidate_red_team_block", quality["blockers"])
+        self.assertNotIn("coder", agent_ids)
 
     def test_complex_task_uses_default_capability_boundary_for_generic_domain(self) -> None:
         from growth_dev.team.runtime import TeamRuntime
