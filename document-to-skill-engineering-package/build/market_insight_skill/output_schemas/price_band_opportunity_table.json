@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "title": "价格带机会表",
+  "description": "判断价格空间",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "conclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

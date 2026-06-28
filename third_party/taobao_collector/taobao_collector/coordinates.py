@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -74,6 +75,17 @@ class CoordinateProfile:
         if name in self.points:
             return self.points[name]
         return self.point("result_card")
+
+    def result_card_slots(self) -> list[tuple[str, tuple[float, float]]]:
+        slots: list[tuple[int, str, tuple[float, float]]] = []
+        for name, point in self.points.items():
+            match = re.fullmatch(r"result_card_(\d+)", name)
+            if match is None:
+                continue
+            slots.append((int(match.group(1)), name, point))
+        if not slots:
+            return [("result_card", self.point("result_card"))]
+        return [(name, point) for _, name, point in sorted(slots)]
 
 
 def write_default_coordinate_profile(path: Path) -> CoordinateProfile:

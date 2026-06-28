@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "integer"
+          },
+          "shop_name": {
+            "type": "string"
+          },
+          "product_url": {
+            "type": "string"
+          },
+          "sales_or_pay_buyer_count": {
+            "type": "number"
+          },
+          "gmv_or_transaction_index": {
+            "type": "number"
+          },
+          "price": {
+            "type": "number"
+          },
+          "price_band": {
+            "type": "string"
+          },
+          "material": {
+            "type": "string"
+          },
+          "function": {
+            "type": "string"
+          },
+          "style": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "main_selling_point": {
+            "type": "string"
+          },
+          "is_high_growth": {
+            "type": "boolean"
+          },
+          "hot_reason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

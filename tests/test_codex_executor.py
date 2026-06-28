@@ -190,6 +190,94 @@ sys.exit(2)
     return script
 
 
+def _write_app_generation_fake_codex(path: Path) -> Path:
+    script = path / "codex-app-generation"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    prompt = sys.stdin.read()
+    if "input_prd.md" not in prompt or "app_contract.json" not in prompt or "requirements/normalized_prd.md" not in prompt:
+        print("missing app generation artifacts in prompt", file=sys.stderr)
+        sys.exit(3)
+    app_dir = os.path.join(workspace, "generated_apps", "todo-prototype")
+    public_dir = os.path.join(app_dir, "public")
+    os.makedirs(public_dir, exist_ok=True)
+    files = {
+        os.path.join(app_dir, "README.md"): "# Todo Prototype\\n\\nRun with `node server.js`.\\n",
+        os.path.join(app_dir, "runtime_smoke.js"): "const fs = require('fs');\\nconst vm = require('vm');\\nconst code = fs.readFileSync(require('path').join(__dirname, 'public', 'app.js'), 'utf8');\\nvm.runInNewContext(code, { localStorage: { getItem(){ return null; }, setItem(){} }, document: { addEventListener(){} }, console });\\nconsole.log('runtime_init_ok');\\n",
+        os.path.join(app_dir, "server.js"): "const http = require('http');\\nconst fs = require('fs');\\nconst path = require('path');\\nconst publicDir = path.join(__dirname, 'public');\\nhttp.createServer((req, res) => { const file = req.url === '/' ? 'index.html' : req.url.slice(1); fs.createReadStream(path.join(publicDir, file)).on('error', () => { res.statusCode = 404; res.end('not found'); }).pipe(res); }).listen(8788, '127.0.0.1');\\n",
+        os.path.join(public_dir, "index.html"): "<!doctype html><div id=\\"app\\"></div><script src=\\"app.js\\"></script>\\n",
+        os.path.join(public_dir, "styles.css"): "body { font-family: sans-serif; }\\n",
+        os.path.join(public_dir, "app.js"): "const key = 'todo-prototype-state';\\nconst state = JSON.parse(localStorage.getItem(key) || '[]');\\nlocalStorage.setItem(key, JSON.stringify(state));\\n",
+    }
+    for file_path, content in files.items():
+        with open(file_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {
+        "summary": "generated a local todo prototype app",
+        "files_changed": [
+            "generated_apps/todo-prototype/README.md",
+            "generated_apps/todo-prototype/runtime_smoke.js",
+            "generated_apps/todo-prototype/server.js",
+            "generated_apps/todo-prototype/public/index.html",
+            "generated_apps/todo-prototype/public/styles.css",
+            "generated_apps/todo-prototype/public/app.js",
+        ],
+        "tests_run": ["node --check generated_apps/todo-prototype/server.js", "node generated_apps/todo-prototype/runtime_smoke.js"],
+        "risk_events": [],
+        "blockers": [],
+        "next_action": "review",
+    }
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({"event": "exec.completed", "target": "generated_apps/todo-prototype"}))
+    sys.exit(0)
+
+if "review" in args:
+    print("# Fake App Generation Review\\n\\nNo blocking issues found.")
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
+def _write_app_generation_broken_smoke_fake_codex(path: Path) -> Path:
+    script = _write_app_generation_fake_codex(path)
+    original = script.read_text(encoding="utf-8")
+    script.write_text(
+        original.replace(
+            "console.log('runtime_init_ok');",
+            "throw new Error('startup crashed before DOMContentLoaded');",
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_workbench_test_fake_codex(path: Path) -> Path:
     script = path / "codex-workbench-test"
     script.write_text(
@@ -378,6 +466,48 @@ class CodexExecutorTests(unittest.TestCase):
 
         self.assertEqual(blocking, [])
         self.assertEqual(non_blocking, [event])
+
+    def test_codex_risk_classifier_treats_sandbox_preview_and_provider_notes_as_non_blocking(self) -> None:
+        from growth_dev.team.codex import classify_codex_risk_events
+
+        events = [
+            "Local preview bind to 127.0.0.1:8788 failed in this sandbox with EPERM; server now reports the failure clearly and declared verification commands passed.",
+            "Provider is not configured; the app shows a clear setup error and does not persist secrets.",
+            "External image provider capability is explicit and server-side only; no hidden network call was added.",
+        ]
+
+        blocking, non_blocking = classify_codex_risk_events(events)
+
+        self.assertEqual(blocking, [])
+        self.assertEqual(non_blocking, events)
+
+    def test_codex_risk_classifier_treats_no_disallowed_behavior_self_assertion_as_non_blocking(self) -> None:
+        from growth_dev.team.codex import classify_codex_risk_events
+
+        event = (
+            "no_disallowed_risk_behavior: prototype uses localStorage and a local Node server only; "
+            "no database, credential collection, hidden network calls, external deploy, captcha handling, "
+            "proxying, or fingerprint behavior was added."
+        )
+
+        blocking, non_blocking = classify_codex_risk_events([event])
+
+        self.assertEqual(blocking, [])
+        self.assertEqual(non_blocking, [event])
+
+    def test_codex_risk_classifier_keeps_unrelated_no_prefix_events_blocking(self) -> None:
+        from growth_dev.team.codex import classify_codex_risk_events
+
+        events = [
+            "no_acceptance_tests_were_added_for_slice-003",
+            "no-changed-files: implementation produced an empty diff",
+            "No coverage matrix entries match slice-002",
+        ]
+
+        blocking, non_blocking = classify_codex_risk_events(events)
+
+        self.assertEqual(non_blocking, [])
+        self.assertEqual(blocking, events)
 
     def test_codex_diff_risk_scan_ignores_context_deletions_and_safety_boundary_text(self) -> None:
         from growth_dev.team.codex import _scan_implementation_risks
@@ -971,6 +1101,245 @@ diff --git a/scraper.py b/scraper.py
             self.assertIn("changed_file_outside_allowed_paths:README.md", classification["blocking_events"])
             self.assertIn("changed_file_outside_allowed_paths:README.md", code_record["risk_events"])
             self.assertEqual(trace["failure_classification"]["classification_decision"], "failed")
+
+    def test_app_generation_codex_prompt_and_verifier_use_app_contract(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_placeholder.py").write_text(
+                "import unittest\n\n\nclass PlaceholderTests(unittest.TestCase):\n    def test_placeholder(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            _run(["git", "add", "."], root)
+            _run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "add tests"], root)
+            fake_codex = _write_app_generation_fake_codex(root)
+
+            runtime = TeamRuntime.from_domain(
+                "app_generation",
+                domains_dir=Path.cwd() / "domains",
+                runs_dir=root / "runs",
+                team=default_team_spec(),
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+            )
+            record = runtime.run(
+                "根据 PRD 生成本地 Todo 原型应用",
+                inputs={
+                    "app_slug": "todo-prototype",
+                    "prd_text": "# Todo Prototype\n\n用户可以新增和完成待办，状态保存在浏览器本地。",
+                },
+                run_id="app-codex-run",
+            )
+
+            run_dir = root / "runs" / "app-codex-run"
+            prompt_text = (run_dir / "codex" / "codex_prompt.md").read_text(encoding="utf-8")
+            prompt_bundle = json.loads((run_dir / "codex" / "prompt_bundle.json").read_text(encoding="utf-8"))
+            code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            verification = json.loads((run_dir / "codex" / "verification_record.json").read_text(encoding="utf-8"))
+            test_report = (run_dir / "test_report.md").read_text(encoding="utf-8")
+            preview = (run_dir / "preview_instructions.md").read_text(encoding="utf-8")
+
+        self.assertEqual(record.status, "completed")
+        self.assertIn("input_prd.md", prompt_text)
+        self.assertIn("requirements/normalized_prd.md", prompt_text)
+        self.assertIn("app_contract.json", prompt_text)
+        self.assertIn("runtime_smoke.js", prompt_text)
+        self.assertIn("generated_apps/todo-prototype/", prompt_bundle["allowed_paths"])
+        self.assertIn("node --check generated_apps/todo-prototype/server.js", prompt_bundle["verification_commands"])
+        self.assertIn("node generated_apps/todo-prototype/runtime_smoke.js", prompt_bundle["verification_commands"])
+        self.assertIn("generated_apps/todo-prototype/server.js", code_record["files_changed"])
+        self.assertIn("generated_apps/todo-prototype/runtime_smoke.js", code_record["files_changed"])
+        self.assertEqual(verification["status"], "completed")
+        self.assertIn("node --check generated_apps/todo-prototype/server.js", [item["command"] for item in verification["commands"]])
+        self.assertIn("node generated_apps/todo-prototype/runtime_smoke.js", [item["command"] for item in verification["commands"]])
+        self.assertIn("node --check generated_apps/todo-prototype/server.js", test_report)
+        self.assertIn("node generated_apps/todo-prototype/runtime_smoke.js", test_report)
+        self.assertIn("cd generated_apps/todo-prototype", preview)
+
+    def test_app_generation_runtime_smoke_failure_blocks_coder(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_placeholder.py").write_text(
+                "import unittest\n\n\nclass PlaceholderTests(unittest.TestCase):\n    def test_placeholder(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            _run(["git", "add", "."], root)
+            _run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "add tests"], root)
+            fake_codex = _write_app_generation_broken_smoke_fake_codex(root)
+
+            runtime = TeamRuntime.from_domain(
+                "app_generation",
+                domains_dir=Path.cwd() / "domains",
+                runs_dir=root / "runs",
+                team=default_team_spec(),
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+            )
+            record = runtime.run(
+                "根据 PRD 生成本地 Todo 原型应用",
+                inputs={
+                    "app_slug": "todo-prototype",
+                    "prd_text": "# Todo Prototype\n\n用户可以新增和完成待办，状态保存在浏览器本地。",
+                },
+                run_id="app-codex-smoke-fail",
+            )
+
+            run_dir = root / "runs" / "app-codex-smoke-fail"
+            code_record = json.loads((run_dir / "code_run_record.json").read_text(encoding="utf-8"))
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
+            runtime_verification = json.loads((run_dir / "codex" / "app_runtime_verification.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(record.status, "failed")
+        self.assertEqual(code_record["status"], "failed")
+        self.assertEqual(runtime_verification["status"], "failed")
+        self.assertIn(
+            "app_runtime_verification_failed:node generated_apps/todo-prototype/runtime_smoke.js:1",
+            classification["blocking_events"],
+        )
+
+    def test_benchmark_parity_context_is_included_in_codex_prompt(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_placeholder.py").write_text(
+                "import unittest\n\n\nclass PlaceholderTests(unittest.TestCase):\n    def test_placeholder(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            _run(["git", "add", "."], root)
+            _run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "add tests"], root)
+            fake_codex = _write_app_generation_fake_codex(root)
+
+            runtime = TeamRuntime.from_domain(
+                "app_generation",
+                domains_dir=Path.cwd() / "domains",
+                runs_dir=root / "runs",
+                team=default_team_spec(),
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+            )
+            record = runtime.run(
+                "根据 PRD 生成 Dingdang benchmark 应用",
+                inputs={
+                    "app_slug": "dingdang-main-image-agent",
+                    "prd_file": "benchmarks/app_generation/dingdang_main_image_agent/input_prd.md",
+                },
+                run_id="dingdang-benchmark-prompt",
+            )
+
+            run_dir = root / "runs" / "dingdang-benchmark-prompt"
+            prompt_text = (run_dir / "codex" / "codex_prompt.md").read_text(encoding="utf-8")
+            benchmark_context = json.loads((run_dir / "benchmark_context.json").read_text(encoding="utf-8"))
+
+        self.assertIn("benchmark_context.md", prompt_text)
+        self.assertIn("Benchmark Parity", prompt_text)
+        self.assertIn("product_image_upload", prompt_text)
+        self.assertIn("reference_image_upload", prompt_text)
+        self.assertIn("image_download", prompt_text)
+        self.assertIn("https://openrouter.ai/api/v1/images", prompt_text)
+        self.assertIn("input_references", prompt_text)
+        self.assertIn("openai/gpt-image-1", prompt_text)
+        self.assertIn("第 X 张第 Y 层", prompt_text)
+        self.assertEqual(benchmark_context["quality_mode"], "benchmark_parity")
+        self.assertIn(record.status, {"completed", "failed"})
+
+    def test_benchmark_parity_missing_required_capabilities_blocks_coder(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_placeholder.py").write_text(
+                "import unittest\n\n\nclass PlaceholderTests(unittest.TestCase):\n    def test_placeholder(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            _run(["git", "add", "."], root)
+            _run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "add tests"], root)
+            fake_codex = _write_app_generation_fake_codex(root)
+
+            runtime = TeamRuntime.from_domain(
+                "app_generation",
+                domains_dir=Path.cwd() / "domains",
+                runs_dir=root / "runs",
+                team=default_team_spec(),
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+            )
+            record = runtime.run(
+                "根据 PRD 生成 Dingdang benchmark 应用",
+                inputs={
+                    "app_slug": "dingdang-main-image-agent",
+                    "prd_file": "benchmarks/app_generation/dingdang_main_image_agent/input_prd.md",
+                },
+                run_id="dingdang-benchmark-static-fail",
+            )
+
+            run_dir = root / "runs" / "dingdang-benchmark-static-fail"
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
+            benchmark_diff = (run_dir / "benchmark_diff.md").read_text(encoding="utf-8")
+            agqs_score = json.loads((run_dir / "agqs_score.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(record.status, "failed")
+        self.assertIn("benchmark_parity_missing:product_image_upload", classification["blocking_events"])
+        self.assertIn("benchmark_parity_missing:reference_image_upload", classification["blocking_events"])
+        self.assertIn("benchmark_parity_missing:image_provider_proxy", classification["blocking_events"])
+        self.assertIn("product_image_upload", benchmark_diff)
+        self.assertEqual(agqs_score["hard_gate_status"], "failed")
+
+    def test_app_generation_codex_blocks_files_outside_generated_app_path(self) -> None:
+        from growth_dev.team.runtime import TeamRuntime, default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_outside_allowed_fake_codex(root)
+
+            runtime = TeamRuntime.from_domain(
+                "app_generation",
+                domains_dir=Path.cwd() / "domains",
+                runs_dir=root / "runs",
+                team=default_team_spec(),
+                repo_root=root,
+                executor="codex",
+                codex_binary=str(fake_codex),
+                codex_model="gpt-5.3-codex",
+            )
+            record = runtime.run(
+                "根据 PRD 生成本地 Todo 原型应用",
+                inputs={
+                    "app_slug": "todo-prototype",
+                    "prd_text": "# Todo Prototype\n\n用户可以新增和完成待办。",
+                },
+                run_id="app-codex-boundary-run",
+            )
+
+            run_dir = root / "runs" / "app-codex-boundary-run"
+            classification = json.loads((run_dir / "codex" / "failure_classification.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(record.status, "failed")
+        self.assertIn("changed_file_outside_allowed_paths:README.md", classification["blocking_events"])
 
     def test_task_level_allowed_paths_override_unblocks_domain_expansion_supporting_tests(self) -> None:
         from growth_dev.team.models import DomainSpec

@@ -1,0 +1,32 @@
+eval_rules:
+  hard_requirements:
+    - id: required_outputs_present
+      description: 必须输出10类市场洞察成果
+      severity: error
+    - id: evidence_required_for_each_conclusion
+      description: 每个经营结论必须绑定 Evidence Pack
+      severity: error
+    - id: score_formula_required
+      description: 每个机会评分必须有公式或规则说明
+      severity: error
+    - id: no_data_no_strong_claim
+      description: 数据缺失时不得输出强结论
+      severity: error
+
+  quality_metrics:
+    - id: workflow_node_success_rate
+      target: 0.95
+    - id: data_requirement_coverage
+      target: 0.90
+    - id: evidence_completeness
+      target: 0.95
+    - id: output_schema_validity
+      target: 1.00
+    - id: recommendation_actionability
+      target: 0.85
+
+  market_insight_specific:
+    - id: opportunity_score_dimensions
+      description: 机会评分必须覆盖需求、增长、竞争、利润、供应链、差异化6个维度
+    - id: listing_plan_required_fields
+      description: 链接规划必须包含人群、场景、定位、卖点、SKU、价格、竞品、主图、测试指标

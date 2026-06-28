@@ -588,6 +588,229 @@ console.log(JSON.stringify(vm));
         (run_dir / "deployment_runbook.md").write_text("# 手机采集生产部署 Runbook\n", encoding="utf-8")
         return run_dir
 
+    def _write_app_generation_workbench_run(self, runs_dir: Path, run_id: str = "app-generation-workbench") -> Path:
+        run_dir = runs_dir / run_id
+        requirements_dir = run_dir / "requirements"
+        planning_dir = run_dir / "planning"
+        codex_dir = run_dir / "codex"
+        worktree_app_dir = run_dir / "worktree" / "generated_apps" / "todo-prototype"
+        (worktree_app_dir / "public").mkdir(parents=True)
+        requirements_dir.mkdir(parents=True)
+        planning_dir.mkdir(parents=True)
+        codex_dir.mkdir(parents=True)
+        record = {
+            "run_id": run_id,
+            "team_id": "ai_native_engineering_team",
+            "domain_id": "app_generation",
+            "brief": "根据 PRD 生成本地应用：todo-prototype",
+            "status": "completed",
+            "run_dir": str(run_dir),
+            "started_at": "2026-06-25T00:00:00+00:00",
+            "finished_at": "2026-06-25T00:03:00+00:00",
+            "inputs": {
+                "app_slug": "todo-prototype",
+                "prd_text": "# Todo PRD\n\n用户可以新增、完成、筛选待办，状态保存在浏览器本地。",
+                "comparison_group_id": "cmp-todo-prototype",
+            },
+            "agent_runs": [
+                {
+                    "agent_id": "requirements",
+                    "status": "completed",
+                    "started_at": "a",
+                    "finished_at": "b",
+                    "risk_events": [],
+                    "output_paths": [
+                        "input_prd.md",
+                        "requirements/brief_analysis.json",
+                        "requirements/normalized_prd.md",
+                        "context_pack.md",
+                        "app_contract.json",
+                        "acceptance_criteria.md",
+                        "planning/acceptance_coverage_matrix.json",
+                        "planning/tdd_plan.json",
+                    ],
+                    "message": "complex task artifacts generated",
+                    "metadata": {},
+                },
+                {
+                    "agent_id": "coder",
+                    "status": "completed",
+                    "started_at": "b",
+                    "finished_at": "c",
+                    "risk_events": [],
+                    "output_paths": ["code_run_record.json", "codex/implementation_trace.json", "codex/diff.patch"],
+                    "message": "coded",
+                    "metadata": {},
+                },
+                {
+                    "agent_id": "reviewer",
+                    "status": "completed",
+                    "started_at": "c",
+                    "finished_at": "d",
+                    "risk_events": [],
+                    "output_paths": ["review_report.md"],
+                    "message": "reviewed",
+                    "metadata": {},
+                },
+                {
+                    "agent_id": "verifier",
+                    "status": "completed",
+                    "started_at": "d",
+                    "finished_at": "e",
+                    "risk_events": [],
+                    "output_paths": ["test_report.md", "codex/verification_record.json"],
+                    "message": "tested",
+                    "metadata": {},
+                },
+                {
+                    "agent_id": "publisher",
+                    "status": "completed",
+                    "started_at": "e",
+                    "finished_at": "f",
+                    "risk_events": [],
+                    "output_paths": ["preview_instructions.md", "final_report.md"],
+                    "message": "published",
+                    "metadata": {},
+                },
+            ],
+            "gate_results": [
+                {"gate_id": "requirement_quality", "status": "passed", "required_artifacts": ["input_prd.md"], "missing_artifacts": []},
+                {"gate_id": "planning_quality", "status": "passed", "required_artifacts": ["planning/tdd_plan.json"], "missing_artifacts": []},
+                {"gate_id": "complex_task_ready", "status": "passed", "required_artifacts": ["input_prd.md", "app_contract.json"], "missing_artifacts": []},
+                {"gate_id": "before_publish", "status": "passed", "required_artifacts": ["review_report.md", "test_report.md"], "missing_artifacts": []},
+            ],
+            "artifacts": {},
+            "risk_events": [],
+            "executor": "codex",
+            "executor_config": {"binary": "codex", "model": "gpt-5.3-codex", "reasoning_effort": "medium"},
+        }
+        (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+        (run_dir / "process.json").write_text(json.dumps({"run_id": run_id, "pid": 1234, "status": "completed"}), encoding="utf-8")
+        (run_dir / "events.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps({"event": "run_started", "run_id": run_id}),
+                    json.dumps({"event": "complex_task_artifacts_generated", "status": "completed"}),
+                    json.dumps({"event": "agent_started", "agent_id": "coder"}),
+                    json.dumps({"event": "run_completed", "run_id": run_id}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "task_journal.jsonl").write_text(
+            json.dumps({"event": "slice_loop_observed", "loop_phase": "implement", "summary": "Codex slice loop completed."}) + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "input_prd.md").write_text("# Input PRD\n\n# Todo PRD\n\n用户可以新增、完成、筛选待办。\n", encoding="utf-8")
+        (requirements_dir / "brief_analysis.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "domain_id": "app_generation",
+                    "recommended_skills": ["spec_driven_development", "context_engineering", "planning_and_task_breakdown"],
+                    "llm_draft_requested": True,
+                    "complexity": "complex",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (requirements_dir / "normalized_prd.md").write_text(
+            "# Normalized PRD\n\n## Scope Boundaries\n\n- localStorage only\n- no database\n",
+            encoding="utf-8",
+        )
+        (requirements_dir / "capability_boundary.json").write_text(
+            json.dumps({"schema_version": 1, "unsupported_capabilities": [], "required_new_capabilities": [{"id": "local_todo"}]}),
+            encoding="utf-8",
+        )
+        (run_dir / "context_pack.md").write_text("# Context Pack\n\nUse native SPA and Node stdlib.\n", encoding="utf-8")
+        (run_dir / "app_contract.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "app_slug": "todo-prototype",
+                    "target_stack": {"frontend": "native_spa", "backend": "node_stdlib", "storage": "localStorage", "database": "none"},
+                    "generated_app_dir": "generated_apps/todo-prototype",
+                    "required_files": ["server.js", "public/index.html", "public/styles.css", "public/app.js", "README.md"],
+                    "verification_commands": ["node --check generated_apps/todo-prototype/server.js", "python3 -m unittest discover -s tests -v"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "acceptance_criteria.md").write_text("# Acceptance Criteria\n\n- `AC-001` Todo localStorage flow.\n", encoding="utf-8")
+        (planning_dir / "acceptance_coverage_matrix.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "acceptance_criteria": [{"id": "AC-001", "description": "Todo localStorage flow.", "covering_slice_ids": ["slice-001"]}],
+                    "slices": [{"id": "slice-001", "acceptance_criteria_ids": ["AC-001"], "verification_commands": ["node --check generated_apps/todo-prototype/server.js"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (planning_dir / "tdd_plan.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "passed",
+                    "test_cases": [{"id": "TDD-001", "acceptance_criteria_ids": ["AC-001"], "verification_command": "node --check generated_apps/todo-prototype/server.js"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (codex_dir / "implementation_trace.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "stage": "coder",
+                    "status": "completed",
+                    "current_step": "finalize_result",
+                    "steps": [
+                        {"id": "prepare_context", "title": "准备上下文", "status": "completed", "summary": "上下文已准备。"},
+                        {"id": "codex_running", "title": "运行 Codex", "status": "completed", "summary": "应用代码已生成。"},
+                    ],
+                    "evidence": {
+                        "changed_files": ["generated_apps/todo-prototype/server.js", "generated_apps/todo-prototype/public/app.js"],
+                        "tests_run": ["node --check generated_apps/todo-prototype/server.js"],
+                        "verification_commands": ["node --check generated_apps/todo-prototype/server.js"],
+                        "diff_path": "codex/diff.patch",
+                    },
+                    "risk_events": [],
+                    "blockers": [],
+                    "next_action": "review",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (codex_dir / "diff.patch").write_text("diff --git a/generated_apps/todo-prototype/server.js b/generated_apps/todo-prototype/server.js\n", encoding="utf-8")
+        (codex_dir / "stdout.jsonl").write_text(json.dumps({"event": "exec.completed"}) + "\n", encoding="utf-8")
+        (codex_dir / "verification_record.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "completed",
+                    "commands": [{"command": "node --check generated_apps/todo-prototype/server.js", "exit_code": 0}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "code_run_record.json").write_text(
+            json.dumps({"executor": "codex", "files_changed": ["generated_apps/todo-prototype/server.js"], "provider": {"name": "default"}, "artifacts": {}}),
+            encoding="utf-8",
+        )
+        (run_dir / "review_report.md").write_text("# Review\n\nNo blocking issues.\n", encoding="utf-8")
+        (run_dir / "test_report.md").write_text("# Test\n\nnode --check generated_apps/todo-prototype/server.js\n", encoding="utf-8")
+        (run_dir / "preview_instructions.md").write_text("cd generated_apps/todo-prototype\nnode server.js\n", encoding="utf-8")
+        (run_dir / "final_report.md").write_text("# Final\n\ngenerated_apps/todo-prototype/server.js\n", encoding="utf-8")
+        (worktree_app_dir / "server.js").write_text("console.log('todo');\n", encoding="utf-8")
+        (worktree_app_dir / "README.md").write_text("# Todo Prototype\n", encoding="utf-8")
+        (worktree_app_dir / "public" / "index.html").write_text("<main id=\"app\"></main>\n", encoding="utf-8")
+        (worktree_app_dir / "public" / "styles.css").write_text("body { font-family: sans-serif; }\n", encoding="utf-8")
+        (worktree_app_dir / "public" / "app.js").write_text("localStorage.setItem('todo', '[]');\n", encoding="utf-8")
+        return run_dir
+
     def test_dashboard_state_serializes_run_without_secrets(self) -> None:
         from growth_dev.team.dashboard import build_dashboard_state
         from growth_dev.team.workspace import refresh_task_workspace
@@ -681,6 +904,869 @@ console.log(JSON.stringify(vm));
         self.assertEqual(state["apply_gate"]["status"], "passed")
         self.assertNotIn("sk-should-not-leak", payload)
         self.assertNotIn(".env", payload)
+
+    def test_dashboard_state_includes_app_generation_artifacts(self) -> None:
+        from growth_dev.team.dashboard import build_dashboard_state
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-generation-dashboard"
+            (run_dir / "requirements").mkdir(parents=True)
+            record = {
+                "run_id": "app-generation-dashboard",
+                "team_id": "ai_native_engineering_team",
+                "domain_id": "app_generation",
+                "brief": "根据 PRD 生成本地应用：todo-prototype",
+                "status": "completed",
+                "run_dir": str(run_dir),
+                "agent_runs": [],
+                "gate_results": [
+                    {
+                        "gate_id": "complex_task_ready",
+                        "status": "passed",
+                        "required_artifacts": ["input_prd.md", "requirements/normalized_prd.md", "app_contract.json"],
+                        "missing_artifacts": [],
+                    }
+                ],
+                "artifacts": {},
+                "risk_events": [],
+            }
+            (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+            (run_dir / "input_prd.md").write_text("# Todo PRD\n", encoding="utf-8")
+            (run_dir / "requirements" / "normalized_prd.md").write_text("# 标准化 PRD\n", encoding="utf-8")
+            (run_dir / "app_contract.json").write_text(json.dumps({"generated_app_dir": "generated_apps/todo-prototype"}), encoding="utf-8")
+            (run_dir / "preview_instructions.md").write_text("node generated_apps/todo-prototype/server.js\n", encoding="utf-8")
+
+            state = build_dashboard_state("app-generation-dashboard", runs_dir=runs_dir, repo_root=root)
+
+        artifacts = {item["path"]: item for item in state["artifacts"]}
+        for path in ("input_prd.md", "requirements/normalized_prd.md", "app_contract.json", "preview_instructions.md"):
+            with self.subTest(path=path):
+                self.assertIn(path, artifacts)
+                self.assertTrue(artifacts[path]["exists"])
+
+    def test_app_generation_workbench_lists_only_app_generation_runs(self) -> None:
+        from growth_dev.team.dashboard import list_app_generation_runs
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            self._write_completed_run(runs_dir, run_id="web-monitoring-run")
+
+            runs = list_app_generation_runs(runs_dir)
+
+        self.assertEqual([run["run_id"] for run in runs], ["app-generation-workbench"])
+        self.assertEqual(runs[0]["domain_id"], "app_generation")
+        self.assertEqual(runs[0]["app_slug"], "todo-prototype")
+        self.assertEqual(runs[0]["comparison_group_id"], "cmp-todo-prototype")
+        self.assertFalse(runs[0]["is_rerun"])
+
+    def test_app_generation_workbench_nodes_expose_observable_contract(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+
+            state = build_app_generation_nodes("app-generation-workbench", runs_dir=runs_dir, repo_root=root)
+
+        expected_ids = [
+            "skill_routing",
+            "prd_input",
+            "prd_normalization",
+            "context_contract",
+            "planning_tdd",
+            "implementation",
+            "review_quality",
+            "verification",
+            "preview_delivery",
+        ]
+        nodes = state["nodes"]
+        self.assertEqual([node["id"] for node in nodes], expected_ids)
+        self.assertEqual(state["run"]["app_slug"], "todo-prototype")
+        for node in nodes:
+            with self.subTest(node=node["id"]):
+                for key in ("inputs", "process", "outputs", "skills", "tool_calls", "usage", "scores", "risks", "variants", "comparison"):
+                    self.assertIn(key, node)
+                self.assertTrue(any(skill["id"] for skill in node["skills"]))
+                self.assertIn("rule", [variant["variant_id"] for variant in node["variants"]])
+                self.assertIn("codex", [variant["variant_id"] for variant in node["variants"]])
+        implementation = next(node for node in nodes if node["id"] == "implementation")
+        variants = {variant["variant_id"]: variant for variant in implementation["variants"]}
+        self.assertEqual(variants["rule"]["usage"]["total_tokens"], 0)
+        self.assertEqual(variants["codex"]["usage"]["total_tokens"], "unknown")
+        self.assertTrue(any(call["tool_name"] == "codex exec" for call in implementation["tool_calls"]))
+        self.assertGreaterEqual(implementation["scores"]["engineering_readiness"], 0.8)
+        app_js_output = next(item for item in implementation["outputs"] if item["path"].endswith("public/app.js"))
+        self.assertFalse(app_js_output["preview"]["enabled"])
+        self.assertEqual(app_js_output["preview"]["kind"], "missing")
+        self.assertEqual(app_js_output["preview"]["size_bytes"], app_js_output["size_bytes"])
+
+    def test_app_generation_node_exposes_phases_and_output_summary(self) -> None:
+        """节点契约扩展：每个 node 必须带 phases + output_summary；implementation 节点 phases 复用 implementation_trace.steps。"""
+
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            state = build_app_generation_nodes("app-generation-workbench", runs_dir=runs_dir, repo_root=root)
+
+        nodes = {node["id"]: node for node in state["nodes"]}
+        for node_id, node in nodes.items():
+            with self.subTest(node=node_id):
+                self.assertIn("phases", node)
+                self.assertIsInstance(node["phases"], list)
+                self.assertGreaterEqual(len(node["phases"]), 1)
+                for phase in node["phases"]:
+                    for key in ("id", "label", "status", "started_at", "finished_at", "summary", "artifacts"):
+                        self.assertIn(key, phase)
+                    self.assertIn(phase["status"], {"pending", "running", "completed", "failed"})
+                self.assertIn("output_summary", node)
+                summary = node["output_summary"]
+                for key in ("total", "ready", "success", "warning", "error", "pending"):
+                    self.assertIn(key, summary)
+                self.assertEqual(
+                    summary["success"] + summary["warning"] + summary["error"] + summary["pending"],
+                    summary["total"],
+                )
+
+        impl_phases = nodes["implementation"]["phases"]
+        impl_phase_ids = [phase["id"] for phase in impl_phases]
+        self.assertIn("prepare_context", impl_phase_ids)
+        self.assertIn("codex_running", impl_phase_ids)
+        running_phase = next(phase for phase in impl_phases if phase["id"] == "codex_running")
+        self.assertEqual(running_phase["status"], "completed")
+
+    def test_app_generation_artifact_validation_status_reflects_existence_and_risks(self) -> None:
+        """artifact validation_status：未生成→pending；存在且无 risk→success；存在且 risk severity=blocked→error。"""
+
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir)
+            # 注入 agqs_score.json 触发 blocked risk，artifact_refs 关联 benchmark_diff.md / agqs_score.json
+            (run_dir / "agqs_score.json").write_text(
+                json.dumps({"schema_version": 1, "blocking_events": ["benchmark_parity_missing:cap_x"], "warnings": []}),
+                encoding="utf-8",
+            )
+            (run_dir / "benchmark_diff.md").write_text("# Benchmark Diff\n", encoding="utf-8")
+            state = build_app_generation_nodes("app-generation-workbench", runs_dir=runs_dir, repo_root=root)
+
+        impl = next(node for node in state["nodes"] if node["id"] == "implementation")
+        outputs_by_path = {ref["path"]: ref for ref in impl["outputs"]}
+        # 存在 + 关联 blocked risk → error
+        self.assertEqual(outputs_by_path["agqs_score.json"]["validation_status"], "error")
+        self.assertEqual(outputs_by_path["benchmark_diff.md"]["validation_status"], "error")
+        # 存在 + 无 risk → success
+        diff_ref = outputs_by_path.get("codex/diff.patch")
+        self.assertIsNotNone(diff_ref)
+        self.assertEqual(diff_ref["validation_status"], "success")
+        # output_summary 反映 error
+        self.assertGreaterEqual(impl["output_summary"]["error"], 1)
+
+    def test_app_generation_node_phases_fallback_to_artifact_existence_for_non_implementation_nodes(self) -> None:
+        """非 implementation 节点：phase 状态根据模板 + 产物存在性推导（all exist→completed；部分→running；都缺→pending）。"""
+
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            state = build_app_generation_nodes("app-generation-workbench", runs_dir=runs_dir, repo_root=root)
+
+        planning = next(node for node in state["nodes"] if node["id"] == "planning_tdd")
+        phase_status_by_id = {phase["id"]: phase["status"] for phase in planning["phases"]}
+        # fixture 已写入 acceptance_criteria.md, planning/acceptance_coverage_matrix.json, planning/tdd_plan.json
+        self.assertEqual(phase_status_by_id.get("acceptance"), "completed")
+        self.assertEqual(phase_status_by_id.get("coverage_matrix"), "completed")
+        self.assertEqual(phase_status_by_id.get("tdd_plan"), "completed")
+
+    def test_app_generation_workbench_surfaces_benchmark_parity_artifacts(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir)
+            (run_dir / "benchmark_context.md").write_text("# Benchmark Context\n\n## Benchmark Parity\n", encoding="utf-8")
+            (run_dir / "benchmark_context.json").write_text(json.dumps({"quality_mode": "benchmark_parity"}), encoding="utf-8")
+            (run_dir / "benchmark_diff.md").write_text("# Benchmark Diff\n\n- missing: product_image_upload\n", encoding="utf-8")
+            (run_dir / "agqs_score.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "overall_agqs": 66.67,
+                        "hard_gate_status": "failed",
+                        "capability_coverage": [
+                            {"id": "product_image_upload", "label": "产品图上传", "status": "missing"},
+                            {"id": "reference_image_upload", "label": "参考图上传", "status": "covered"},
+                        ],
+                        "blocking_events": ["benchmark_parity_missing:product_image_upload"],
+                        "warnings": ["provider_setup_error_needs_manual_review"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = build_app_generation_nodes("app-generation-workbench", runs_dir=runs_dir, repo_root=root)
+
+        context_node = next(node for node in state["nodes"] if node["id"] == "context_contract")
+        implementation = next(node for node in state["nodes"] if node["id"] == "implementation")
+        output_paths = {item["path"] for item in implementation["outputs"]}
+        context_paths = {item["path"] for item in context_node["outputs"]}
+        risk_ids = {item["id"] for item in implementation["risks"]}
+
+        self.assertIn("benchmark_context.md", context_paths)
+        self.assertIn("benchmark_diff.md", output_paths)
+        self.assertIn("agqs_score.json", output_paths)
+        self.assertEqual(implementation["scores"]["benchmark_agqs"], 66.67)
+        self.assertEqual(implementation["scores"]["benchmark_hard_gate"], "failed")
+        self.assertIn("benchmark_parity_missing_product_image_upload", risk_ids)
+
+    def test_app_generation_node_context_has_revision_and_action_contract(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_node_context
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+        self.assertEqual(context["schema_version"], 1)
+        self.assertEqual(context["run_id"], "app-generation-workbench")
+        self.assertEqual(context["node_id"], "planning_tdd")
+        self.assertEqual(context["selected_variant"], "codex")
+        self.assertEqual(context["app_slug"], "todo-prototype")
+        self.assertTrue(context["context_revision"].startswith("sha256:"))
+        self.assertIn(context["context_revision"], context["context_id"])
+        self.assertTrue(context["inputs"])
+        self.assertTrue(context["outputs"])
+        self.assertTrue(all(item["content_hash"].startswith("sha256:") or item["content_hash"] == "" for item in context["inputs"] + context["outputs"]))
+        self.assertTrue(any(item["read_url"].startswith("/api/runs/app-generation-workbench/artifact") for item in context["outputs"] if item["read_url"]))
+        self.assertFalse(any(item["path"].startswith(("worktree/", "generated_apps/", "codex/")) and item.get("preview", {}).get("enabled") for item in context["outputs"]))
+        action_types = [action["type"] for action in context["available_actions"]]
+        self.assertIn("explain_node", action_types)
+        self.assertIn("compare_variants", action_types)
+        self.assertIn("rerun_from_node", action_types)
+
+    def test_app_generation_run_exposes_publish_status(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            published = runs_dir / "app-generation-workbench" / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "app_publish.json").write_text(
+                json.dumps(
+                    {
+                        "app_slug": "todo-prototype",
+                        "published_at": "2026-01-01T00:00:00Z",
+                        "source_commit": "abc123",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = build_app_generation_nodes(
+                "app-generation-workbench",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+        self.assertEqual(state["run"]["publish_status"]["status"], "published")
+        self.assertEqual(state["run"]["publish_status"]["app_slug"], "todo-prototype")
+        self.assertEqual(state["run"]["publish_status"]["source_commit"], "abc123")
+
+    def test_app_generation_artifact_preview_is_typed_and_path_confined(self) -> None:
+        from growth_dev.team.dashboard import read_app_generation_artifact_preview
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            artifact_path = runs_dir / "app-generation-workbench" / "artifacts" / "context_contract"
+            artifact_path.mkdir(parents=True)
+            (artifact_path / "app_contract.json").write_text(
+                json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8"
+            )
+            preview = read_app_generation_artifact_preview(
+                "app-generation-workbench",
+                "artifacts/context_contract/app_contract.json",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            (artifact_path / "pixel.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+            )
+            image_preview = read_app_generation_artifact_preview(
+                "app-generation-workbench",
+                "artifacts/context_contract/pixel.png",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+            with self.assertRaises(ValueError):
+                read_app_generation_artifact_preview("app-generation-workbench", "../secret.txt", runs_dir=runs_dir, repo_root=root)
+            with self.assertRaises(ValueError):
+                read_app_generation_artifact_preview(
+                    "app-generation-workbench",
+                    "worktree/generated_apps/todo-prototype/public/app.js",
+                    runs_dir=runs_dir,
+                    repo_root=root,
+                )
+
+        self.assertEqual(preview["kind"], "code")
+        self.assertEqual(preview["mime_type"], "application/json")
+        self.assertIn("todo-prototype", preview["content"])
+        self.assertEqual(image_preview["kind"], "image")
+        self.assertTrue(image_preview["data_url"].startswith("data:image/png;base64,"))
+
+    def test_app_generation_agent_bridge_uses_node_context_and_handles_unconfigured_pi_agent(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_node_context, handle_app_generation_agent_message
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+            codex_response = handle_app_generation_agent_message(
+                {
+                    "provider": "codex",
+                    "mode": "compare",
+                    "message": "对比 rule 和 codex 在这个节点的输出。",
+                    "node_context": context,
+                },
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            with mock.patch.dict("os.environ", {}, clear=True):
+                pi_response = handle_app_generation_agent_message(
+                    {
+                        "provider": "pi_agent",
+                        "mode": "explain",
+                        "message": "解释当前节点。",
+                        "node_context": context,
+                    },
+                    runs_dir=runs_dir,
+                    repo_root=root,
+                )
+
+        self.assertEqual(codex_response["provider"], "codex")
+        self.assertEqual(codex_response["status"], "completed")
+        self.assertTrue(any(action["type"] == "compare_variants" for action in codex_response["actions"]))
+        self.assertEqual(codex_response["usage"]["total_tokens"], "unknown")
+        self.assertEqual(pi_response["provider"], "pi_agent")
+        self.assertEqual(pi_response["status"], "not_configured")
+        self.assertIn("PI-Agent", pi_response["message"])
+
+    def test_app_generation_agent_stream_yields_codex_agent_end_event(self) -> None:
+        from growth_dev.team.dashboard import (
+            build_app_generation_node_context,
+            stream_app_generation_agent_message,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            events = list(
+                stream_app_generation_agent_message(
+                    {
+                        "provider": "codex",
+                        "mode": "explain",
+                        "message": "解释当前节点",
+                        "node_context": context,
+                    },
+                    runs_dir=runs_dir,
+                    repo_root=root,
+                )
+            )
+
+        types = [event.get("type") for event in events]
+        self.assertEqual(types, ["agent_end"])
+        agent_end_payload = events[0]["payload"]
+        self.assertEqual(agent_end_payload["provider"], "codex")
+        self.assertEqual(agent_end_payload["status"], "completed")
+        self.assertTrue(any(a["type"] == "explain_node" for a in agent_end_payload["actions"]))
+
+    def test_app_generation_agent_stream_uses_interaction_context_for_artifact_actions(self) -> None:
+        from growth_dev.team.dashboard import (
+            build_app_generation_node_context,
+            stream_app_generation_agent_message,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            events = list(
+                stream_app_generation_agent_message(
+                    {
+                        "provider": "codex",
+                        "intent": "auto",
+                        "mode": "explain",
+                        "message": "这个中间产物是否需要重跑？",
+                        "node_context": context,
+                        "interaction_context": {
+                            "context_revision": context["context_revision"],
+                            "focus": {
+                                "card": "artifact_preview",
+                                "artifact_ref": "planning/tdd_plan.json",
+                                "selected_text": "mobile empty state",
+                                "view_mode": "artifact_preview",
+                            },
+                            "allowed_operations": ["explain", "read_artifact", "suggest_artifact_regeneration"],
+                        },
+                    },
+                    runs_dir=runs_dir,
+                    repo_root=root,
+                )
+            )
+
+        self.assertEqual([event.get("type") for event in events], ["agent_end"])
+        actions = events[0]["payload"]["actions"]
+        action_types = [action["type"] for action in actions]
+        self.assertIn("read_artifact", action_types)
+        self.assertIn("suggest_artifact_regeneration", action_types)
+
+    def test_app_generation_agent_stream_emits_upstream_error_for_not_configured_pi(self) -> None:
+        from growth_dev.team.dashboard import (
+            build_app_generation_node_context,
+            stream_app_generation_agent_message,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            with mock.patch.dict("os.environ", {"PATH": "/nonexistent"}, clear=False):
+                with mock.patch("shutil.which", return_value=None):
+                    events = list(
+                        stream_app_generation_agent_message(
+                            {
+                                "provider": "pi_agent",
+                                "mode": "explain",
+                                "message": "解释当前节点",
+                                "node_context": context,
+                            },
+                            runs_dir=runs_dir,
+                            repo_root=root,
+                        )
+                    )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "upstream_error")
+        self.assertEqual(events[0]["payload"]["phase"], "not_configured")
+
+    def test_app_generation_agent_stream_routes_pi_provider_through_fake_subprocess(self) -> None:
+        import json as _json
+        import threading
+        import time
+        from growth_dev.team import agent_bridge
+        from growth_dev.team.dashboard import (
+            build_app_generation_node_context,
+            stream_app_generation_agent_message,
+        )
+        from tests.test_agent_bridge_pi_rpc import (
+            FakeProcess,
+            _agent_end,
+            _text_delta,
+            _tool_end,
+            _tool_start,
+        )
+
+        fake_proc = FakeProcess()
+
+        def launcher(cmd, env, cwd):
+            return fake_proc
+
+        def ready_probe(**_kwargs):
+            return {
+                "provider": "pi_agent",
+                "status": "ready",
+                "message": "fake pi ready",
+                "capabilities": ["chat", "tool_calls", "stream"],
+            }
+
+        pi_provider = agent_bridge.PiAgentProvider(
+            subprocess_launcher=launcher, status_probe=ready_probe
+        )
+        agent_bridge.register_provider_singleton("pi_agent", pi_provider)
+        self.addCleanup(agent_bridge.reset_provider_singletons)
+
+        def producer() -> None:
+            time.sleep(0.05)
+            fake_proc.emit(_text_delta("hi"))
+            fake_proc.emit(_tool_start("t1", "read", {"path": "x"}))
+            fake_proc.emit(_tool_end("t1", "ok", is_error=False))
+            fake_proc.emit(_agent_end(usage={"total_tokens": 42}))
+
+        threading.Thread(target=producer, daemon=True).start()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            with mock.patch(
+                "growth_dev.team.dashboard._app_generation_provider_statuses",
+                return_value=[ready_probe(), {"provider": "codex", "status": "ready"}],
+            ):
+                events = list(
+                    stream_app_generation_agent_message(
+                        {
+                            "provider": "pi_agent",
+                            "mode": "explain",
+                            "message": "请读一个文件",
+                            "node_context": context,
+                        },
+                        runs_dir=runs_dir,
+                        repo_root=root,
+                    )
+                )
+
+        types = [e["type"] for e in events]
+        self.assertIn("message_delta", types)
+        self.assertIn("tool_call", types)
+        self.assertIn("tool_result", types)
+        self.assertEqual(types[-1], "agent_end")
+        agent_end = events[-1]
+        self.assertEqual(agent_end["payload"]["usage"]["total_tokens"], 42)
+
+    def test_app_generation_agent_stream_does_not_duplicate_pi_stream_closed_error(self) -> None:
+        import json as _json
+        import threading
+        import time
+        from growth_dev.team import agent_bridge
+        from growth_dev.team.dashboard import (
+            build_app_generation_node_context,
+            stream_app_generation_agent_message,
+        )
+        from tests.test_agent_bridge_pi_rpc import FakeProcess, _text_delta
+
+        fake_proc = FakeProcess()
+
+        def launcher(cmd, env, cwd):
+            return fake_proc
+
+        def ready_probe(**_kwargs):
+            return {
+                "provider": "pi_agent",
+                "status": "ready",
+                "message": "fake pi ready",
+                "capabilities": ["chat", "tool_calls", "stream"],
+            }
+
+        pi_provider = agent_bridge.PiAgentProvider(
+            subprocess_launcher=launcher, status_probe=ready_probe
+        )
+        agent_bridge.register_provider_singleton("pi_agent", pi_provider)
+        self.addCleanup(agent_bridge.reset_provider_singletons)
+
+        def producer() -> None:
+            time.sleep(0.05)
+            fake_proc.emit(_text_delta("partial"))
+            fake_proc.close_stdout()
+
+        threading.Thread(target=producer, daemon=True).start()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+            with mock.patch(
+                "growth_dev.team.dashboard._app_generation_provider_statuses",
+                return_value=[ready_probe(), {"provider": "codex", "status": "ready"}],
+            ):
+                events = list(
+                    stream_app_generation_agent_message(
+                        {
+                            "provider": "pi_agent",
+                            "mode": "explain",
+                            "message": "请继续",
+                            "node_context": context,
+                        },
+                        runs_dir=runs_dir,
+                        repo_root=root,
+                    )
+                )
+
+        types = [e["type"] for e in events]
+        self.assertIn("message_delta", types)
+        self.assertEqual(types.count("upstream_error"), 1)
+        self.assertEqual(events[-1]["payload"]["phase"], "stream_closed")
+
+    def test_app_generation_rerun_creates_new_run_without_mutating_source(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, build_app_generation_node_context, start_app_generation_rerun
+
+        class FakeProcess:
+            pid = 9876
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            repo_root = Path(__file__).resolve().parents[1]
+            source_dir = self._write_app_generation_workbench_run(runs_dir)
+            source_record_before = (source_dir / "team_run_record.json").read_text(encoding="utf-8")
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "planning_tdd",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+            with mock.patch("growth_dev.team.dashboard.subprocess.Popen", return_value=FakeProcess()):
+                result = start_app_generation_rerun(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=repo_root / "domains",
+                        repo_root=repo_root,
+                        dashboard_dir=repo_root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "source_run_id": "app-generation-workbench",
+                        "rerun_from_node": "planning_tdd",
+                        "selected_variant": "codex",
+                        "context_revision": context["context_revision"],
+                        "override_instructions": "增加移动端空状态验收。",
+                    },
+                )
+
+            process = json.loads((runs_dir / result["run_id"] / "process.json").read_text(encoding="utf-8"))
+            command = process["command"]
+            inputs = json.loads(command[command.index("--inputs-json") + 1])
+            source_record_after = (source_dir / "team_run_record.json").read_text(encoding="utf-8")
+
+        self.assertNotEqual(result["run_id"], "app-generation-workbench")
+        self.assertEqual(result["source_run_id"], "app-generation-workbench")
+        self.assertEqual(result["rerun_from_node"], "planning_tdd")
+        self.assertEqual(inputs["source_run_id"], "app-generation-workbench")
+        self.assertEqual(inputs["rerun_from_node"], "planning_tdd")
+        self.assertEqual(inputs["selected_variant"], "codex")
+        self.assertEqual(inputs["comparison_group_id"], "cmp-todo-prototype")
+        self.assertIn("增加移动端空状态验收", inputs["override_instructions"])
+        self.assertIn("Workbench Override Instructions", inputs["prd_text"])
+        self.assertEqual(source_record_before, source_record_after)
+
+    def test_start_app_generation_run_writes_inputs_and_invokes_cli_with_executor(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, start_app_generation_run
+
+        class FakeProcess:
+            pid = 4242
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            repo_root = Path(__file__).resolve().parents[1]
+            captured: dict[str, Any] = {}
+
+            def fake_popen(command, **kwargs):
+                captured["command"] = list(command)
+                captured["cwd"] = str(kwargs.get("cwd") or "")
+                return FakeProcess()
+
+            with mock.patch("growth_dev.team.dashboard.subprocess.Popen", side_effect=fake_popen):
+                result = start_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=repo_root / "domains",
+                        repo_root=repo_root,
+                        dashboard_dir=repo_root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "prd_text": "# Todo App\n\n用户可以添加、完成和删除待办事项。",
+                        "prd_filename": "todo-app.md",
+                        "executor": "llm",
+                    },
+                )
+
+            run_id = result["run_id"]
+            process = json.loads((runs_dir / run_id / "process.json").read_text(encoding="utf-8"))
+            command = captured["command"]
+            inputs = json.loads(command[command.index("--inputs-json") + 1])
+            executor_arg = command[command.index("--executor") + 1]
+            domain_arg = command[command.index("--domain") + 1]
+
+        self.assertTrue(run_id.startswith("app_generation-"))
+        self.assertEqual(result["executor"], "llm")
+        self.assertEqual(executor_arg, "llm")
+        self.assertEqual(domain_arg, "app_generation")
+        self.assertEqual(result["app_slug"], "todo-app")
+        self.assertEqual(result["comparison_group_id"], "cmp-todo-app")
+        self.assertEqual(inputs["app_slug"], "todo-app")
+        self.assertEqual(inputs["prd_text"], "# Todo App\n\n用户可以添加、完成和删除待办事项。")
+        self.assertEqual(inputs["comparison_group_id"], "cmp-todo-app")
+        self.assertEqual(inputs["prd_filename"], "todo-app.md")
+        self.assertIn(process["status"], {"starting", "running"})
+
+    def test_start_app_generation_run_rejects_missing_prd_and_bad_executor(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, start_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cfg = DashboardConfig(
+                runs_dir=root / "runs",
+                domains_dir=root / "domains",
+                repo_root=root,
+                dashboard_dir=root / "dashboard",
+                executor="codex",
+            )
+            with self.assertRaises(ValueError):
+                start_app_generation_run(cfg, {"prd_text": "   "})
+            with self.assertRaises(ValueError):
+                start_app_generation_run(cfg, {"prd_text": "ok", "executor": "vibe-coding"})
+
+    def test_stream_app_generation_run_events_yields_snapshot_then_run_finished_for_completed_run(self) -> None:
+        from growth_dev.team.dashboard import stream_app_generation_run_events
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            events = list(
+                stream_app_generation_run_events(
+                    "app-generation-workbench",
+                    runs_dir=runs_dir,
+                    repo_root=root,
+                    poll_interval=0,
+                    max_iterations=1,
+                )
+            )
+
+        self.assertGreaterEqual(len(events), 2)
+        self.assertEqual(events[0]["type"], "snapshot")
+        self.assertEqual(events[0]["payload"]["run"]["run_id"], "app-generation-workbench")
+        self.assertEqual(len(events[0]["payload"]["nodes"]), 9)
+        self.assertEqual(events[-1]["type"], "run_finished")
+        self.assertEqual(events[-1]["payload"]["status"], "completed")
+
+    def test_stream_app_generation_run_events_emits_node_state_diff_when_status_changes(self) -> None:
+        from growth_dev.team import dashboard as dashboard_module
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "in-flight-run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "team_run_record.json").write_text(
+                json.dumps({"run_id": "in-flight-run", "domain_id": "app_generation", "status": "running"}),
+                encoding="utf-8",
+            )
+
+            snapshots = [
+                {
+                    "run": {"run_id": "in-flight-run", "status": "running"},
+                    "nodes": [
+                        {"id": "prd_input", "status": "completed", "outputs": [], "risks": [], "selected_variant": "rule"},
+                        {"id": "implementation", "status": "running", "outputs": [], "risks": [], "selected_variant": "codex"},
+                    ],
+                },
+                {
+                    "run": {"run_id": "in-flight-run", "status": "running"},
+                    "nodes": [
+                        {"id": "prd_input", "status": "completed", "outputs": [], "risks": [], "selected_variant": "rule"},
+                        {"id": "implementation", "status": "completed", "outputs": [{"path": "codex/diff.patch"}], "risks": [], "selected_variant": "codex"},
+                    ],
+                },
+                {
+                    "run": {"run_id": "in-flight-run", "status": "completed"},
+                    "nodes": [
+                        {"id": "prd_input", "status": "completed", "outputs": [], "risks": [], "selected_variant": "rule"},
+                        {"id": "implementation", "status": "completed", "outputs": [], "risks": [], "selected_variant": "codex"},
+                    ],
+                },
+            ]
+            call_seq = iter(snapshots)
+
+            def fake_build(run_id: str, *, runs_dir: Path, repo_root: Path) -> dict:
+                return next(call_seq)
+
+            with mock.patch.object(dashboard_module, "build_app_generation_nodes", side_effect=fake_build):
+                events = list(
+                    dashboard_module.stream_app_generation_run_events(
+                        "in-flight-run",
+                        runs_dir=runs_dir,
+                        repo_root=root,
+                        poll_interval=0,
+                        max_iterations=4,
+                    )
+                )
+
+        types = [e["type"] for e in events]
+        self.assertEqual(types[0], "snapshot")
+        node_state_events = [e for e in events if e["type"] == "node_state"]
+        self.assertEqual(len(node_state_events), 1)
+        self.assertEqual(node_state_events[0]["payload"]["node_id"], "implementation")
+        self.assertEqual(node_state_events[0]["payload"]["status"], "completed")
+        self.assertEqual(types[-1], "run_finished")
+        self.assertEqual(events[-1]["payload"]["status"], "completed")
 
     def test_dashboard_acceptance_runner_records_successful_apply_and_tests(self) -> None:
         from growth_dev.team.dashboard import run_dashboard_acceptance_once
@@ -955,6 +2041,111 @@ console.log(JSON.stringify(vm));
         self.assertNotIn('id="quality-gates"', html)
         for engineering_copy in ("Pipeline", "Gates", "Logs", "Artifacts", "Executor", "Provider", "Model"):
             self.assertNotIn(engineering_copy, html)
+
+    def test_dashboard_html_exposes_prd_app_generation_mode(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        i18n = json.loads((root / "dashboard" / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+
+        self.assertIn('id="request-mode"', html)
+        self.assertIn('value="app_generation"', html)
+        self.assertIn('id="app-slug"', html)
+        self.assertIn("requestModeLabel", i18n["app"])
+        self.assertIn("appSlugLabel", i18n["app"])
+
+    def test_dashboard_exposes_app_generation_workbench_entry(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        index_html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+        page_html = (root / "dashboard" / "app_generation.html").read_text(encoding="utf-8")
+        page_js = (root / "dashboard" / "app_generation.js").read_text(encoding="utf-8")
+        page_css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('href="/app_generation.html"', index_html)
+        self.assertIn("PRD生成应用", index_html)
+        for token in (
+            'id="app-generation-workbench"',
+            'id="app-generation-task-list"',
+            'id="app-generation-node-workspace"',
+            'id="app-generation-node-list"',
+            'id="app-generation-node-detail"',
+            'id="app-generation-skill-routing"',
+            'id="app-generation-preview-rail"',
+            'id="app-generation-preview-content"',
+            'id="app-generation-agent-panel"',
+            'id="app-generation-provider"',
+            'id="app-generation-rerun"',
+        ):
+            self.assertIn(token, page_html)
+        self.assertLess(page_html.index('id="app-generation-node-workspace"'), page_html.index('id="app-generation-preview-rail"'))
+        self.assertLess(page_html.index('id="app-generation-preview-rail"'), page_html.index('id="app-generation-agent-panel"'))
+        for token in (
+            "/api/app-generation/runs",
+            "/api/app-generation/runs/",
+            "/api/app-generation/rerun",
+            "/api/app-generation/agent/message",
+            "buildAgentInteractionContext",
+            "interaction_context",
+            "handleAgentAction",
+            "read_artifact",
+            "suggest_artifact_regeneration",
+            "context_revision",
+            "selectedVariant",
+            "localStorage",
+            "previewRequestSeq",
+            'event.key === "Escape"',
+            "BUSINESS_NODE_TITLES",
+            "DETAIL_CARD_TITLES",
+            "openArtifactPreview",
+            "输入 Token",
+            "未记录",
+        ):
+            self.assertIn(token, page_js)
+        for token in (
+            ".app-generation-workbench",
+            ".app-generation-task-list",
+            ".app-generation-node-workspace",
+            ".app-generation-shell {",
+            "display: flex",
+            "overflow-x: auto",
+            "flex: 0 0 clamp(260px, 24vw, 320px)",
+            "flex: 1 1 clamp(720px, 52vw, 1000px)",
+            "flex: 0 0 clamp(300px, 24vw, 360px)",
+            "flex: 0 0 clamp(320px, 26vw, 380px)",
+            ".app-generation-preview-rail[hidden]",
+            "display: none !important",
+            ".app-generation-agent-panel",
+            ".app-generation-preview-rail",
+            ".app-generation-detail-card",
+            ".app-generation-node-card",
+            ".app-generation-node-detail",
+            "overflow-wrap: anywhere",
+        ):
+            self.assertIn(token, page_css)
+
+    def test_dashboard_frontend_builds_app_generation_payload_from_prd_mode(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        app_js = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function buildRunPayload", app_js)
+        self.assertIn('mode === "app_generation"', app_js)
+        self.assertIn('domain: "app_generation"', app_js)
+        self.assertIn("inputs_json: { app_slug: appSlug, prd_text: prdText }", app_js)
+        self.assertIn("根据 PRD 生成本地应用：", app_js)
+
+    def test_app_generation_frontend_does_not_auto_publish_on_preview_start(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "dashboard" / "app_generation.js").read_text(encoding="utf-8")
+        html = (root / "dashboard" / "app_generation.html").read_text(encoding="utf-8")
+        start_fn = script[
+            script.index("async function startAppPreviewFromUI") : script.index("async function stopAppPreviewFromUI")
+        ]
+
+        self.assertNotIn("await publishAppFromUI(runId)", start_fn)
+        self.assertNotIn("未发布，正在先发布再启动", start_fn)
+        self.assertIn('id="app-generation-preview-btn" type="button" class="primary small" disabled', html)
+        self.assertIn("function renderPreviewControls", script)
+        self.assertIn('previewBtn.disabled = !state.selectedRunId || !isPublished', script)
+        self.assertIn('publishStatus.status !== "published"', start_fn)
 
     def test_dashboard_flow_detail_uses_compact_artifact_and_evidence_layout(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1551,6 +2742,681 @@ console.log(JSON.stringify(vm));
         self.assertIn("auto", process["command"])
         self.assertNotIn(".env", json.dumps(process, ensure_ascii=False))
 
+    def test_publish_app_copies_worktree_to_generated_apps_with_record(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, publish_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir, "app-gen-001")
+            worktree_app = run_dir / "worktree" / "generated_apps" / "todo-prototype"
+            (worktree_app / "updated.txt").write_text("updated content\n", encoding="utf-8")
+
+            result = publish_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {"run_id": "app-gen-001"},
+            )
+
+            published_dir = run_dir / "generated_apps" / "todo-prototype"
+            publish_record_path = published_dir / "app_publish.json"
+
+            self.assertEqual(result["app_slug"], "todo-prototype")
+            self.assertIn("published_at", result)
+            self.assertGreater(result["files_count"], 0)
+            self.assertTrue(published_dir.exists())
+            self.assertTrue(publish_record_path.exists())
+            self.assertTrue((published_dir / "updated.txt").exists())
+            self.assertEqual((published_dir / "updated.txt").read_text(encoding="utf-8"), "updated content\n")
+            publish_record = json.loads(publish_record_path.read_text(encoding="utf-8"))
+            self.assertEqual(publish_record["app_slug"], "todo-prototype")
+            self.assertIn("published_at", publish_record)
+            self.assertEqual(publish_record["files_count"], result["files_count"])
+            self.assertEqual(publish_record["worktree_path"], "worktree/generated_apps/todo-prototype")
+            self.assertIn("source_commit", publish_record)
+            self.assertIn("worktree_clean", publish_record)
+
+    def test_publish_app_rejects_incomplete_implementation(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, publish_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir, "app-gen-incomplete")
+            record_path = run_dir / "team_run_record.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            for agent_run in record["agent_runs"]:
+                if agent_run.get("agent_id") == "coder":
+                    agent_run["status"] = "failed"
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+
+            with self.assertRaises(ValueError) as ctx:
+                publish_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {"run_id": "app-gen-incomplete"},
+                )
+
+        self.assertIn("implementation_not_complete", str(ctx.exception))
+
+    def test_publish_app_returns_multiple_apps_found_when_ambiguous(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, publish_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-gen-002"
+            (run_dir / "worktree" / "generated_apps" / "app-a").mkdir(parents=True)
+            (run_dir / "worktree" / "generated_apps" / "app-b").mkdir(parents=True)
+            (run_dir / "worktree" / "generated_apps" / "app-a" / "file.txt").write_text("a", encoding="utf-8")
+            (run_dir / "worktree" / "generated_apps" / "app-b" / "file.txt").write_text("b", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as ctx:
+                publish_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {"run_id": "app-gen-002"},
+                )
+
+        self.assertIn("multiple_apps_found", str(ctx.exception))
+
+    def test_start_preview_rejects_unpublished_run_with_412(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, start_app_generation_preview
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir, "app-gen-003")
+
+            with self.assertRaises(ValueError) as ctx:
+                start_app_generation_preview(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {"run_id": "app-gen-003"},
+                )
+
+        self.assertIn("app_not_published", str(ctx.exception))
+
+    def test_start_preview_invokes_preview_runner_after_publish(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, publish_app_generation_run, start_app_generation_preview
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir, "app-gen-004")
+            publish_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {"run_id": "app-gen-004"},
+            )
+
+            class FakePreviewResult:
+                status = "running"
+                pid = 12345
+                port = 8799
+                url = "http://127.0.0.1:8799"
+                health_status = "ok"
+                started_at = "2026-01-01T00:00:00Z"
+                log_path = Path("preview/preview.log")
+                record_path = Path("preview/preview_run_record.json")
+                risk_events = []
+                message = "ok"
+
+            with mock.patch("growth_dev.team.dashboard.preview.start_preview", return_value=FakePreviewResult()):
+                result = start_app_generation_preview(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {"run_id": "app-gen-004", "preferred_port": 8799},
+                )
+
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["port"], 8799)
+        self.assertEqual(result["url"], "http://127.0.0.1:8799")
+        self.assertEqual(result["health_status"], "ok")
+
+    def test_stop_preview_handles_missing_record_as_not_running(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, stop_app_generation_preview
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-gen-005"
+            run_dir.mkdir(parents=True)
+
+            result = stop_app_generation_preview(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {"run_id": "app-gen-005"},
+            )
+
+        self.assertEqual(result["status"], "not_running")
+
+    def test_get_preview_status_returns_record_without_env(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, get_app_generation_preview_status
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-gen-006"
+            preview_dir = run_dir / "preview"
+            preview_dir.mkdir(parents=True)
+            record = {
+                "run_id": "app-gen-006",
+                "pid": 99999,
+                "port": 8788,
+                "url": "http://127.0.0.1:8788",
+                "stopped_at": None,
+                "health_status": "ok",
+            }
+            (preview_dir / "preview_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+
+            result = get_app_generation_preview_status(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                "app-gen-006",
+            )
+
+        self.assertEqual(result["run_id"], "app-gen-006")
+        self.assertEqual(result["port"], 8788)
+        self.assertIn("status", result)
+
+    def test_get_preview_logs_returns_tail_lines_and_total_count(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, get_app_generation_preview_logs
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-gen-logs-001"
+            preview_dir = run_dir / "preview"
+            preview_dir.mkdir(parents=True)
+            log_lines = [f"line-{i:04d}" for i in range(500)]
+            (preview_dir / "preview.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+
+            config = DashboardConfig(
+                runs_dir=runs_dir,
+                domains_dir=root / "domains",
+                repo_root=root,
+                dashboard_dir=root / "dashboard",
+                executor="codex",
+            )
+
+            result = get_app_generation_preview_logs(config, "app-gen-logs-001", tail=100)
+            self.assertEqual(result["total_lines"], 500)
+            self.assertEqual(result["tail"], 100)
+            self.assertEqual(len(result["lines"]), 100)
+            self.assertEqual(result["lines"][0], "line-0400")
+            self.assertEqual(result["lines"][-1], "line-0499")
+
+    def test_get_preview_logs_returns_empty_when_log_missing(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, get_app_generation_preview_logs
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-gen-logs-002"
+            (run_dir / "preview").mkdir(parents=True)
+
+            config = DashboardConfig(
+                runs_dir=runs_dir,
+                domains_dir=root / "domains",
+                repo_root=root,
+                dashboard_dir=root / "dashboard",
+                executor="codex",
+            )
+
+            result = get_app_generation_preview_logs(config, "app-gen-logs-002")
+            self.assertEqual(result["lines"], [])
+            self.assertEqual(result["total_lines"], 0)
+
+    def test_preview_logs_route_parses_tail_query(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, create_dashboard_handler
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            preview_dir = runs_dir / "app-gen-logs-route" / "preview"
+            preview_dir.mkdir(parents=True)
+            (preview_dir / "preview.log").write_text("first\nsecond\n", encoding="utf-8")
+            handler = create_dashboard_handler(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                )
+            )
+
+            request = handler.__new__(handler)
+            request.path = "/api/app-generation/runs/app-gen-logs-route/preview/logs?tail=1"
+            request._send_json = mock.Mock()
+            request.do_GET()
+            payload = request._send_json.call_args.args[0]
+
+        self.assertEqual(payload["tail"], 1)
+        self.assertEqual(payload["total_lines"], 2)
+        self.assertEqual(payload["lines"], ["second"])
+
+    def test_patch_app_rejects_unpublished_with_412(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-001"
+            run_dir.mkdir(parents=True)
+
+            with self.assertRaises(ValueError) as ctx:
+                patch_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "app-patch-001",
+                        "target_path": "generated_apps/todo-prototype/public/app.js",
+                        "edit_kind": "append",
+                        "new_content": "// patch\n",
+                        "summary": "test",
+                    },
+                )
+
+        self.assertIn("app_not_published", str(ctx.exception))
+
+    def test_patch_app_rejects_path_outside_generated_apps(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-002"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+            (published / "public").mkdir()
+            (published / "public" / "app.js").write_text("// orig\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as ctx:
+                patch_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "app-patch-002",
+                        "target_path": "worktree/generated_apps/todo-prototype/public/app.js",
+                        "edit_kind": "append",
+                        "new_content": "// hack\n",
+                        "summary": "outside",
+                    },
+                )
+
+        self.assertIn("target_path_outside_generated_apps", str(ctx.exception))
+
+    def test_patch_app_append_writes_diff_and_index_and_overwrites_file(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-003"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text("// original line\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype", "published_at": "2026-01-01T00:00:00Z", "files_count": 1}),
+                encoding="utf-8",
+            )
+
+            result = patch_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {
+                    "run_id": "app-patch-003",
+                    "target_path": "generated_apps/todo-prototype/public/app.js",
+                    "edit_kind": "append",
+                    "new_content": "// appended line\n",
+                    "summary": "append a line",
+                    "action_id": "act-001",
+                },
+            )
+
+            patches_dir = run_dir / "app_patches"
+            index_path = patches_dir / "index.json"
+            updated = (published / "public" / "app.js").read_text(encoding="utf-8")
+
+            self.assertEqual(result["status"], "applied")
+            self.assertTrue(index_path.exists())
+            self.assertIn("// appended line", updated)
+            self.assertIn("// original line", updated)
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(index["patches"]), 1)
+            self.assertEqual(index["patches"][0]["node"], "app")
+            self.assertEqual(index["patches"][0]["file"], "public/app.js")
+            self.assertEqual(index["patches"][0]["action_id"], "act-001")
+            diff_files = list(patches_dir.glob("*.diff"))
+            self.assertEqual(len(diff_files), 1)
+            self.assertIn("appended line", diff_files[0].read_text(encoding="utf-8"))
+
+    def test_patch_app_replace_block_uses_anchor(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-004"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text(
+                "before\n// === AGENT_EDIT:btn START ===\nOLD BTN\n// === AGENT_EDIT:btn END ===\nafter\n",
+                encoding="utf-8",
+            )
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8"
+            )
+
+            result = patch_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {
+                    "run_id": "app-patch-004",
+                    "target_path": "generated_apps/todo-prototype/public/app.js",
+                    "edit_kind": "replace_block",
+                    "anchor": "// === AGENT_EDIT:btn START ===",
+                    "new_content": "NEW BTN CONTENT",
+                    "summary": "swap btn",
+                },
+            )
+
+            updated = (published / "public" / "app.js").read_text(encoding="utf-8")
+            self.assertEqual(result["status"], "applied")
+            self.assertIn("NEW BTN CONTENT", updated)
+            self.assertNotIn("OLD BTN", updated)
+            self.assertIn("before", updated)
+            self.assertIn("after", updated)
+
+    def test_patch_app_no_active_preview_skips_restart(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-005"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text("orig\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8"
+            )
+
+            result = patch_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {
+                    "run_id": "app-patch-005",
+                    "target_path": "generated_apps/todo-prototype/public/app.js",
+                    "edit_kind": "append",
+                    "new_content": "added\n",
+                    "summary": "skip restart",
+                },
+            )
+
+            self.assertEqual(result["status"], "applied")
+            self.assertEqual(result["restart"]["status"], "skipped")
+            self.assertIn("no_active_preview", result["restart"].get("reason", ""))
+
+    def test_patch_app_two_stage_restart_switches_on_health_ok(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-006"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text("orig\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8"
+            )
+            preview_dir = run_dir / "preview"
+            preview_dir.mkdir(parents=True)
+            old_record = {
+                "run_id": "app-patch-006",
+                "app_slug": "todo-prototype",
+                "pid": 11111,
+                "port": 8800,
+                "url": "http://127.0.0.1:8800",
+                "stopped_at": None,
+                "health_status": "ok",
+                "command": ["node", "server.js"],
+            }
+            (preview_dir / "preview_run_record.json").write_text(json.dumps(old_record), encoding="utf-8")
+
+            class FakeNewPreview:
+                status = "running"
+                pid = 22222
+                port = 8801
+                url = "http://127.0.0.1:8801"
+                health_status = "ok"
+                started_at = "2026-01-01T00:00:01Z"
+                log_path = Path("preview/preview.log")
+                record_path = preview_dir / "preview_run_record.json"
+                risk_events = []
+                message = "ok"
+
+            with mock.patch("growth_dev.team.dashboard.preview.start_preview", return_value=FakeNewPreview()), \
+                 mock.patch("growth_dev.team.dashboard.preview._kill_pid", return_value=True) as kill_mock, \
+                 mock.patch("growth_dev.team.dashboard.preview.allocate_port", return_value=8801):
+                result = patch_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "app-patch-006",
+                        "target_path": "generated_apps/todo-prototype/public/app.js",
+                        "edit_kind": "append",
+                        "new_content": "added\n",
+                        "summary": "with restart",
+                    },
+                )
+
+            self.assertEqual(result["status"], "applied")
+            self.assertEqual(result["restart"]["status"], "switched")
+            self.assertEqual(result["restart"]["new_port"], 8801)
+            self.assertEqual(result["restart"]["old_pid"], 11111)
+            kill_mock.assert_called_once_with(11111)
+            record = json.loads((preview_dir / "preview_run_record.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["pid"], 22222)
+            self.assertEqual(record["port"], 8801)
+            self.assertEqual(record["previous_pid"], 11111)
+
+    def test_patch_app_two_stage_restart_keeps_old_pid_on_health_failure(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-007"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text("orig\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8"
+            )
+            preview_dir = run_dir / "preview"
+            preview_dir.mkdir(parents=True)
+            old_record = {
+                "run_id": "app-patch-007",
+                "app_slug": "todo-prototype",
+                "pid": 33333,
+                "port": 8800,
+                "url": "http://127.0.0.1:8800",
+                "stopped_at": None,
+                "health_status": "ok",
+                "command": ["node", "server.js"],
+            }
+            (preview_dir / "preview_run_record.json").write_text(json.dumps(old_record), encoding="utf-8")
+
+            class FakeFailedPreview:
+                status = "timeout"
+                pid = None
+                port = None
+                url = None
+                health_status = "failed"
+                started_at = "2026-01-01T00:00:01Z"
+                log_path = Path("preview/preview.log")
+                record_path = preview_dir / "preview_run_record.json"
+                risk_events = ["health_check_failed_killing_process"]
+                message = "health check timeout"
+
+            def failed_start_preview(*_args, **_kwargs):
+                (preview_dir / "preview_run_record.json").write_text(
+                    json.dumps(
+                        {
+                            "run_id": "app-patch-007",
+                            "app_slug": "todo-prototype",
+                            "pid": 44444,
+                            "port": 8801,
+                            "url": "http://127.0.0.1:8801",
+                            "stopped_at": None,
+                            "health_status": "failed",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return FakeFailedPreview()
+
+            with mock.patch("growth_dev.team.dashboard.preview.start_preview", side_effect=failed_start_preview), \
+                 mock.patch("growth_dev.team.dashboard.preview._kill_pid", return_value=True) as kill_mock, \
+                 mock.patch("growth_dev.team.dashboard.preview.allocate_port", return_value=8801):
+                result = patch_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "app-patch-007",
+                        "target_path": "generated_apps/todo-prototype/public/app.js",
+                        "edit_kind": "append",
+                        "new_content": "added\n",
+                        "summary": "with failed restart",
+                    },
+                )
+
+            self.assertEqual(result["status"], "applied")
+            self.assertEqual(result["restart"]["status"], "failed")
+            self.assertEqual(result["restart"]["phase"], "new_process_health_check")
+            kill_mock.assert_not_called()
+            record = json.loads((preview_dir / "preview_run_record.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["pid"], 33333)
+            self.assertEqual(record["port"], 8800)
+
+    def test_dashboard_start_run_passes_app_generation_inputs_json(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, start_dashboard_run
+
+        class FakeProcess:
+            pid = 4321
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            repo_root = Path(__file__).resolve().parents[1]
+            with mock.patch("growth_dev.team.dashboard.subprocess.Popen", return_value=FakeProcess()):
+                start_dashboard_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=repo_root / "domains",
+                        repo_root=repo_root,
+                        dashboard_dir=repo_root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "app-generation-post",
+                        "brief": "根据 PRD 生成本地应用：todo-prototype",
+                        "domain": "app_generation",
+                        "executor": "codex",
+                        "inputs_json": {"app_slug": "todo-prototype", "prd_text": "# Todo PRD"},
+                    },
+                )
+            process = json.loads((runs_dir / "app-generation-post" / "process.json").read_text(encoding="utf-8"))
+
+        command = process["command"]
+        inputs = json.loads(command[command.index("--inputs-json") + 1])
+        self.assertEqual(command[command.index("--domain") + 1], "app_generation")
+        self.assertEqual(inputs["app_slug"], "todo-prototype")
+        self.assertEqual(inputs["prd_text"], "# Todo PRD")
+
     def test_dashboard_start_run_uses_absolute_paths_in_process_record_and_command(self) -> None:
         from growth_dev.team.dashboard import DashboardConfig, start_dashboard_run
 
@@ -1660,3 +3526,115 @@ console.log(JSON.stringify(vm));
 
         self.assertEqual(runs[0]["status"], "failed")
         self.assertEqual(runs[0]["failure_category"], "permission_error")
+
+    def test_patch_app_dry_run_returns_diff_without_writing(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-dry-001"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text("// original line\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype", "published_at": "2026-01-01T00:00:00Z"}),
+                encoding="utf-8",
+            )
+
+            result = patch_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {
+                    "run_id": "app-patch-dry-001",
+                    "target_path": "generated_apps/todo-prototype/public/app.js",
+                    "edit_kind": "append",
+                    "new_content": "// appended line\n",
+                    "summary": "append a line",
+                    "action_id": "act-dry-001",
+                    "dry_run": True,
+                },
+            )
+
+            patches_dir = run_dir / "app_patches"
+            updated = (published / "public" / "app.js").read_text(encoding="utf-8")
+
+            self.assertEqual(result["status"], "dry_run")
+            self.assertEqual(result["app_slug"], "todo-prototype")
+            self.assertIn("diff", result)
+            self.assertIn("// appended line", result["diff"])
+            self.assertNotIn("// appended line", updated)
+            self.assertFalse(patches_dir.exists())
+
+    def test_patch_app_dry_run_does_not_update_index(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-dry-002"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "public" / "app.js").write_text("// original\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(
+                json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8"
+            )
+            patches_dir = run_dir / "app_patches"
+            patches_dir.mkdir(parents=True)
+            index_path = patches_dir / "index.json"
+            index_path.write_text(json.dumps({"patches": [{"ts": 1000, "node": "app"}]}), encoding="utf-8")
+
+            patch_app_generation_run(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {
+                    "run_id": "app-patch-dry-002",
+                    "target_path": "generated_apps/todo-prototype/public/app.js",
+                    "edit_kind": "append",
+                    "new_content": "// new line\n",
+                    "summary": "test",
+                    "dry_run": True,
+                },
+            )
+
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(index["patches"]), 1)
+            self.assertEqual(index["patches"][0]["ts"], 1000)
+
+    def test_patch_app_dry_run_validates_unpublished_app(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-dry-003"
+            run_dir.mkdir(parents=True)
+
+            with self.assertRaises(ValueError) as ctx:
+                patch_app_generation_run(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "app-patch-dry-003",
+                        "target_path": "generated_apps/todo-prototype/public/app.js",
+                        "edit_kind": "append",
+                        "new_content": "test",
+                        "dry_run": True,
+                    },
+                )
+            self.assertIn("app_not_published", str(ctx.exception))

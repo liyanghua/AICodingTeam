@@ -1,0 +1,11 @@
+{
+  "name": "dingdang-main-image-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server/server.js",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check src/shared/dingdang-core.js && node --check src/server/request-timeout.js && node --check src/server/server-logger.js && node --check src/server/listen-config.js && node --check src/server/openai-image-client.js && node --check src/server/openrouter-image-client.js && node --check src/server/image-provider.js && node --check src/server/server.js && node --check public/app.js"
+  }
+}

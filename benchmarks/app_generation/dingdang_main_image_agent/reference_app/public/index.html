@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>叮当 AI 电商主图设计智能体</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="stage-rail" aria-label="工作流阶段">
+        <div class="brand">
+          <span class="brand-mark">D</span>
+          <div>
+            <strong>叮当 AI</strong>
+            <span>主图设计智能体</span>
+          </div>
+        </div>
+        <ol id="stageRail" class="stage-list"></ol>
+        <div class="api-status" id="apiStatus">检查 API 状态中</div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>电商主图 8 图套装工作台</h1>
+            <p>需求诊断、方案单选、视觉规范、Prompt 与真实出图</p>
+          </div>
+          <div class="toolbar">
+            <button class="ghost-button" id="resetButton" type="button">重置</button>
+            <button class="primary-button" id="runAllButton" type="button">生成全部图片</button>
+          </div>
+        </header>
+
+        <section class="section intake-section" aria-labelledby="intakeTitle">
+          <div class="section-heading">
+            <h2 id="intakeTitle">输入</h2>
+            <span id="saveState">本地草稿</span>
+          </div>
+          <form id="intakeForm" class="intake-grid">
+            <label>
+              产品名称
+              <input name="productName" value="云感商务办公椅" required />
+            </label>
+            <label>
+              平台
+              <select name="platform">
+                <option>天猫</option>
+                <option>淘宝</option>
+                <option>抖音</option>
+                <option>拼多多</option>
+              </select>
+            </label>
+            <label>
+              类目
+              <input name="category" value="办公椅" required />
+            </label>
+            <label>
+              价格带
+              <input name="priceBand" value="高客单价" />
+            </label>
+            <label>
+              任务类型
+              <select name="targetMode">
+                <option>8张首图测点击率</option>
+                <option>完整 8 张主图</option>
+              </select>
+            </label>
+            <label>
+              参考图类型
+              <select name="referenceKind">
+                <option>详情页参考</option>
+                <option>主图参考</option>
+              </select>
+            </label>
+            <label class="wide">
+              产品描述
+              <textarea name="productDescription" rows="3">米色皮质办公椅，高靠背，弧形木纹扶手，五爪底座和静音滚轮</textarea>
+            </label>
+            <label class="wide">
+              核心卖点
+              <textarea name="sellingPoints" rows="3">人体工学支撑、荔枝纹 PU 皮、静音滚轮、原木扶手</textarea>
+            </label>
+            <label class="wide">
+              目标人群
+              <textarea name="audience" rows="2">重视居家办公品质的城市白领</textarea>
+            </label>
+            <label>
+              产品图
+              <input name="productImage" type="file" accept="image/png,image/jpeg,image/webp" />
+            </label>
+            <label>
+              参考图
+              <input name="referenceImage" type="file" accept="image/png,image/jpeg,image/webp" />
+            </label>
+            <div class="button-row wide">
+              <button class="primary-button" id="diagnoseButton" type="submit">运行诊断</button>
+              <button class="ghost-button" id="buildPromptsButton" type="button">生成 Prompt</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="section" aria-labelledby="diagnosisTitle">
+          <div class="section-heading">
+            <h2 id="diagnosisTitle">Stage 1 需求诊断</h2>
+            <span>阻断确认</span>
+          </div>
+          <div id="diagnosisPanel" class="diagnosis-panel empty-state">等待输入</div>
+        </section>
+
+        <section class="section" aria-labelledby="schemesTitle">
+          <div class="section-heading">
+            <h2 id="schemesTitle">Stage 2 创意方案</h2>
+            <span>必须单选</span>
+          </div>
+          <div id="schemesPanel" class="schemes-panel empty-state">运行诊断后生成方案</div>
+        </section>
+
+        <section class="section two-column" aria-labelledby="strategyTitle">
+          <div>
+            <div class="section-heading">
+              <h2 id="strategyTitle">Stage 3 策略落地</h2>
+              <span>视觉基准卡</span>
+            </div>
+            <div id="baselinePanel" class="baseline-panel empty-state">选择方案后生成视觉基准</div>
+          </div>
+          <div>
+            <div class="section-heading">
+              <h2>一致性校验</h2>
+              <span>横向对照</span>
+            </div>
+            <div id="consistencyPanel" class="consistency-panel empty-state">暂无规划卡</div>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="stage4Title">
+          <div class="section-heading">
+            <h2 id="stage4Title">Stage 4 Prompt 与出图</h2>
+            <span id="queueState">空闲</span>
+          </div>
+          <div class="generation-layout">
+            <div id="promptGrid" class="prompt-grid empty-state">先生成 Prompt</div>
+            <aside class="side-panel">
+              <h3>出图参数</h3>
+              <label>
+                模型
+                <input id="modelInput" value="gpt-image-2" />
+              </label>
+              <label>
+                尺寸
+                <select id="sizeInput">
+                  <option>1024x1024</option>
+                  <option>1536x1024</option>
+                  <option>1024x1536</option>
+                </select>
+              </label>
+              <label>
+                质量
+                <select id="qualityInput">
+                  <option>medium</option>
+                  <option>high</option>
+                  <option>low</option>
+                </select>
+              </label>
+              <label>
+                格式
+                <select id="formatInput">
+                  <option>png</option>
+                  <option>jpeg</option>
+                  <option>webp</option>
+                </select>
+              </label>
+              <h3>局部迭代</h3>
+              <label>
+                图片
+                <select id="iterationImage"></select>
+              </label>
+              <label>
+                层级
+                <select id="iterationLayer">
+                  <option>第一层:视觉锚定层</option>
+                  <option>第二层:氛围调整层</option>
+                  <option>第三层:信息叠加层</option>
+                  <option>负面词清单</option>
+                </select>
+              </label>
+              <label>
+                修改指令
+                <textarea id="iterationText" rows="4">背景换成木地板，滚轮更突出</textarea>
+              </label>
+              <button class="ghost-button full-width" id="applyIterationButton" type="button">应用到 Prompt</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="logsTitle">
+          <div class="section-heading">
+            <h2 id="logsTitle">节点日志</h2>
+            <button class="ghost-button small" id="clearLogsButton" type="button">清空</button>
+          </div>
+          <div id="eventLog" class="event-log"></div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "competitor": {
+            "type": "string"
+          },
+          "raw_text": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "painpoint": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "ratio": {
+            "type": "number"
+          },
+          "competitor_solved": {
+            "type": "boolean"
+          },
+          "our_action": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

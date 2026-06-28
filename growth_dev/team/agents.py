@@ -275,6 +275,63 @@ def _coder(agent: AgentSpec, context: AgentContext) -> AgentOutput:
     if context.executor == "codex":
         return _codex_stage_output("coder", context)
 
+    # deterministic fallback: generate minimal app template for app_generation domain
+    from .app_generation import generate_deterministic_app_files, is_app_generation_domain
+
+    if is_app_generation_domain(context.domain):
+        try:
+            contract = json.loads((context.run_dir / "app_contract.json").read_text(encoding="utf-8"))
+        except Exception:
+            contract = {}
+
+        prd_text = ""
+        if (context.run_dir / "input_prd.md").exists():
+            prd_text = (context.run_dir / "input_prd.md").read_text(encoding="utf-8", errors="replace")
+
+        inputs = context.inputs if isinstance(context.inputs, dict) else {}
+        app_slug = str(inputs.get("app_slug") or contract.get("app_slug") or "generated-app")
+
+        files_changed = generate_deterministic_app_files(
+            run_dir=context.run_dir,
+            app_slug=app_slug,
+            prd_text=prd_text,
+            contract=contract,
+            repo_root=context.run_dir,
+        )
+
+        coding_prompt = _lines(
+            "# Coding Prompt (Deterministic)",
+            "",
+            f"Generated deterministic app template for `{app_slug}` under `{contract.get('generated_app_dir', 'generated_apps')}`.",
+            "",
+            "## Artifacts",
+            f"- Files changed: {len(files_changed)}",
+            f"- App contract: {contract.get('app_slug', 'unknown')}",
+            "",
+            "## Next Steps",
+            "- Review generated files",
+            "- Run preview server",
+            "- Verify acceptance criteria",
+        )
+
+        record = {
+            "status": "completed",
+            "executor": "deterministic",
+            "files_changed": files_changed,
+            "tests_run": [],
+            "risk_events": [],
+            "blockers": [],
+        }
+        return AgentOutput(
+            status="completed",
+            output_paths=[
+                context.write_text("coding_prompt.md", coding_prompt),
+                context.write_json("code_run_record.json", record),
+            ],
+            risk_events=[],
+            message="generated deterministic app template",
+        )
+
     text = _lines(
         "# Coding Prompt",
         "",
@@ -442,11 +499,57 @@ def _publisher(agent: AgentSpec, context: AgentContext) -> AgentOutput:
         "",
         "## Artifacts",
         *_bullet(sorted(context.record.artifacts.values())),
+        *_app_generation_delivery_summary(context),
         "",
         "## Recommendation",
         *_domain_recommendation(context.domain.domain_id),
     )
     return AgentOutput(output_paths=[context.write_text("final_report.md", text)], message="final report created")
+
+
+def _app_generation_delivery_summary(context: AgentContext) -> list[str]:
+    if context.domain.domain_id != "app_generation":
+        return []
+    contract = _read_json_artifact(context, "app_contract.json")
+    code_record = _read_json_artifact(context, "code_run_record.json")
+    verification = _read_json_artifact(context, "codex/verification_record.json")
+    commands = [
+        str(item.get("command", "")).strip()
+        for item in verification.get("commands", [])
+        if isinstance(item, dict) and str(item.get("command", "")).strip()
+    ]
+    if not commands:
+        commands = [str(item).strip() for item in contract.get("verification_commands", []) if str(item).strip()]
+    files_changed = [str(item).strip() for item in code_record.get("files_changed", []) if str(item).strip()]
+    risk_events = [str(item).strip() for item in code_record.get("risk_events", []) if str(item).strip()]
+    blockers = [str(item).strip() for item in code_record.get("blockers", []) if str(item).strip()]
+    generated_app_dir = str(contract.get("generated_app_dir") or "")
+    app_slug = str(contract.get("app_slug") or context.inputs.get("app_slug") or "")
+
+    return [
+        "",
+        "## Generated App Delivery",
+        f"- App slug: `{app_slug or 'unknown'}`",
+        f"- Generated app dir: `{generated_app_dir or 'unknown'}`",
+        "- Changed files:",
+        *(_bullet(files_changed) if files_changed else ["- none"]),
+        "- Verification commands:",
+        *(_bullet(commands) if commands else ["- none"]),
+        "- Preview instructions: `preview_instructions.md`",
+        f"- Risk events: {', '.join(risk_events) if risk_events else 'none'}",
+        f"- Blockers: {', '.join(blockers) if blockers else 'none'}",
+    ]
+
+
+def _read_json_artifact(context: AgentContext, name: str) -> dict[str, Any]:
+    path = context.artifact_path(name)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _domain_scope(domain_id: str) -> list[str]:
@@ -524,6 +627,12 @@ def _domain_recommendation(domain_id: str) -> list[str]:
         return [
             "- Add a domain adapter for navigation and screenshot capture",
             "- Keep runtime unchanged while evolving monitoring-specific evaluation rules",
+        ]
+    if domain_id == "app_generation":
+        return [
+            "- Preview the generated app locally before applying the worktree diff",
+            "- Keep generated output scoped to the declared app directory until human confirmation",
+            "- Treat v1 as PRD prototype validation, not production application delivery",
         ]
     return ["- Add a richer domain adapter after the deterministic pipeline is stable"]
 

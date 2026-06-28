@@ -8,6 +8,7 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 from .adapters.base import MockAdapter
 from .benchmark import DEFAULT_FRAMEWORKS, benchmark, load_task, run_framework, run_mock
@@ -223,6 +224,45 @@ def _build_parser() -> argparse.ArgumentParser:
     team_dashboard.add_argument("--open-browser", action="store_true")
     team_dashboard.set_defaults(func=_cmd_team_serve_dashboard)
 
+    app = subparsers.add_parser("app", help="Application generation commands")
+    app_sub = app.add_subparsers(dest="app_command", required=True)
+    app_generate = app_sub.add_parser("generate", help="Generate a local prototype app from a PRD")
+    app_generate.add_argument("--prd-file", default="")
+    app_generate.add_argument("--prd-text", default="")
+    app_generate.add_argument("--app-slug", required=True)
+    app_generate.add_argument("--ui-style", default="")
+    app_generate.add_argument("--runs-dir", default="runs")
+    app_generate.add_argument("--domains-dir", default="domains")
+    app_generate.add_argument("--run-id", default=None)
+    app_generate.add_argument("--executor", choices=["deterministic", "codex"], default="codex")
+    app_generate.add_argument("--model", default="gpt-5.3-codex")
+    app_generate.add_argument("--reasoning-effort", default="medium")
+    app_generate.add_argument("--codex-binary", default="codex")
+    app_generate.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
+    app_generate.add_argument("--env-file", default=".env")
+    app_generate.add_argument("--repo-root", default=".")
+    _add_complex_task_args(app_generate)
+    app_generate.add_argument("--foreground", action="store_true")
+    app_generate.set_defaults(func=_cmd_app_generate)
+
+    app_preview = app_sub.add_parser("preview", help="Manage app preview servers")
+    app_preview_sub = app_preview.add_subparsers(dest="preview_command", required=True)
+
+    app_preview_start = app_preview_sub.add_parser("start", help="Start a preview server for a generated app")
+    app_preview_start.add_argument("--run-id", required=True)
+    app_preview_start.add_argument("--runs-dir", default="runs")
+    app_preview_start.add_argument("--port", type=int, default=8788)
+    app_preview_start.set_defaults(func=_cmd_app_preview_start)
+
+    app_preview_stop = app_preview_sub.add_parser("stop", help="Stop a running preview server")
+    app_preview_stop.add_argument("--run-id", required=True)
+    app_preview_stop.add_argument("--runs-dir", default="runs")
+    app_preview_stop.set_defaults(func=_cmd_app_preview_stop)
+
+    app_preview_list = app_preview_sub.add_parser("list", help="List active preview servers")
+    app_preview_list.add_argument("--runs-dir", default="runs")
+    app_preview_list.set_defaults(func=_cmd_app_preview_list)
+
     code_cmd = subparsers.add_parser("code", help="Run the Codex-backed coding loop")
     _add_team_run_args(code_cmd)
     code_cmd.set_defaults(func=_cmd_code_alias)
@@ -422,10 +462,107 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
     return 0 if record.status == "completed" else 1
 
 
+def _cmd_app_preview_start(args: argparse.Namespace) -> int:
+    from .team.preview import PreviewRunRequest, start_preview
+
+    runs_dir = Path(args.runs_dir)
+    run_dir = runs_dir / args.run_id
+    contract_path = run_dir / "app_contract.json"
+    if not contract_path.exists():
+        print(f"App contract not found: {contract_path}", file=sys.stderr)
+        return 1
+
+    contract = read_json(contract_path)
+    app_slug = str(contract.get("app_slug") or "")
+    generated_app_dir_value = str(contract.get("generated_app_dir") or "")
+    if not app_slug or not generated_app_dir_value:
+        print("app_contract.json missing app_slug or generated_app_dir", file=sys.stderr)
+        return 1
+
+    app_dir = (run_dir / generated_app_dir_value).resolve()
+    if not app_dir.exists():
+        print(f"Generated app directory not found: {app_dir}", file=sys.stderr)
+        return 1
+
+    preview = contract.get("preview") if isinstance(contract.get("preview"), dict) else {}
+    command_value = preview.get("command") or "node server.js"
+    if isinstance(command_value, list):
+        preview_command = [str(item) for item in command_value]
+    else:
+        preview_command = str(command_value).split()
+
+    request = PreviewRunRequest(
+        run_id=args.run_id,
+        app_slug=app_slug,
+        generated_app_dir=app_dir,
+        preview_command=preview_command,
+        preferred_port=args.port,
+        repo_root=run_dir,
+    )
+    result = start_preview(request, runs_dir=runs_dir)
+
+    print(f"Status: {result.status}")
+    print(f"PID: {result.pid}")
+    print(f"URL: {result.url}")
+    print(f"Log: {result.log_path}")
+    print(f"Health: {result.health_status} ({result.message})")
+    print(f"Record: {result.record_path}")
+    return 0 if result.status == "running" else 1
+
+
+def _cmd_app_preview_stop(args: argparse.Namespace) -> int:
+    from .team.preview import stop_preview
+
+    record_path = Path(args.runs_dir) / args.run_id / "preview" / "preview_run_record.json"
+    if not record_path.exists():
+        print(f"Preview record not found: {record_path}", file=sys.stderr)
+        return 1
+    result = stop_preview(record_path)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_app_preview_list(args: argparse.Namespace) -> int:
+    from .team.preview import list_active_previews
+
+    active = list_active_previews(Path(args.runs_dir))
+    if not active:
+        print("No active previews.")
+        return 0
+    for record in active:
+        print(
+            f"{record.get('run_id')}\t{record.get('app_slug')}\t"
+            f"pid={record.get('pid')}\tport={record.get('port')}\t"
+            f"url={record.get('url')}"
+        )
+    return 0
+
+
 def _cmd_code_alias(args: argparse.Namespace) -> int:
     if getattr(args, "foreground", False):
         return _cmd_team_run(args)
     return _cmd_code_background(args)
+
+
+def _cmd_app_generate(args: argparse.Namespace) -> int:
+    prd_text = str(getattr(args, "prd_text", "") or "").strip()
+    prd_file = str(getattr(args, "prd_file", "") or "").strip()
+    if not prd_text and not prd_file:
+        print("PRD input is required: pass --prd-text or --prd-file", file=sys.stderr)
+        return 2
+    inputs: dict[str, Any] = {
+        "app_slug": args.app_slug,
+    }
+    if prd_text:
+        inputs["prd_text"] = prd_text
+    if prd_file:
+        inputs["prd_file"] = prd_file
+    if getattr(args, "ui_style", ""):
+        inputs["ui_style"] = args.ui_style
+    args.brief = f"根据 PRD 生成本地应用：{args.app_slug}"
+    args.domain = "app_generation"
+    args.inputs_json = json.dumps(inputs, ensure_ascii=False)
+    return _cmd_code_alias(args)
 
 
 def _cmd_code_background(args: argparse.Namespace) -> int:

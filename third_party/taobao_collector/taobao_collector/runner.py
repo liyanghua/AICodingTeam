@@ -70,5 +70,8 @@ def _config_with_overrides(
             "detail_media_scan_max": config.detail_media_scan_max,
             "detail_media_swipe_start": list(config.detail_media_swipe_start),
             "detail_media_swipe_end": list(config.detail_media_swipe_end),
+            "max_result_scrolls": config.max_result_scrolls,
+            "result_page_scroll_start": list(config.result_page_scroll_start),
+            "result_page_scroll_end": list(config.result_page_scroll_end),
         }
     )

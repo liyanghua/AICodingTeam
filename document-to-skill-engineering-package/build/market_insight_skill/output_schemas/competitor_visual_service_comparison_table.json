@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "title": "竞品主图/详情页/客服对比表",
+  "description": "找转化差异",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "conclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

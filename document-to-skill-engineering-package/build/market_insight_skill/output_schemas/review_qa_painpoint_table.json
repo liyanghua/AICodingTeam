@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "title": "评价/问大家痛点表",
+  "description": "找产品升级点",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "conclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

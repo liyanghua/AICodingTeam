@@ -1,0 +1,51 @@
+tools:
+  - tool_id: internal_api.get_category_top_products
+    name: 获取类目TOP商品榜单
+    type: internal_data_tool
+    domain: market_insight
+    input_schema:
+      category_id: {type: string, required: true}
+      period: {type: string, enum: [7d, 30d, monthly], default: 30d}
+      limit: {type: integer, default: 300}
+    output_schema_ref: skills/market_insight/output_schemas/top_300_product_analysis_table.json
+    business_semantics:
+      supports_questions:
+        - 这个类目现在什么东西卖得好？
+        - 哪些商品涨得快？
+        - 行业主流价格带是什么？
+    quality_checks:
+      - row_count >= 50
+      - required_fields_not_null_ratio >= 0.95
+    evidence_required:
+      - source_system
+      - query_params
+      - fetched_at
+      - raw_response_id
+    governance:
+      auth_scope: market_insight.read
+      pii_risk: low
+      cost_level: low
+    fallback_tools:
+      - browser.export_sycm_market_rank
+      - manual_upload.parse_top_products_excel
+
+  - tool_id: external_web.exa_trend_search
+    name: 外部趋势信号搜索
+    type: external_web_tool
+    domain: market_insight
+    input_schema:
+      query: {type: string, required: true}
+      platforms: {type: array, items: string, default: [web]}
+      max_results: {type: integer, default: 20}
+    output_schema:
+      items:
+        type: array
+    business_semantics:
+      supports_questions:
+        - 小红书、抖音、公开网页有什么新趋势？
+        - 外部内容热点能否迁移到淘宝？
+    evidence_required:
+      - source_url
+      - fetched_at
+      - snippet
+      - extracted_fields

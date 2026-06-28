@@ -1,0 +1,78 @@
+nodes:
+  - id: define_scope
+    name: 确定分析边界
+    type: form_collect
+    depends_on: []
+    output: market_insight_project_definition
+
+  - id: collect_top_products
+    name: 行业前300商品数据采集
+    type: data_collect
+    depends_on: [define_scope]
+    data_requirement: category_top_products_300
+    output: top_300_product_analysis_table
+
+  - id: analyze_hot_product_genes
+    name: 爆款基因提炼
+    type: compute_and_llm_extract
+    depends_on: [collect_top_products]
+    output: hot_product_gene_table
+
+  - id: collect_keywords
+    name: 类目关键词TOP300采集
+    type: data_collect
+    depends_on: [define_scope]
+    data_requirement: category_keywords_top300
+    output: raw_keyword_table
+
+  - id: classify_keyword_demands
+    name: 关键词需求拆解
+    type: llm_structuring
+    depends_on: [collect_keywords]
+    output: keyword_demand_breakdown_table
+
+  - id: collect_reviews_qa
+    name: 评价与问大家采集
+    type: data_collect
+    depends_on: [collect_top_products]
+    data_requirement: competitor_reviews_qa
+    output: review_qa_painpoint_table
+
+  - id: analyze_price_band
+    name: 价格带与利润空间分析
+    type: compute
+    depends_on: [collect_top_products]
+    data_requirement: price_band_distribution
+    output: price_band_opportunity_table
+
+  - id: analyze_competitors
+    name: 竞品与竞店格局分析
+    type: multi_source_analysis
+    depends_on: [collect_top_products, collect_reviews_qa]
+    data_requirement: competitor_landscape
+    output: competitor_landscape_table
+
+  - id: collect_cross_platform_trends
+    name: 跨平台趋势机会采集
+    type: external_research
+    depends_on: [define_scope, classify_keyword_demands]
+    data_requirement: cross_platform_trend_signals
+    output: cross_platform_trend_table
+
+  - id: score_opportunities
+    name: 机会评分
+    type: scoring
+    depends_on:
+      - analyze_hot_product_genes
+      - classify_keyword_demands
+      - collect_reviews_qa
+      - analyze_price_band
+      - analyze_competitors
+      - collect_cross_platform_trends
+    output: product_opportunity_score_table
+
+  - id: generate_listing_plan
+    name: 产品开发与链接规划
+    type: business_plan_generation
+    depends_on: [score_opportunities]
+    output: product_development_listing_plan

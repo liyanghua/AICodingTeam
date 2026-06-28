@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "required": [
+    "category",
+    "period",
+    "conclusions"
+  ],
+  "properties": {
+    "category": {
+      "type": "string"
+    },
+    "period": {
+      "type": "string"
+    },
+    "conclusions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

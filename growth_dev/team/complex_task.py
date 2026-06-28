@@ -9,6 +9,7 @@ from typing import Any
 from urllib import error, request
 
 from ..utils import ensure_dir, now_iso, write_json
+from .app_generation import app_generation_acceptance_criteria, is_app_generation_domain, prepare_app_generation_artifacts
 from .models import DomainSpec
 
 
@@ -97,6 +98,15 @@ def generate_complex_task_artifacts(
     requirements_dir = ensure_dir(run_dir / "requirements")
     planning_dir = ensure_dir(run_dir / "planning")
     slices_dir = ensure_dir(run_dir / "slices")
+    app_generation_context: dict[str, Any] | None = None
+    if is_app_generation_domain(domain):
+        app_generation_context = prepare_app_generation_artifacts(run_id=run_id, run_dir=run_dir, inputs=inputs)
+        artifact_brief = str(app_generation_context["redacted_prd_text"])
+        if isinstance(artifact_inputs, dict):
+            artifact_inputs["app_slug"] = app_generation_context["app_slug"]
+            artifact_inputs["generated_app_dir"] = app_generation_context["generated_app_dir"]
+            artifact_inputs["allowed_paths"] = list(app_generation_context["allowed_paths"])
+            artifact_inputs["verification_commands"] = list(app_generation_context["verification_commands"])
 
     analysis = _brief_analysis(run_id, artifact_brief, domain, inputs, normalized)
     write_json(requirements_dir / "brief_analysis.json", analysis)
@@ -126,7 +136,7 @@ def generate_complex_task_artifacts(
         draft_paths.extend(candidate_result["artifact_paths"])
 
     candidate = candidate_result.get("candidate") if isinstance(candidate_result.get("candidate"), dict) else None
-    acceptance = _acceptance_criteria(artifact_brief, domain, artifact_inputs, analysis, candidate)
+    acceptance = _acceptance_criteria(artifact_brief, domain, artifact_inputs, analysis, candidate, app_generation_context=app_generation_context)
     acceptance_md = _acceptance_criteria_markdown(acceptance)
     (run_dir / "acceptance_criteria.md").write_text(acceptance_md, encoding="utf-8")
 
@@ -154,6 +164,7 @@ def generate_complex_task_artifacts(
 
     output_paths = [
         "requirements/brief_analysis.json",
+        *(app_generation_context.get("output_paths", []) if app_generation_context else []),
         *draft_paths,
         CAPABILITY_BOUNDARY_JSON_ARTIFACT,
         CAPABILITY_BOUNDARY_MD_ARTIFACT,
@@ -1046,7 +1057,10 @@ def _acceptance_criteria(
     inputs: dict[str, Any],
     analysis: dict[str, Any],
     candidate: dict[str, Any] | None = None,
+    app_generation_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    if app_generation_context:
+        return app_generation_acceptance_criteria(app_generation_context)
     candidate_criteria = _promotable_candidate_acceptance(candidate)
     if candidate_criteria:
         return candidate_criteria

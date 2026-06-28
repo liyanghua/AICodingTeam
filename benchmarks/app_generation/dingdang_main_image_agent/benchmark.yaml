@@ -1,0 +1,50 @@
+schema_version: 1
+benchmark_id: dingdang_main_image_agent
+title: Dingdang AI 电商主图设计智能体
+status: reference_fixture
+language: zh-CN
+domain: app_generation
+created_from:
+  prd_source: /Users/yichen/Desktop/产品方案设计/dingdang-prd.md
+  reference_app_source: /Users/yichen/Documents/Codex/2026-06-24/z
+  imported_at: 2026-06-25
+inputs:
+  prd: input_prd.md
+reference:
+  app_dir: reference_app
+  role: 能力基线参考实现，不要求逐文件复制
+  notes:
+    - 参考应用包含显式 OpenAI/OpenRouter 图片 provider 适配。
+    - .env 已排除，.env.example 仅作为配置样例。
+    - .env.example 与测试文件中的 sk-test / sk-your-key-here / sk-or-v1-your-key-here 均为占位或测试值，不得替换为真实凭证提交到 benchmark。
+    - benchmark_parity 模式下，生成结果必须覆盖 reference_app 的核心用户能力，尤其是产品图上传、参考图上传、图片生成和图片下载。
+    - 参考应用可包含不同于普通 v1 默认约束的外部 provider 能力；评估时必须显式区分普通原型模式与 benchmark_parity 模式。
+    - v1 默认 app_generation 仍是本地原型、无数据库、浏览器 localStorage。
+evaluation_focus:
+  - 四阶段工作流可表达
+  - Stage 1 任务类型确认阻断
+  - Stage 2 方案单选且禁止混搭
+  - 8 张主图分工和一致性约束
+  - 平台策略差异
+  - 第 X 张第 Y 层局部迭代
+  - 本地可预览和工程可运行
+constraints:
+  storage: localStorage
+  database: none
+  deployment: none
+  secret_persistence: forbidden
+allowed_external_behavior:
+  - 允许参考应用声明外部图片 provider 配置，但生成结果必须显式说明是否启用。
+  - benchmark_parity 模式允许生成应用通过本地 Node 服务端显式调用 OpenAI 或 OpenRouter 图片 provider。
+  - 图片 provider key 只能来自本地 .env 或进程环境，不得进入前端、localStorage、run artifact 摘要或源码。
+forbidden_files:
+  - .env
+  - .DS_Store
+  - node_modules/
+default_verification_commands:
+  - cd reference_app && npm test
+  - cd reference_app && npm run check
+artifacts:
+  acceptance_criteria: acceptance_criteria.md
+  expected_capabilities: expected_capabilities.json
+  scoring_rubric: scoring_rubric.json

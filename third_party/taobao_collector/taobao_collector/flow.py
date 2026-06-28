@@ -38,6 +38,8 @@ RESULT_LIST_MARKERS = (
 DETAIL_MARKERS = ("宝贝详情", "评价", "店铺", "加入购物车", "立即购买")
 DETAIL_VIDEO_MARKERS = ("视频", "播放", "暂停", "播放器", "player", "Player")
 SAVE_MENU_MARKERS = ("保存图片", "保存到相册")
+SEARCH_AI_TIP_MARKERS = ("万能搜升级", "购物有疑问找AI助手")
+SEARCH_AI_TIP_CONFIRM_MARKERS = ("知道了",)
 RISK_DIRECT_MARKERS = (
     "请登录",
     "验证码",
@@ -293,7 +295,7 @@ def _run_keyword_search(
         "taobao_submit_keyword_search",
         {"query": query, "query_index": query_index},
     )
-    if not _wait_for_result_page(device, config.wait_timeout_seconds):
+    if not _wait_for_result_page(device, config.wait_timeout_seconds, manifest=manifest):
         hierarchy = device.dump_hierarchy()
         state = classify_page_state(hierarchy)
         if state["state"] == "recommendation":
@@ -350,8 +352,33 @@ def _collect_result_cards(
                 "page_state": classify_page_state(device.dump_hierarchy()),
             }
         )
+    card_slots = profile.result_card_slots()
+    current_page_index = 0
     for rank in range(1, top_n + 1):
         _check_risk(device, allow_detail_buy_markers=False)
+        desired_page_index = (rank - 1) // len(card_slots)
+        while current_page_index < desired_page_index:
+            if current_page_index >= config.max_result_scrolls:
+                raise _TaobaoRiskStop(
+                    {
+                        "event": "taobao_result_page_scroll_budget_exhausted",
+                        "query": query,
+                        "stage": stage,
+                        "rank": rank,
+                        "max_result_scrolls": config.max_result_scrolls,
+                    }
+                )
+            if not _scroll_result_page(manifest, device, config, query):
+                raise _TaobaoRiskStop(
+                    {
+                        "event": "taobao_result_page_scroll_failed",
+                        "query": query,
+                        "stage": stage,
+                        "rank": rank,
+                        "page_index": current_page_index + 1,
+                    }
+                )
+            current_page_index += 1
         result_payload = _capture(device, manifest.output_dir, f"{stage}_rank_{rank:03d}")
         write_captured_asset(
             manifest=manifest,
@@ -362,9 +389,18 @@ def _collect_result_cards(
             image_type="result_card",
             payload=result_payload,
         )
-        point = profile.result_card_point(rank)
-        device.tap_profile_point(f"result_card_{rank}", point)
-        _event(manifest, "taobao_tap_result_card", {"stage": stage, "rank": rank})
+        slot_name, point = card_slots[(rank - 1) % len(card_slots)]
+        device.tap_profile_point(slot_name, point)
+        _event(
+            manifest,
+            "taobao_tap_result_card",
+            {
+                "stage": stage,
+                "rank": rank,
+                "page_index": current_page_index,
+                "slot": slot_name,
+            },
+        )
         if not _wait_for_markers(device, DETAIL_MARKERS, config.wait_timeout_seconds):
             raise _TaobaoRiskStop(
                 {
@@ -385,11 +421,13 @@ def _collect_result_cards(
             media_store=media_store,
         )
         if detail_failure is not None:
+            if detail_failure.get("event") == "taobao_detail_save_login_triggered":
+                raise _TaobaoRiskStop(detail_failure)
             manifest.risk_events.append(detail_failure)
             append_jsonl(manifest.output_dir / "risk_events.jsonl", detail_failure)
             _save_debug(device, manifest.output_dir, detail_failure["event"])
         _tap(manifest, device, profile, "detail_back_button", {"rank": rank})
-        _wait_for_result_page(device, config.wait_timeout_seconds)
+        _wait_for_result_page(device, config.wait_timeout_seconds, manifest=manifest)
         write_manifest(manifest)
 
 
@@ -908,6 +946,54 @@ def detect_save_image_menu_point(hierarchy: str) -> tuple[float, float] | None:
     return None
 
 
+def detect_search_ai_tip_confirm_point(hierarchy: str) -> tuple[float, float] | None:
+    if not _has_any(hierarchy, SEARCH_AI_TIP_MARKERS):
+        return None
+    try:
+        root = ET.fromstring(hierarchy)
+    except ET.ParseError:
+        return None
+    screen = _screen_size_from_xml(root)
+    if screen is None:
+        return None
+    width, height = screen
+    for node in root.iter():
+        if node.attrib.get("package") not in {"", "com.taobao.taobao"}:
+            continue
+        text = node.attrib.get("text", "")
+        desc = node.attrib.get("content-desc", "")
+        resource_id = node.attrib.get("resource-id", "")
+        is_confirm = (
+            any(marker in text or marker in desc for marker in SEARCH_AI_TIP_CONFIRM_MARKERS)
+            or resource_id.endswith(":id/tv_confirm")
+        )
+        if not is_confirm:
+            continue
+        bounds = _parse_bounds(node.attrib.get("bounds", ""))
+        if bounds is None:
+            continue
+        x1, y1, x2, y2 = bounds
+        if x2 <= x1 or y2 <= y1:
+            continue
+        return ((x1 + x2) / 2 / width, (y1 + y2) / 2 / height)
+    return None
+
+
+def _dismiss_search_ai_tip_if_present(
+    manifest: TaobaoManifest, device: TaobaoDevice, hierarchy: str
+) -> bool:
+    point = detect_search_ai_tip_confirm_point(hierarchy)
+    if point is None:
+        return False
+    device.tap_profile_point("search_ai_tip_confirm", point)
+    _event(
+        manifest,
+        "taobao_dismiss_search_ai_tip",
+        {"point": [round(point[0], 4), round(point[1], 4)]},
+    )
+    return True
+
+
 def _wait_for_new_media(
     *,
     media_store: TaobaoMediaStore,
@@ -1079,7 +1165,12 @@ def _wait_for_markers(
         time.sleep(0.25)
 
 
-def _wait_for_result_page(device: TaobaoDevice, timeout_seconds: float) -> bool:
+def _wait_for_result_page(
+    device: TaobaoDevice,
+    timeout_seconds: float,
+    *,
+    manifest: TaobaoManifest | None = None,
+) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while True:
         hierarchy = device.dump_hierarchy()
@@ -1091,6 +1182,10 @@ def _wait_for_result_page(device: TaobaoDevice, timeout_seconds: float) -> bool:
                     "matched_markers": matched_risks,
                 }
             )
+        if manifest is not None and _dismiss_search_ai_tip_if_present(
+            manifest, device, hierarchy
+        ):
+            continue
         if classify_page_state(hierarchy)["state"] == "result_list":
             return True
         if timeout_seconds <= 0 or time.monotonic() >= deadline:
@@ -1235,10 +1330,10 @@ def classify_page_state(hierarchy: str) -> dict:
 def is_keyword_input_page(hierarchy: str) -> bool:
     if _has_risk_marker(hierarchy):
         return False
-    if _is_result_list_hierarchy(hierarchy) or is_home_page(hierarchy):
-        return False
     if _has_editable_input(hierarchy):
         return True
+    if _is_result_list_hierarchy(hierarchy) or is_home_page(hierarchy):
+        return False
     has_cancel = "取消" in hierarchy
     has_input_signal = _has_any(hierarchy, KEYWORD_INPUT_MARKERS)
     return has_cancel and has_input_signal
@@ -1295,14 +1390,28 @@ def _matched_markers(hierarchy: str, markers: tuple[str, ...]) -> list[str]:
 
 
 def _has_editable_input(hierarchy: str) -> bool:
-    if "android.widget.EditText" in hierarchy:
-        return True
-    return 'focused="true"' in hierarchy and (
-        "输入商品" in hierarchy
-        or "搜索宝贝" in hierarchy
-        or "搜索商品" in hierarchy
-        or "searchEdit" in hierarchy
-    )
+    try:
+        root = ET.fromstring(hierarchy)
+    except ET.ParseError:
+        if "android.widget.EditText" in hierarchy:
+            return True
+        return 'focused="true"' in hierarchy and (
+            "输入商品" in hierarchy
+            or "搜索宝贝" in hierarchy
+            or "搜索商品" in hierarchy
+            or "searchEdit" in hierarchy
+        )
+    for node in root.iter():
+        package = node.attrib.get("package", "")
+        if package and package != "com.taobao.taobao":
+            continue
+        class_name = node.attrib.get("class", "")
+        resource_id = node.attrib.get("resource-id", "")
+        if class_name == "android.widget.EditText":
+            return True
+        if resource_id.endswith(":id/searchEdit") and node.attrib.get("focused") == "true":
+            return True
+    return False
 
 
 def _screen_size_from_xml(root: ET.Element) -> tuple[int, int] | None:
@@ -1380,6 +1489,39 @@ def _request_with_config_defaults(
         keywords=request.keywords,
         top_n=top_n,
     )
+
+
+def _scroll_result_page(
+    manifest: TaobaoManifest,
+    device: TaobaoDevice,
+    config: TaobaoConfig,
+    query: str,
+) -> bool:
+    device.swipe_profile_points(
+        "result_page_next",
+        config.result_page_scroll_start,
+        config.result_page_scroll_end,
+        duration=0.35,
+    )
+    _event(
+        manifest,
+        "taobao_scroll_result_page_next",
+        {
+            "query": query,
+            "start": list(config.result_page_scroll_start),
+            "end": list(config.result_page_scroll_end),
+        },
+    )
+    if config.throttle_seconds:
+        time.sleep(min(config.throttle_seconds, 0.5))
+    if _wait_for_result_page(device, config.wait_timeout_seconds, manifest=manifest):
+        _event(
+            manifest,
+            "taobao_result_page_reached_after_scroll",
+            {"query": query, "page_state": classify_page_state(device.dump_hierarchy())},
+        )
+        return True
+    return False
 
 
 class _TaobaoRiskStop(Exception):

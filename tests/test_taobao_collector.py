@@ -177,6 +177,21 @@ def _taobao_result_list_xml() -> str:
 """
 
 
+def _taobao_result_list_with_top_search_xml() -> str:
+    return """
+<hierarchy>
+  <node package="com.taobao.taobao" class="androidx.recyclerview.widget.RecyclerView" focused="true" scrollable="true" />
+  <node package="com.taobao.taobao" content-desc="综合" clickable="true" />
+  <node package="com.taobao.taobao" content-desc="销量,未选中" clickable="true" />
+  <node package="com.taobao.taobao" content-desc="全部,已选中" clickable="true" />
+  <node package="com.taobao.taobao" content-desc="天猫,未选中" clickable="true" />
+  <node package="com.taobao.taobao" content-desc="店铺,未选中" clickable="true" />
+  <node package="com.taobao.taobao" content-desc="红白格圆桌垫 美式复古 92.57元 0人付款" clickable="true" />
+  <node package="com.taobao.taobao" text="红白格桌垫" resource-id="com.taobao.taobao:id/searchEdit" class="android.widget.TextView" focused="false" />
+</hierarchy>
+"""
+
+
 def _taobao_home_with_search_bar_xml() -> str:
     return """
 <hierarchy rotation="0">
@@ -318,6 +333,31 @@ class TaobaoCollectorTests(unittest.TestCase):
 
         self.assertEqual(classify_page_state(hierarchy)["state"], "home")
 
+    def test_search_door_with_focused_edit_text_is_keyword_input(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import classify_page_state
+
+        hierarchy = """
+        <hierarchy>
+          <node package="com.taobao.taobao"
+                class="android.widget.EditText"
+                resource-id="com.taobao.taobao:id/searchEdit"
+                text="红绿格纹桌布"
+                focused="true"
+                bounds="[130,155][919,245]" />
+          <node package="com.taobao.taobao"
+                class="android.widget.Button"
+                resource-id="com.taobao.taobao:id/searchbtn"
+                text="搜索"
+                content-desc="搜索"
+                bounds="[1008,155][1164,245]" />
+          <node package="com.taobao.taobao" text="历史搜索" />
+          <node package="com.taobao.taobao" text="猜你想搜" />
+          <node package="com.taobao.taobao" content-desc="圆形边几好评榜第14名蔓斯菲尔旗舰店 ¥39" />
+        </hierarchy>
+        """
+
+        self.assertEqual(classify_page_state(hierarchy)["state"], "keyword_input")
+
     def test_successful_keyword_run_writes_manifest_csv_html_and_hashes(self) -> None:
         from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
         from third_party.taobao_collector.taobao_collector.models import (
@@ -364,6 +404,112 @@ class TaobaoCollectorTests(unittest.TestCase):
             )
             self.assertIn("淘宝采集结果", html_text)
             self.assertIn("keyword_search", html_text)
+
+    def test_keyword_top_n_scrolls_result_pages_after_visible_slots(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
+        from third_party.taobao_collector.taobao_collector.models import (
+            TaobaoConfig,
+            TaobaoRequest,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = root / "taobao_coordinates.json"
+            profile.write_text(json.dumps(_profile_dict()), encoding="utf-8")
+            config = TaobaoConfig.from_dict(
+                {
+                    "mode": "keyword_search",
+                    "top_n": 4,
+                    "output_root": str(root / "runs"),
+                    "coordinate_profile": str(profile),
+                    "wait_timeout_seconds": 0,
+                }
+            )
+            device = FakeTaobaoDevice()
+
+            manifest = run_taobao_flow(
+                TaobaoRequest(mode="keyword_search", keyword="红白格桌垫", top_n=4),
+                config,
+                device,
+                media_store=FakeTaobaoMediaStore(),
+            )
+
+            self.assertEqual(manifest.status, "completed")
+            self.assertEqual(
+                [asset.image_type for asset in manifest.assets].count("detail_main"),
+                4,
+            )
+            tapped_cards = [
+                point
+                for action, point in device.actions
+                if action == "tap" and point and point.startswith("result_card")
+            ]
+            self.assertEqual(
+                tapped_cards,
+                ["result_card_1", "result_card_2", "result_card_3", "result_card_1"],
+            )
+            self.assertIn(("swipe", "result_page_next"), device.actions)
+            events = (manifest.output_dir / "step_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("taobao_scroll_result_page_next", events)
+            self.assertIn("taobao_result_page_reached_after_scroll", events)
+
+    def test_keyword_search_dismisses_search_ai_tip_before_result_gate(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
+        from third_party.taobao_collector.taobao_collector.models import (
+            TaobaoConfig,
+            TaobaoRequest,
+        )
+
+        class SearchAiTipDevice(FakeTaobaoDevice):
+            def dump_hierarchy(self) -> str:
+                if self.state == "search_ai_tip":
+                    return """
+                    <hierarchy>
+                      <node package="com.taobao.taobao" text="红白格桌垫" resource-id="com.taobao.taobao:id/searchEdit" bounds="[136,156][412,246]" />
+                      <node package="com.taobao.taobao" text="万能搜升级啦，购物有疑问找AI助手" resource-id="com.taobao.taobao:id/tv_tips" bounds="[334,342][915,391]" />
+                      <node package="com.taobao.taobao" text="知道了" resource-id="com.taobao.taobao:id/tv_confirm" clickable="true" bounds="[951,331][1146,400]" />
+                    </hierarchy>
+                    """
+                return super().dump_hierarchy()
+
+            def press_enter(self) -> None:
+                self.actions.append(("press_enter", None))
+                self.state = "search_ai_tip"
+
+            def tap_profile_point(self, name: str, point: tuple[float, float]) -> None:
+                self.actions.append(("tap", name))
+                if name == "search_ai_tip_confirm":
+                    self.state = "results"
+                    return
+                super().tap_profile_point(name, point)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = root / "taobao_coordinates.json"
+            profile.write_text(json.dumps(_profile_dict()), encoding="utf-8")
+            config = TaobaoConfig.from_dict(
+                {
+                    "mode": "keyword_search",
+                    "top_n": 1,
+                    "output_root": str(root / "runs"),
+                    "coordinate_profile": str(profile),
+                    "wait_timeout_seconds": 0,
+                }
+            )
+            device = SearchAiTipDevice()
+
+            manifest = run_taobao_flow(
+                TaobaoRequest(mode="keyword_search", keyword="红白格桌垫", top_n=1),
+                config,
+                device,
+                media_store=FakeTaobaoMediaStore(),
+            )
+
+            self.assertEqual(manifest.status, "completed")
+            self.assertIn(("tap", "search_ai_tip_confirm"), device.actions)
+            events = (manifest.output_dir / "step_events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("taobao_dismiss_search_ai_tip", events)
+            self.assertIn("taobao_keyword_search_results_reached", events)
 
     def test_successful_image_search_writes_result_and_detail_assets(self) -> None:
         from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
@@ -564,6 +710,55 @@ class TaobaoCollectorTests(unittest.TestCase):
             )
             self.assertNotIn(("long_press", "detail_main_image"), device.actions)
             self.assertNotIn(("tap", "save_image_button"), device.actions)
+
+    def test_detail_save_login_stops_top_n_without_back_or_next_rank(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
+        from third_party.taobao_collector.taobao_collector.models import (
+            TaobaoConfig,
+            TaobaoRequest,
+        )
+
+        class LoginAfterTapDevice(FakeTaobaoDevice):
+            def tap_profile_point(self, name: str, point: tuple[float, float]) -> None:
+                self.actions.append(("tap", name))
+                if name.startswith("result_card"):
+                    self.state = "detail"
+                    return
+                if name == "detail_main_image":
+                    self.state = "risk"
+                    return
+                super().tap_profile_point(name, point)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = root / "taobao_coordinates.json"
+            profile.write_text(json.dumps(_profile_dict()), encoding="utf-8")
+            config = TaobaoConfig.from_dict(
+                {
+                    "mode": "keyword_search",
+                    "top_n": 2,
+                    "output_root": str(root / "runs"),
+                    "coordinate_profile": str(profile),
+                    "wait_timeout_seconds": 0,
+                }
+            )
+            device = LoginAfterTapDevice()
+
+            manifest = run_taobao_flow(
+                TaobaoRequest(mode="keyword_search", keyword="红白格桌垫", top_n=2),
+                config,
+                device,
+                media_store=FakeTaobaoMediaStore(),
+            )
+
+            self.assertEqual(manifest.status, "partial")
+            self.assertEqual([asset.image_type for asset in manifest.assets], ["result_card"])
+            self.assertNotIn(("tap", "detail_back_button"), device.actions)
+            self.assertNotIn(("tap", "result_card_2"), device.actions)
+            self.assertIn(
+                "taobao_detail_save_login_triggered",
+                {event["event"] for event in manifest.risk_events},
+            )
 
     def test_detail_save_stops_when_long_press_triggers_login_without_retry(self) -> None:
         from third_party.taobao_collector.taobao_collector.flow import run_taobao_flow
@@ -890,6 +1085,13 @@ class TaobaoCollectorTests(unittest.TestCase):
 
         self.assertEqual(state["state"], "result_list")
         self.assertIn("旗舰店", state["matched_markers"])
+
+    def test_result_page_with_top_search_text_is_not_keyword_input(self) -> None:
+        from third_party.taobao_collector.taobao_collector.flow import classify_page_state
+
+        state = classify_page_state(_taobao_result_list_with_top_search_xml())
+
+        self.assertEqual(state["state"], "result_list")
 
     def test_home_and_recommendation_pages_are_not_result_pages(self) -> None:
         from third_party.taobao_collector.taobao_collector.flow import classify_page_state

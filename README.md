@@ -86,6 +86,29 @@ brief analysis -> PM-style draft understanding -> official acceptance criteria -
 
 The source of truth remains `runs/<run_id>/`: `requirements/brief_analysis.json`, `acceptance_criteria.md`, `context_pack.md`, `planning/acceptance_coverage_matrix.*`, `slices/*.yaml`, `codex/slices/*/slice_trace.json`, and `implementation_completion_gate.*`. Codex continuity must come from those run artifacts, current diff, blockers, and verification evidence rather than chat history.
 
+### PRD-to-local-app generation
+
+The `app_generation` domain turns a PRD into a lightweight local prototype app for product validation. v1 generates a native SPA plus a Node stdlib local server, with no database and browser `localStorage` as the only persistence layer. Generated code remains in an isolated Codex worktree until the existing review, verification, and human-confirmed apply gates pass.
+
+Foreground example:
+
+```bash
+python -m growth_dev app generate \
+  --foreground \
+  --executor codex \
+  --prd-text "Todo App：用户可以新增、完成、筛选待办，状态保存在浏览器本地。" \
+  --app-slug todo-prototype
+```
+
+The Dashboard also includes a “PRD 生成本地应用” request mode that submits `domain=app_generation` with `prd_text` and `app_slug`.
+
+Design and implementation docs:
+
+- `docs/app_generation_prd_to_local_app_spec.md`
+- `docs/app_generation_architecture.md`
+- `docs/app_generation_acceptance_and_testing.md`
+- `docs/app_generation_implementation_task_plan.md`
+
 ## Codex executor
 
 `team run` defaults to the deterministic file-based agents. Add `--executor codex` to let the `coder` stage run `codex exec`, the `reviewer` stage run `codex review --uncommitted`, and the `verifier` stage run deterministic verification commands in the isolated worktree.

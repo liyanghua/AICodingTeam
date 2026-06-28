@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import base64
+import mimetypes
 import os
 import re
 import subprocess
@@ -12,8 +15,8 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from typing import Any, Iterable, Iterator
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from ..utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
 from .models import TeamRunRecord
@@ -21,6 +24,7 @@ from .quality import evaluate_run_quality, summarize_run_health, summarize_run_l
 from .release import generate_production_readiness, generate_release_readiness, generate_staging_readiness
 from .github_pr import create_draft_pr, refresh_ci_status
 from .staging import run_staging_rehearsal
+from . import preview
 
 
 _DASHBOARD_PROCESSES: list[subprocess.Popen] = []
@@ -42,6 +46,140 @@ STAGE_DEFINITIONS = [
     {"id": "deploy", "label": "Deploy", "phase": "Future", "artifact_hints": []},
     {"id": "human_approval", "label": "Human Approval", "phase": "Future", "artifact_hints": []},
 ]
+
+
+APP_GENERATION_DOMAIN_ID = "app_generation"
+APP_GENERATION_WORKBENCH_NODES = [
+    {
+        "id": "skill_routing",
+        "title": "Skill 路由",
+        "summary": "选择 PRD 生成链路需要使用的 Project Skills。",
+        "primary_skill": "using_agent_skills",
+        "companion_skills": [],
+        "inputs": ["input_prd.md", "domain_spec.json"],
+        "outputs": ["requirements/brief_analysis.json", "memory_recall.json"],
+        "agents": ["requirements"],
+    },
+    {
+        "id": "prd_input",
+        "title": "PRD 输入",
+        "summary": "固化原始 PRD，校验 app_slug，并保留可审计输入。",
+        "primary_skill": "spec_driven_development",
+        "companion_skills": [],
+        "inputs": [],
+        "outputs": ["input_prd.md"],
+        "agents": ["requirements"],
+    },
+    {
+        "id": "prd_normalization",
+        "title": "标准化 PRD",
+        "summary": "把原始 PRD 规范化为目标、范围、状态和假设。",
+        "primary_skill": "spec_driven_development",
+        "companion_skills": ["context_engineering"],
+        "inputs": ["input_prd.md"],
+        "outputs": ["requirements/normalized_prd.md"],
+        "agents": ["requirements"],
+    },
+    {
+        "id": "context_contract",
+        "title": "上下文与应用契约",
+        "summary": "形成 Codex 可消费的上下文包和本地应用契约。",
+        "primary_skill": "context_engineering",
+        "companion_skills": [],
+        "inputs": ["requirements/normalized_prd.md", "domain_spec.json"],
+        "outputs": ["context_pack.md", "app_contract.json", "requirements/capability_boundary.json"],
+        "agents": ["requirements"],
+    },
+    {
+        "id": "planning_tdd",
+        "title": "验收与 TDD 规划",
+        "summary": "生成验收标准、coverage matrix、TDD 计划和 slices。",
+        "primary_skill": "planning_and_task_breakdown",
+        "companion_skills": ["test_driven_development"],
+        "inputs": ["input_prd.md", "requirements/normalized_prd.md", "context_pack.md", "app_contract.json"],
+        "outputs": ["acceptance_criteria.md", "planning/acceptance_coverage_matrix.json", "planning/tdd_plan.json"],
+        "agents": ["requirements"],
+    },
+    {
+        "id": "implementation",
+        "title": "应用实现",
+        "summary": "使用 Codex/LLM 在隔离 worktree 生成本地应用代码。",
+        "primary_skill": "incremental_implementation",
+        "companion_skills": [],
+        "inputs": ["input_prd.md", "context_pack.md", "app_contract.json", "planning/tdd_plan.json"],
+        "outputs": ["codex/implementation_trace.json", "codex/diff.patch", "code_run_record.json"],
+        "agents": ["coder"],
+    },
+    {
+        "id": "review_quality",
+        "title": "评审与质量",
+        "summary": "检查 diff、风险、路径边界和 AI coding 质量。",
+        "primary_skill": "code_review_and_quality",
+        "companion_skills": ["ai_coding_quality_review"],
+        "inputs": ["codex/diff.patch", "code_run_record.json", "acceptance_criteria.md"],
+        "outputs": ["review_report.md", "codex/failure_classification.json", "implementation_completion_gate.json"],
+        "agents": ["reviewer"],
+    },
+    {
+        "id": "verification",
+        "title": "验证",
+        "summary": "运行 Node 语法检查和项目测试，记录验证证据。",
+        "primary_skill": "test_driven_development",
+        "companion_skills": ["debugging_and_error_recovery"],
+        "inputs": ["app_contract.json", "codex/diff.patch"],
+        "outputs": ["test_report.md", "codex/verification_record.json"],
+        "agents": ["verifier"],
+    },
+    {
+        "id": "preview_delivery",
+        "title": "预览与交付",
+        "summary": "提供本地预览说明和最终交付结论。",
+        "primary_skill": "code_review_and_quality",
+        "companion_skills": ["run_retrospective"],
+        "inputs": ["app_contract.json", "test_report.md", "codex/verification_record.json"],
+        "outputs": ["preview_instructions.md", "final_report.md"],
+        "agents": ["publisher"],
+    },
+]
+
+APP_GENERATION_NODE_BY_ID = {item["id"]: item for item in APP_GENERATION_WORKBENCH_NODES}
+
+
+APP_GENERATION_NODE_PHASE_TEMPLATES: dict[str, list[dict[str, Any]]] = {
+    "skill_routing": [
+        {"id": "select_skills", "label": "选择 Skill", "artifacts": ["requirements/brief_analysis.json", "memory_recall.json"]},
+    ],
+    "prd_input": [
+        {"id": "persist_prd", "label": "固化 PRD", "artifacts": ["input_prd.md"]},
+    ],
+    "prd_normalization": [
+        {"id": "normalize_prd", "label": "标准化 PRD", "artifacts": ["requirements/normalized_prd.md"]},
+    ],
+    "context_contract": [
+        {"id": "context_pack", "label": "生成上下文包", "artifacts": ["context_pack.md"]},
+        {"id": "app_contract", "label": "生成应用契约", "artifacts": ["app_contract.json"]},
+        {"id": "capability_boundary", "label": "能力边界", "artifacts": ["requirements/capability_boundary.json"]},
+        {"id": "benchmark_context", "label": "Benchmark 能力契约", "artifacts": ["benchmark_context.md", "reference_app_index.md"]},
+    ],
+    "planning_tdd": [
+        {"id": "acceptance", "label": "验收标准", "artifacts": ["acceptance_criteria.md"]},
+        {"id": "coverage_matrix", "label": "覆盖矩阵", "artifacts": ["planning/acceptance_coverage_matrix.json"]},
+        {"id": "tdd_plan", "label": "TDD 计划", "artifacts": ["planning/tdd_plan.json"]},
+    ],
+    "review_quality": [
+        {"id": "review_report", "label": "评审报告", "artifacts": ["review_report.md"]},
+        {"id": "failure_classification", "label": "失败分类", "artifacts": ["codex/failure_classification.json"]},
+        {"id": "completion_gate", "label": "完成门", "artifacts": ["implementation_completion_gate.json"]},
+    ],
+    "verification": [
+        {"id": "test_report", "label": "测试报告", "artifacts": ["test_report.md"]},
+        {"id": "verification_record", "label": "验证记录", "artifacts": ["codex/verification_record.json"]},
+    ],
+    "preview_delivery": [
+        {"id": "preview_instructions", "label": "预览说明", "artifacts": ["preview_instructions.md"]},
+        {"id": "final_report", "label": "最终交付", "artifacts": ["final_report.md"]},
+    ],
+}
 
 
 @dataclass(slots=True)
@@ -215,6 +353,54 @@ def read_dashboard_artifact(
     return {"path": artifact_path, "scope": scope, "content": target.read_text(encoding="utf-8", errors="replace")}
 
 
+def read_app_generation_artifact_preview(
+    run_id: str,
+    artifact_path: str,
+    *,
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+    max_bytes: int = 300_000,
+) -> dict[str, Any]:
+    run_dir = _safe_run_dir(Path(runs_dir), run_id)
+    rel = Path(artifact_path)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError("Artifact path escapes run directory.")
+    if len(rel.parts) < 3 or rel.parts[0] != "artifacts":
+        raise ValueError("file_preview can only read artifacts/<node>/* paths.")
+    target = _safe_child(run_dir, artifact_path)
+    if not target.exists() or not target.is_file():
+        raise FileNotFoundError(f"Artifact not found: {artifact_path}")
+
+    size = target.stat().st_size
+    mime_type = _preview_mime_type(target)
+    kind = _preview_kind(target, mime_type)
+    preview = {
+        "path": artifact_path,
+        "scope": "run",
+        "title": _artifact_title(artifact_path),
+        "kind": "too_large" if size > max_bytes else kind,
+        "mime_type": mime_type,
+        "size_bytes": size,
+        "content_hash": _file_hash(target),
+        "inline": size <= max_bytes and kind in {"text", "code", "image", "pdf"},
+        "content": "",
+        "data_url": "",
+        "message": "",
+    }
+    if size > max_bytes:
+        preview["message"] = "文件超过预览大小限制，仅显示元信息。"
+        return preview
+    if kind in {"text", "code"}:
+        preview["content"] = target.read_text(encoding="utf-8", errors="replace")
+    elif kind in {"image", "pdf"}:
+        data = base64.b64encode(target.read_bytes()).decode("ascii")
+        preview["data_url"] = f"data:{mime_type};base64,{data}"
+    else:
+        preview["inline"] = False
+        preview["message"] = "此文件类型暂不支持内联预览。"
+    return preview
+
+
 def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
     brief = str(payload.get("brief", "")).strip()
     if not brief:
@@ -331,6 +517,1054 @@ def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dic
             "artifacts": str(run_dir),
         }
     )
+
+
+def list_app_generation_runs(runs_dir: Path = Path("runs"), limit: int = 50) -> list[dict[str, Any]]:
+    runs: list[dict[str, Any]] = []
+    for run in list_dashboard_runs(runs_dir, limit=max(limit * 3, 60)):
+        run_id = str(run.get("run_id", ""))
+        if str(run.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID:
+            continue
+        run_dir = _safe_run_dir(Path(runs_dir), run_id)
+        record = _safe_read_json(run_dir / "team_run_record.json")
+        process = _safe_read_json(run_dir / "process.json")
+        inputs = record.get("inputs") if isinstance(record.get("inputs"), dict) else {}
+        contract = _safe_read_json(run_dir / "app_contract.json")
+        app_slug = str(inputs.get("app_slug") or contract.get("app_slug") or _slug_from_contract(contract))
+        comparison_group_id = str(inputs.get("comparison_group_id") or f"cmp-{app_slug or run_id}")
+        source_run_id = str(inputs.get("source_run_id") or "")
+        rerun_from_node = str(inputs.get("rerun_from_node") or "")
+        run.update(
+            {
+                "app_slug": app_slug,
+                "executor": str(record.get("executor", "")),
+                "comparison_group_id": comparison_group_id,
+                "source_run_id": source_run_id,
+                "rerun_from_node": rerun_from_node,
+                "selected_variant": str(inputs.get("selected_variant") or "codex"),
+                "is_rerun": bool(source_run_id or rerun_from_node),
+                "updated_at": str(run.get("updated_at") or process.get("last_seen_at") or _mtime_iso(run_dir)),
+                "publish_status": _app_generation_publish_status(run_dir, app_slug),
+            }
+        )
+        runs.append(_redact(run))
+    runs.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+    return runs[:limit]
+
+
+def build_app_generation_nodes(
+    run_id: str,
+    *,
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+) -> dict[str, Any]:
+    runs_dir = Path(runs_dir).resolve()
+    repo_root = Path(repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+    record = _safe_read_json(run_dir / "team_run_record.json")
+    if str(record.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID:
+        raise ValueError(f"Run is not app_generation: {run_id}")
+    process = _safe_read_json(run_dir / "process.json")
+    inputs = record.get("inputs") if isinstance(record.get("inputs"), dict) else {}
+    contract = _safe_read_json(run_dir / "app_contract.json")
+    comparison_group_id = str(inputs.get("comparison_group_id") or f"cmp-{str(inputs.get('app_slug') or contract.get('app_slug') or run_id)}")
+    source_run_id = str(inputs.get("source_run_id") or "")
+    nodes = [_build_app_generation_node(definition, run_dir, repo_root, record, process, comparison_group_id) for definition in APP_GENERATION_WORKBENCH_NODES]
+    return _redact(
+        {
+            "schema_version": 1,
+            "run": {
+                "run_id": run_id,
+                "domain_id": APP_GENERATION_DOMAIN_ID,
+                "brief": str(record.get("brief", "")),
+                "status": str(record.get("status", process.get("status", "unknown"))),
+                "app_slug": str(inputs.get("app_slug") or contract.get("app_slug") or _slug_from_contract(contract)),
+                "executor": str(record.get("executor", "")),
+                "comparison_group_id": comparison_group_id,
+                "source_run_id": source_run_id,
+                "rerun_from_node": str(inputs.get("rerun_from_node") or ""),
+                "selected_variant": str(inputs.get("selected_variant") or "codex"),
+                "is_rerun": bool(source_run_id or inputs.get("rerun_from_node")),
+                "publish_status": _app_generation_publish_status(
+                    run_dir,
+                    str(inputs.get("app_slug") or contract.get("app_slug") or _slug_from_contract(contract)),
+                ),
+            },
+            "provider_statuses": _app_generation_provider_statuses(repo_root=repo_root),
+            "nodes": nodes,
+        }
+    )
+
+
+def build_app_generation_node_context(
+    run_id: str,
+    node_id: str,
+    *,
+    selected_variant: str = "codex",
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+    user_overrides: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    state = build_app_generation_nodes(run_id, runs_dir=runs_dir, repo_root=repo_root)
+    node = next((item for item in state.get("nodes", []) if item.get("id") == node_id), None)
+    if not isinstance(node, dict):
+        raise ValueError(f"Unknown app_generation node: {node_id}")
+    run = state.get("run") if isinstance(state.get("run"), dict) else {}
+    overrides = user_overrides or []
+    base_context = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "comparison_group_id": str(run.get("comparison_group_id", "")),
+        "source_run_id": str(run.get("source_run_id", "")),
+        "node_id": node_id,
+        "node_title": str(node.get("title") or APP_GENERATION_NODE_BY_ID.get(node_id, {}).get("title") or node_id),
+        "node_summary": str(node.get("summary") or APP_GENERATION_NODE_BY_ID.get(node_id, {}).get("summary") or ""),
+        "status": str(node.get("status") or "unknown"),
+        "selected_variant": selected_variant,
+        "app_slug": str(run.get("app_slug", "")),
+        "brief": str(run.get("brief", "")),
+        "inputs": node.get("inputs", []),
+        "outputs": node.get("outputs", []),
+        "skills": node.get("skills", []),
+        "tool_calls": node.get("tool_calls", []),
+        "usage": _variant_usage(node, selected_variant),
+        "scores": node.get("scores", {}),
+        "risks": node.get("risks", []),
+        "user_overrides": overrides,
+        "available_actions": _node_available_actions(node_id),
+    }
+    revision_payload = {
+        "run_id": run_id,
+        "node_id": node_id,
+        "selected_variant": selected_variant,
+        "inputs": _revision_artifacts(base_context["inputs"]),
+        "outputs": _revision_artifacts(base_context["outputs"]),
+        "skills": [{"id": item.get("id"), "status": item.get("status")} for item in base_context["skills"] if isinstance(item, dict)],
+        "tool_calls": [{"tool_call_id": item.get("tool_call_id"), "status": item.get("status")} for item in base_context["tool_calls"] if isinstance(item, dict)],
+        "risks": base_context["risks"],
+        "user_overrides": overrides,
+    }
+    revision = "sha256:" + hashlib.sha256(json.dumps(revision_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    context_id = f"{run_id}:{node_id}:{selected_variant}:{revision}"
+    return _redact({**base_context, "context_id": context_id, "context_revision": revision})
+
+
+def handle_app_generation_agent_message(
+    payload: dict[str, Any],
+    *,
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+) -> dict[str, Any]:
+    context = payload.get("node_context")
+    if not isinstance(context, dict):
+        raise ValueError("node_context is required")
+    provider = str(payload.get("provider") or "codex")
+    mode = str(payload.get("mode") or "explain")
+    intent = str(payload.get("intent") or mode or "auto")
+    message = str(payload.get("message") or "")
+    interaction_context = payload.get("interaction_context")
+    if not isinstance(interaction_context, dict):
+        interaction_context = None
+    node_id = str(context.get("node_id") or "")
+    run_id = str(context.get("run_id") or "")
+    selected_variant = str(context.get("selected_variant") or "codex")
+    if not run_id or not node_id:
+        raise ValueError("node_context must include run_id and node_id")
+
+    current_context = build_app_generation_node_context(
+        run_id,
+        node_id,
+        selected_variant=selected_variant,
+        runs_dir=runs_dir,
+        repo_root=repo_root,
+        user_overrides=context.get("user_overrides") if isinstance(context.get("user_overrides"), list) else None,
+    )
+    requested_revision = context.get("context_revision")
+    interaction_revision = interaction_context.get("context_revision") if interaction_context else ""
+    if (
+        (requested_revision and requested_revision != current_context.get("context_revision"))
+        or (interaction_revision and interaction_revision != current_context.get("context_revision"))
+    ):
+        return _redact(
+            {
+                "provider": provider,
+                "status": "context_stale",
+                "message": "当前 NodeContext 已过期，请刷新节点后再继续。",
+                "actions": [],
+                "tool_calls": [],
+                "usage": {"prompt_tokens": "unknown", "completion_tokens": "unknown", "total_tokens": "unknown", "estimated_cost": "unknown"},
+                "risk_events": [{"id": "context_stale", "severity": "warning", "summary": "Agent 请求携带了旧 context_revision。"}],
+            }
+        )
+
+    provider_status = next((item for item in _app_generation_provider_statuses(repo_root=repo_root) if item.get("provider") == provider), None)
+    if not provider_status or provider_status.get("status") != "ready":
+        label = "PI-Agent" if provider == "pi_agent" else provider
+        return _redact(
+            {
+                "provider": provider,
+                "status": str(provider_status.get("status", "not_configured")) if provider_status else "not_configured",
+                "message": str(provider_status.get("message", f"{label} is not configured.")) if provider_status else f"{label} is not configured.",
+                "actions": [],
+                "tool_calls": [],
+                "usage": {"prompt_tokens": "unknown", "completion_tokens": "unknown", "total_tokens": "unknown", "estimated_cost": "unknown"},
+                "risk_events": [],
+            }
+        )
+
+    from growth_dev.team.agent_bridge import send_agent_message
+
+    response = send_agent_message(
+        provider_id=provider,
+        node_context=current_context,
+        mode=mode,
+        message=message,
+        repo_root=repo_root,
+        interaction_context=interaction_context,
+        intent=intent,
+    )
+    return _redact(response)
+
+
+def stream_app_generation_agent_message(
+    payload: dict[str, Any],
+    *,
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+) -> Iterator[dict[str, Any]]:
+    """Yield SSE-ready StreamEvents for the right-panel agent dialog.
+
+    Validates context_revision freshness like the non-streaming
+    ``handle_app_generation_agent_message``; on staleness or provider
+    misconfiguration, yields a single terminal event so the SSE channel still
+    closes deterministically.
+    """
+    context = payload.get("node_context")
+    if not isinstance(context, dict):
+        raise ValueError("node_context is required")
+    provider = str(payload.get("provider") or "codex")
+    mode = str(payload.get("mode") or "explain")
+    intent = str(payload.get("intent") or mode or "auto")
+    message = str(payload.get("message") or "")
+    interaction_context = payload.get("interaction_context")
+    if not isinstance(interaction_context, dict):
+        interaction_context = None
+    node_id = str(context.get("node_id") or "")
+    run_id = str(context.get("run_id") or "")
+    selected_variant = str(context.get("selected_variant") or "codex")
+    if not run_id or not node_id:
+        raise ValueError("node_context must include run_id and node_id")
+
+    current_context = build_app_generation_node_context(
+        run_id,
+        node_id,
+        selected_variant=selected_variant,
+        runs_dir=runs_dir,
+        repo_root=repo_root,
+        user_overrides=context.get("user_overrides") if isinstance(context.get("user_overrides"), list) else None,
+    )
+    requested_revision = context.get("context_revision")
+    interaction_revision = interaction_context.get("context_revision") if interaction_context else ""
+    if (
+        (requested_revision and requested_revision != current_context.get("context_revision"))
+        or (interaction_revision and interaction_revision != current_context.get("context_revision"))
+    ):
+        yield {
+            "type": "upstream_error",
+            "payload": {
+                "phase": "context_stale",
+                "errorMessage": "当前 NodeContext 已过期，请刷新节点后再继续。",
+                "hint": "upstream_unknown",
+            },
+        }
+        return
+
+    provider_status = next(
+        (item for item in _app_generation_provider_statuses(repo_root=repo_root) if item.get("provider") == provider),
+        None,
+    )
+    if not provider_status or provider_status.get("status") != "ready":
+        label = "PI-Agent" if provider == "pi_agent" else provider
+        yield {
+            "type": "upstream_error",
+            "payload": {
+                "phase": "not_configured",
+                "errorMessage": str(provider_status.get("message")) if provider_status else f"{label} is not configured.",
+                "hint": "auth_invalid",
+            },
+        }
+        return
+
+    from growth_dev.team.agent_bridge import stream_agent_message
+
+    saw_terminal_event = False
+    for event in stream_agent_message(
+        provider_id=provider,
+        node_context=current_context,
+        mode=mode,
+        message=message,
+        repo_root=repo_root,
+        interaction_context=interaction_context,
+        intent=intent,
+    ):
+        if event.get("type") in {"agent_end", "upstream_error"}:
+            saw_terminal_event = True
+        yield event
+    if not saw_terminal_event:
+        yield {
+            "type": "upstream_error",
+            "payload": {
+                "phase": "stream_closed",
+                "errorMessage": "Provider stream ended without agent_end",
+                "hint": "upstream_unknown",
+            },
+        }
+
+
+def start_app_generation_rerun(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    source_run_id = str(payload.get("source_run_id") or "").strip()
+    node_id = str(payload.get("rerun_from_node") or payload.get("node_id") or "").strip()
+    selected_variant = str(payload.get("selected_variant") or "codex").strip()
+    override_instructions = str(payload.get("override_instructions") or "").strip()
+    if not source_run_id:
+        raise ValueError("source_run_id is required")
+    if node_id not in APP_GENERATION_NODE_BY_ID:
+        raise ValueError(f"Unknown app_generation node: {node_id}")
+    if selected_variant not in {"rule", "codex", "llm", "pi_agent"}:
+        raise ValueError(f"Unsupported selected_variant: {selected_variant}")
+
+    runs_dir = Path(config.runs_dir).resolve()
+    repo_root = Path(config.repo_root).resolve()
+    source_dir = _safe_run_dir(runs_dir, source_run_id)
+    if not source_dir.exists():
+        raise FileNotFoundError(f"Run not found: {source_run_id}")
+    source_record = _safe_read_json(source_dir / "team_run_record.json")
+    if str(source_record.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID:
+        raise ValueError(f"Run is not app_generation: {source_run_id}")
+    source_inputs = source_record.get("inputs") if isinstance(source_record.get("inputs"), dict) else {}
+    contract = _safe_read_json(source_dir / "app_contract.json")
+    app_slug = str(source_inputs.get("app_slug") or contract.get("app_slug") or _slug_from_contract(contract) or "generated-app")
+    comparison_group_id = str(payload.get("comparison_group_id") or source_inputs.get("comparison_group_id") or f"cmp-{app_slug}")
+    base_prd = str(source_inputs.get("prd_text") or "")
+    if not base_prd and (source_dir / "input_prd.md").exists():
+        base_prd = (source_dir / "input_prd.md").read_text(encoding="utf-8", errors="replace")
+    prd_text = base_prd.strip()
+    if override_instructions:
+        prd_text = f"{prd_text}\n\n## Workbench Override Instructions\n\n{override_instructions}\n".strip()
+
+    if payload.get("context_revision"):
+        current_context = build_app_generation_node_context(
+            source_run_id,
+            node_id,
+            selected_variant=selected_variant,
+            runs_dir=runs_dir,
+            repo_root=repo_root,
+        )
+        if payload.get("context_revision") != current_context.get("context_revision"):
+            raise ValueError("context_revision is stale; refresh the node before rerun.")
+
+    new_run_id = str(payload.get("run_id") or f"app_generation-rerun-{timestamp_slug()}")
+    rerun_payload = {
+        "run_id": new_run_id,
+        "brief": str(source_record.get("brief") or f"根据 PRD 生成本地应用：{app_slug}"),
+        "domain": APP_GENERATION_DOMAIN_ID,
+        "executor": str(payload.get("executor") or config.executor or "codex"),
+        "model": str(payload.get("model") or config.model),
+        "codex_provider": str(payload.get("codex_provider") or config.codex_provider),
+        "inputs_json": {
+            "app_slug": app_slug,
+            "prd_text": prd_text,
+            "source_run_id": source_run_id,
+            "rerun_from_node": node_id,
+            "selected_variant": selected_variant,
+            "override_instructions": override_instructions,
+            "comparison_group_id": comparison_group_id,
+            "context_revision": str(payload.get("context_revision") or ""),
+        },
+    }
+    result = start_dashboard_run(config, rerun_payload)
+    return _redact(
+        {
+            **result,
+            "source_run_id": source_run_id,
+            "rerun_from_node": node_id,
+            "selected_variant": selected_variant,
+            "comparison_group_id": comparison_group_id,
+        }
+    )
+
+
+def _app_generation_publish_status(run_dir: Path, app_slug: str = "") -> dict[str, Any]:
+    published_apps_dir = run_dir / "generated_apps"
+    if not published_apps_dir.exists():
+        return {"status": "not_published", "app_slug": app_slug, "message": "尚未发布应用快照。"}
+
+    slug = str(app_slug or "").strip()
+    if not slug:
+        published_apps = [d for d in published_apps_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        if len(published_apps) == 1:
+            slug = published_apps[0].name
+        elif len(published_apps) > 1:
+            return {"status": "ambiguous", "app_slug": "", "message": "存在多个已发布应用，需要指定 app_slug。"}
+        else:
+            return {"status": "not_published", "app_slug": "", "message": "尚未发布应用快照。"}
+
+    publish_record_path = published_apps_dir / slug / "app_publish.json"
+    if not publish_record_path.exists():
+        return {"status": "missing_publish_record", "app_slug": slug, "message": "应用快照缺少发布记录。"}
+
+    publish_record = _safe_read_json(publish_record_path)
+    patches_index = _safe_read_json(run_dir / "app_patches" / "index.json")
+    patches = patches_index.get("patches") if isinstance(patches_index.get("patches"), list) else []
+    return {
+        "status": "published",
+        "app_slug": str(publish_record.get("app_slug") or slug),
+        "published_at": str(publish_record.get("published_at") or ""),
+        "source_commit": str(publish_record.get("source_commit") or "unknown"),
+        "worktree_clean": publish_record.get("worktree_clean", "unknown"),
+        "app_patches_count": len(patches),
+        "message": "应用快照已发布，可以启动预览。",
+    }
+
+
+def publish_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    import shutil
+
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    
+    runs_dir = Path(config.runs_dir).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    worktree_apps_dir = run_dir / "worktree" / "generated_apps"
+    if not worktree_apps_dir.exists():
+        raise FileNotFoundError(f"No worktree generated_apps found: {run_id}")
+    
+    app_slug = str(payload.get("app_slug") or "").strip()
+    if not app_slug:
+        subdirs = [d for d in worktree_apps_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        if len(subdirs) == 0:
+            raise ValueError(f"No apps found in worktree/generated_apps: {run_id}")
+        if len(subdirs) > 1:
+            raise ValueError(f"multiple_apps_found: {[d.name for d in subdirs]}. Specify app_slug.")
+        app_slug = subdirs[0].name
+    
+    source_dir = worktree_apps_dir / app_slug
+    if not source_dir.exists():
+        raise FileNotFoundError(f"App not found in worktree: {app_slug}")
+
+    record = _safe_read_json(run_dir / "team_run_record.json")
+    coder_runs = [
+        item
+        for item in record.get("agent_runs", [])
+        if isinstance(item, dict) and str(item.get("agent_id", "")) == "coder"
+    ]
+    if not coder_runs or not any(str(item.get("status", "")) in {"completed", "warning"} for item in coder_runs):
+        raise ValueError("implementation_not_complete: cannot publish before implementation completes")
+    
+    target_parent = run_dir / "generated_apps"
+    target_parent.mkdir(parents=True, exist_ok=True)
+    target_dir = target_parent / app_slug
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(source_dir, target_dir)
+    
+    files_count = sum(1 for _ in target_dir.rglob("*") if _.is_file())
+    published_at = now_iso()
+    worktree_root = run_dir / "worktree"
+    source_commit = "unknown"
+    worktree_clean: bool | str = "unknown"
+    if worktree_root.exists():
+        try:
+            commit_result = subprocess.run(
+                ["git", "-C", str(worktree_root), "rev-parse", "HEAD"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if commit_result.returncode == 0:
+                source_commit = commit_result.stdout.strip() or "unknown"
+            status_result = subprocess.run(
+                ["git", "-C", str(worktree_root), "status", "--porcelain"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if status_result.returncode == 0:
+                worktree_clean = status_result.stdout.strip() == ""
+        except Exception:
+            source_commit = "unknown"
+            worktree_clean = "unknown"
+    
+    publish_record = {
+        "published_at": published_at,
+        "source_commit": source_commit,
+        "app_slug": app_slug,
+        "files_count": files_count,
+        "app_patches_count_at_publish": 0,
+        "worktree_path": _relative_to(source_dir, run_dir),
+        "worktree_clean": worktree_clean,
+    }
+    write_json(target_dir / "app_publish.json", publish_record)
+    
+    return _redact({
+        "published_at": published_at,
+        "app_slug": app_slug,
+        "files_count": files_count,
+        "source_commit": source_commit,
+    })
+
+
+def start_app_generation_preview(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    
+    runs_dir = Path(config.runs_dir).resolve()
+    repo_root = Path(config.repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+    
+    published_apps_dir = run_dir / "generated_apps"
+    if not published_apps_dir.exists():
+        raise ValueError("app_not_published: Please publish the app first")
+    
+    app_slug = str(payload.get("app_slug") or "").strip()
+    if not app_slug:
+        subdirs = [d for d in published_apps_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        if len(subdirs) == 0:
+            raise ValueError("app_not_published: No published apps found")
+        if len(subdirs) > 1:
+            raise ValueError(f"multiple_apps_found: {[d.name for d in subdirs]}. Specify app_slug.")
+        app_slug = subdirs[0].name
+    
+    published_app_dir = published_apps_dir / app_slug
+    if not published_app_dir.exists():
+        raise ValueError(f"app_not_published: {app_slug}")
+    
+    publish_record_path = published_app_dir / "app_publish.json"
+    if not publish_record_path.exists():
+        raise ValueError("missing_publish_record: app_publish.json not found")
+    
+    record_path = run_dir / "preview" / "preview_run_record.json"
+    if record_path.exists():
+        old_record = _safe_read_json(record_path)
+        if old_record.get("stopped_at") is None:
+            preview.stop_preview(record_path)
+    
+    preferred_port = int(payload.get("preferred_port") or 8788)
+    request = preview.PreviewRunRequest(
+        run_id=run_id,
+        app_slug=app_slug,
+        generated_app_dir=published_app_dir,
+        preview_command=["node", "server.js"],
+        preferred_port=preferred_port,
+        health_path="/",
+        health_timeout_seconds=5.0,
+        repo_root=repo_root,
+    )
+    
+    result = preview.start_preview(request, runs_dir=runs_dir)
+    
+    return _redact({
+        "status": result.status,
+        "run_id": run_id,
+        "app_slug": app_slug,
+        "url": result.url,
+        "port": result.port,
+        "pid": result.pid,
+        "health_status": result.health_status,
+        "health_message": result.message,
+        "record_path": str(result.record_path) if result.record_path else None,
+        "log_path": str(result.log_path) if result.log_path else None,
+        "risk_events": result.risk_events,
+    })
+
+
+def stop_app_generation_preview(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    
+    runs_dir = Path(config.runs_dir).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    record_path = run_dir / "preview" / "preview_run_record.json"
+    
+    if not record_path.exists():
+        return {"status": "not_running", "run_id": run_id}
+    
+    record = _safe_read_json(record_path)
+    if record.get("stopped_at") is not None:
+        return {"status": "stopped", "run_id": run_id, "pid": record.get("pid")}
+    
+    result = preview.stop_preview(record_path)
+    return _redact({**result, "run_id": run_id})
+
+
+def get_app_generation_preview_status(config: DashboardConfig, run_id: str) -> dict[str, Any]:
+    runs_dir = Path(config.runs_dir).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    record_path = run_dir / "preview" / "preview_run_record.json"
+    
+    if not record_path.exists():
+        return {"status": "not_running", "run_id": run_id}
+    
+    record = _safe_read_json(record_path)
+    
+    status = "stopped" if record.get("stopped_at") else "running"
+    pid = record.get("pid")
+    if pid and status == "running":
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            status = "stale"
+    
+    return _redact({
+        "status": status,
+        "run_id": record.get("run_id", run_id),
+        "app_slug": record.get("app_slug"),
+        "pid": pid,
+        "port": record.get("port"),
+        "url": record.get("url"),
+        "health_status": record.get("health_status"),
+        "started_at": record.get("started_at"),
+        "stopped_at": record.get("stopped_at"),
+    })
+
+
+def get_app_generation_preview_logs(config: DashboardConfig, run_id: str, tail: int = 200) -> dict[str, Any]:
+    runs_dir = Path(config.runs_dir).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    log_path = run_dir / "preview" / "preview.log"
+    
+    if not log_path.exists():
+        return {"lines": [], "total_lines": 0, "tail": tail}
+    
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        total = len(all_lines)
+        lines = all_lines[-tail:] if tail > 0 else all_lines
+        return {"lines": [line.rstrip("\n\r") for line in lines], "total_lines": total, "tail": tail}
+    except Exception as exc:
+        return {"error": f"Failed to read log: {exc}", "lines": [], "total_lines": 0, "tail": tail}
+
+
+def _restart_preview_two_stage(
+    run_dir: Path,
+    runs_dir: Path,
+    repo_root: Path,
+    run_id: str,
+) -> dict[str, Any]:
+    record_path = run_dir / "preview" / "preview_run_record.json"
+    if not record_path.exists():
+        return {"status": "skipped", "reason": "no_active_preview"}
+    
+    old_record = _safe_read_json(record_path)
+    if old_record.get("stopped_at") is not None:
+        return {"status": "skipped", "reason": "no_active_preview"}
+    
+    old_pid = old_record.get("pid")
+    old_port = old_record.get("port")
+    app_slug = old_record.get("app_slug")
+    if not isinstance(old_pid, int) or not isinstance(old_port, int) or not app_slug:
+        return {"status": "skipped", "reason": "no_active_preview"}
+    
+    published_app_dir = run_dir / "generated_apps" / app_slug
+    if not published_app_dir.exists():
+        return {"status": "skipped", "reason": "no_published_app"}
+    
+    new_port = preview.allocate_port(old_port + 1)
+    if new_port == old_port:
+        new_port = preview.allocate_port(old_port + 2)
+    
+    request = preview.PreviewRunRequest(
+        run_id=run_id,
+        app_slug=app_slug,
+        generated_app_dir=published_app_dir,
+        preview_command=list(old_record.get("command") or ["node", "server.js"]),
+        preferred_port=new_port,
+        health_path="/",
+        health_timeout_seconds=5.0,
+        repo_root=repo_root,
+    )
+    new_result = preview.start_preview(request, runs_dir=runs_dir)
+    
+    if new_result.health_status != "ok" or new_result.pid is None:
+        failed_at = now_iso()
+        old_record["last_patch_restart_error"] = {
+            "phase": "new_process_health_check",
+            "message": new_result.message,
+            "checked_at": failed_at,
+        }
+        write_json(record_path, old_record)
+        return {
+            "status": "failed",
+            "phase": "new_process_health_check",
+            "error": new_result.message,
+            "old_pid": old_pid,
+            "old_port": old_port,
+            "url": old_record.get("url"),
+        }
+    
+    switched_at = now_iso()
+    new_record = dict(old_record)
+    new_record.update({
+        "pid": new_result.pid,
+        "port": new_result.port,
+        "url": new_result.url,
+        "previous_pid": old_pid,
+        "previous_port": old_port,
+        "switched_at": switched_at,
+        "health_status": new_result.health_status,
+    })
+    write_json(record_path, new_record)
+    
+    preview._kill_pid(old_pid)
+    
+    return {
+        "status": "switched",
+        "old_pid": old_pid,
+        "old_port": old_port,
+        "new_pid": new_result.pid,
+        "new_port": new_result.port,
+        "new_url": new_result.url,
+        "url": new_result.url,
+        "switched_at": switched_at,
+    }
+
+
+def _apply_edit(original: str, edit_kind: str, new_content: str, anchor: str) -> str:
+    if edit_kind == "create_file":
+        return new_content
+    if edit_kind == "append":
+        if original and not original.endswith("\n"):
+            return original + "\n" + new_content
+        return original + new_content
+    if edit_kind == "replace_block":
+        if not anchor:
+            raise ValueError("anchor is required for replace_block")
+        start_idx = original.find(anchor)
+        if start_idx == -1:
+            raise ValueError(f"anchor_not_found: {anchor}")
+        end_anchor = anchor.replace("START", "END")
+        end_idx = original.find(end_anchor, start_idx + len(anchor))
+        if end_idx == -1:
+            raise ValueError(f"end_anchor_not_found: {end_anchor}")
+        return (
+            original[: start_idx + len(anchor)]
+            + "\n" + new_content + "\n"
+            + original[end_idx:]
+        )
+    raise ValueError(f"unknown_edit_kind: {edit_kind}")
+
+
+def patch_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    import difflib
+    import re
+
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    target_path_raw = str(payload.get("target_path") or "").strip()
+    if not target_path_raw:
+        raise ValueError("target_path is required")
+    edit_kind = str(payload.get("edit_kind") or "").strip()
+    if edit_kind not in {"append", "replace_block", "create_file"}:
+        raise ValueError(f"unsupported edit_kind: {edit_kind}")
+    new_content = str(payload.get("new_content") or "")
+    summary = str(payload.get("summary") or "").strip()
+    anchor = str(payload.get("anchor") or "").strip()
+    action_id = str(payload.get("action_id") or "").strip()
+    dry_run = bool(payload.get("dry_run") or False)
+
+    runs_dir = Path(config.runs_dir).resolve()
+    repo_root = Path(config.repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    rel = Path(target_path_raw)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError("target_path_outside_generated_apps: path traversal not allowed")
+    if not rel.parts or rel.parts[0] != "generated_apps":
+        raise ValueError("target_path_outside_generated_apps: must start with generated_apps/")
+    if len(rel.parts) < 3:
+        raise ValueError("target_path_outside_generated_apps: must include slug + file")
+    app_slug = rel.parts[1]
+
+    published_app_dir = run_dir / "generated_apps" / app_slug
+    target_file = (run_dir / rel).resolve()
+    try:
+        target_file.relative_to(published_app_dir.resolve())
+    except ValueError as exc:
+        raise ValueError("target_path_outside_generated_apps: escapes published dir") from exc
+
+    if not published_app_dir.exists():
+        raise ValueError("app_not_published: published snapshot not found")
+    publish_record_path = published_app_dir / "app_publish.json"
+    if not publish_record_path.exists():
+        raise ValueError("app_not_published: app_publish.json missing")
+
+    if edit_kind == "create_file" and target_file.exists():
+        raise ValueError("file_already_exists: use replace_block or append")
+    original = target_file.read_text(encoding="utf-8") if target_file.exists() else ""
+
+    updated = _apply_edit(original, edit_kind, new_content, anchor)
+
+    diff_lines = list(difflib.unified_diff(
+        original.splitlines(keepends=True),
+        updated.splitlines(keepends=True),
+        fromfile=f"a/{target_path_raw}",
+        tofile=f"b/{target_path_raw}",
+    ))
+    diff_text = "".join(diff_lines)
+
+    if dry_run:
+        return _redact({
+            "status": "dry_run",
+            "run_id": run_id,
+            "app_slug": app_slug,
+            "target_path": target_path_raw,
+            "diff": diff_text,
+            "edit_kind": edit_kind,
+            "summary": summary,
+        })
+
+    patches_dir = run_dir / "app_patches"
+    patches_dir.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time())
+    safe_file = re.sub(r"[^a-zA-Z0-9._-]", "_", str(rel.relative_to(Path("generated_apps") / app_slug)))
+    diff_filename = f"{ts}__app__{safe_file}.diff"
+    diff_path = patches_dir / diff_filename
+    diff_path.write_text(diff_text, encoding="utf-8")
+
+    index_path = patches_dir / "index.json"
+    if index_path.exists():
+        index = _safe_read_json(index_path) or {"patches": []}
+        if not isinstance(index.get("patches"), list):
+            index = {"patches": []}
+    else:
+        index = {"patches": []}
+    applied_at = now_iso()
+    rel_file = str(rel.relative_to(Path("generated_apps") / app_slug))
+    index["patches"].append({
+        "ts": ts,
+        "node": "app",
+        "app_slug": app_slug,
+        "file": rel_file,
+        "diff_path": diff_filename,
+        "summary": summary,
+        "action_id": action_id,
+        "applied_at": applied_at,
+        "edit_kind": edit_kind,
+    })
+    write_json(index_path, index)
+
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(updated, encoding="utf-8")
+
+    restart_info = _restart_preview_two_stage(run_dir, runs_dir, repo_root, run_id)
+
+    return _redact({
+        "status": "applied",
+        "run_id": run_id,
+        "app_slug": app_slug,
+        "target_path": target_path_raw,
+        "diff_path": str(diff_path.relative_to(run_dir)),
+        "applied_at": applied_at,
+        "summary": summary,
+        "restart": restart_info,
+    })
+
+
+def stream_app_generation_run_events(
+    run_id: str,
+    *,
+    runs_dir: Path = Path("runs"),
+    repo_root: Path = Path("."),
+    poll_interval: float = 1.0,
+    max_iterations: int | None = None,
+    sleeper: Any = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield SSE-ready events tracking an app_generation run's progress.
+
+    Event shape (matches the right-dialog StreamEvent shape):
+      - ``snapshot``: full run + 6-node view (sent once at subscribe time)
+      - ``node_state``: emitted whenever a node's ``status`` changes
+      - ``run_finished``: emitted when record.status transitions to a terminal
+        state (completed | failed). Generator returns afterwards.
+
+    Computation is **derived** from ``team_run_record.json`` + ``process.json`` +
+    artifact presence on disk; no runtime mutation is required. Backed off via
+    ``sleeper`` to keep tests deterministic without sleeping in real time.
+    """
+    runs_dir = Path(runs_dir).resolve()
+    repo_root = Path(repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    sleep_fn = sleeper if sleeper is not None else lambda _seconds: None
+
+    snapshot = build_app_generation_nodes(run_id, runs_dir=runs_dir, repo_root=repo_root)
+    yield {"type": "snapshot", "payload": snapshot}
+    last_status_by_node: dict[str, str] = {
+        str(node.get("id")): str(node.get("status") or "")
+        for node in snapshot.get("nodes", [])
+        if isinstance(node, dict)
+    }
+    last_run_status = str(snapshot.get("run", {}).get("status") or "")
+    if last_run_status in {"completed", "failed"}:
+        yield {
+            "type": "run_finished",
+            "payload": {"run_id": run_id, "status": last_run_status},
+        }
+        return
+
+    iteration = 0
+    while True:
+        iteration += 1
+        if max_iterations is not None and iteration > max_iterations:
+            return
+        sleep_fn(poll_interval)
+        try:
+            current = build_app_generation_nodes(run_id, runs_dir=runs_dir, repo_root=repo_root)
+        except FileNotFoundError:
+            return
+
+        for node in current.get("nodes", []):
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id") or "")
+            status = str(node.get("status") or "")
+            if node_id and status and last_status_by_node.get(node_id) != status:
+                last_status_by_node[node_id] = status
+                yield {
+                    "type": "node_state",
+                    "payload": {
+                        "run_id": run_id,
+                        "node_id": node_id,
+                        "status": status,
+                        "outputs": node.get("outputs", []),
+                        "output_summary": node.get("output_summary", {}),
+                        "phases": node.get("phases", []),
+                        "risks": node.get("risks", []),
+                        "selected_variant": node.get("selected_variant"),
+                    },
+                }
+
+        run_status = str(current.get("run", {}).get("status") or "")
+        if run_status in {"completed", "failed"} and run_status != last_run_status:
+            last_run_status = run_status
+            yield {
+                "type": "run_finished",
+                "payload": {"run_id": run_id, "status": run_status},
+            }
+            return
+        last_run_status = run_status
+
+
+def start_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    """Create a fresh app_generation run from a PRD upload payload.
+
+    Required:
+      - prd_text (str): the PRD body, used verbatim as the run input.
+    Optional:
+      - prd_filename (str): used to derive a default app_slug when missing.
+      - app_slug (str): overrides default slug derivation; normalized + validated.
+      - executor (str): "codex" | "llm" | "rule" — per-run executor picker.
+      - comparison_group_id (str): groups multi-variant runs for the workbench.
+      - brief (str): overrides the auto-composed brief.
+    Returns the same shape as ``start_dashboard_run`` plus ``app_slug`` and
+    ``comparison_group_id`` so the workbench frontend can subscribe to the
+    correct SSE channel immediately.
+    """
+    from growth_dev.team.app_generation import validate_app_slug
+
+    prd_text = str(payload.get("prd_text") or "").strip()
+    if not prd_text:
+        raise ValueError("prd_text is required")
+
+    raw_slug = str(
+        payload.get("app_slug")
+        or _derive_app_slug_from_filename(str(payload.get("prd_filename") or ""))
+        or _derive_app_slug_from_prd(prd_text)
+        or "generated-app"
+    )
+    app_slug = validate_app_slug(_normalize_app_slug(raw_slug))
+
+    executor = str(payload.get("executor") or config.executor or "codex").strip() or "codex"
+    if executor not in {"codex", "llm", "rule"}:
+        raise ValueError(f"Unsupported executor: {executor}")
+
+    comparison_group_id = str(payload.get("comparison_group_id") or f"cmp-{app_slug}")
+    brief = str(payload.get("brief") or f"根据 PRD 生成本地应用：{app_slug}").strip()
+    new_run_id = str(payload.get("run_id") or f"{APP_GENERATION_DOMAIN_ID}-{timestamp_slug()}")
+
+    run_payload = {
+        "run_id": new_run_id,
+        "brief": brief,
+        "domain": APP_GENERATION_DOMAIN_ID,
+        "executor": executor,
+        "model": str(payload.get("model") or config.model),
+        "codex_provider": str(payload.get("codex_provider") or config.codex_provider),
+        "inputs_json": {
+            "app_slug": app_slug,
+            "prd_text": prd_text,
+            "comparison_group_id": comparison_group_id,
+            "prd_filename": str(payload.get("prd_filename") or ""),
+        },
+    }
+    result = start_dashboard_run(config, run_payload)
+    return _redact(
+        {
+            **result,
+            "app_slug": app_slug,
+            "comparison_group_id": comparison_group_id,
+            "executor": executor,
+        }
+    )
+
+
+def _derive_app_slug_from_filename(filename: str) -> str:
+    name = filename.strip()
+    if not name:
+        return ""
+    stem = Path(name).stem
+    return _normalize_app_slug(stem)
+
+
+def _derive_app_slug_from_prd(prd_text: str) -> str:
+    for line in prd_text.splitlines():
+        cleaned = line.strip().lstrip("# ").strip()
+        if cleaned:
+            return _normalize_app_slug(cleaned)
+    return ""
+
+
+def _normalize_app_slug(value: str) -> str:
+    text = value.strip().lower()
+    out: list[str] = []
+    last_dash = False
+    for ch in text:
+        if ch.isalnum() and ord(ch) < 128:
+            out.append(ch)
+            last_dash = False
+        elif ch in {" ", "_", "-", "/", "."}:
+            if not last_dash and out:
+                out.append("-")
+                last_dash = True
+    slug = "".join(out).strip("-")
+    return slug[:63] if slug else ""
 
 
 def start_dashboard_acceptance(run_id: str, *, runs_dir: Path = Path("runs"), repo_root: Path = Path(".")) -> dict[str, Any]:
@@ -471,6 +1705,12 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             try:
+                if path == "/api/app-generation/runs":
+                    self._send_json({"runs": list_app_generation_runs(config.runs_dir)})
+                    return
+                if path.startswith("/api/app-generation/runs/"):
+                    self._handle_app_generation_get(path, parsed.query)
+                    return
                 if path == "/api/runs":
                     self._send_json({"runs": list_dashboard_runs(config.runs_dir)})
                     return
@@ -488,12 +1728,14 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
             parsed = urlparse(self.path)
             parts = [part for part in parsed.path.split("/") if part]
-            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "acceptance":
+            if len(parts) == 3 and parts[:2] == ["api", "app-generation"] and parts[2] == "runs":
                 try:
-                    self._send_json(
-                        start_dashboard_acceptance(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
-                        status=HTTPStatus.ACCEPTED,
-                    )
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    self._send_json(start_app_generation_run(config, payload), status=HTTPStatus.ACCEPTED)
                 except FileNotFoundError as exc:
                     self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
                 except ValueError as exc:
@@ -501,7 +1743,135 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
                     self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
-            if len(parts) == 5 and parts[:2] == ["api", "runs"] and parts[3:] == ["release", "readiness"]:
+            if len(parts) == 3 and parts[:2] == ["api", "app-generation"] and parts[2] == "rerun":
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    self._send_json(start_app_generation_rerun(config, payload), status=HTTPStatus.ACCEPTED)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 4 and parts[:3] == ["api", "app-generation", "agent"] and parts[3] == "message":
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    self._send_json(handle_app_generation_agent_message(payload, runs_dir=config.runs_dir, repo_root=config.repo_root), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 4 and parts[:3] == ["api", "app-generation", "agent"] and parts[3] == "stream":
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    events = stream_app_generation_agent_message(
+                        payload, runs_dir=config.runs_dir, repo_root=config.repo_root
+                    )
+                    self._send_sse_stream(events)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:3] == ["api", "app-generation", "runs"] and parts[4] == "publish-app":
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    payload["run_id"] = parts[3]
+                    self._send_json(publish_app_generation_run(config, payload), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    error_msg = str(exc)
+                    if "multiple_apps_found" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
+                    else:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 6 and parts[:3] == ["api", "app-generation", "runs"] and parts[4:] == ["preview", "start"]:
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    payload["run_id"] = parts[3]
+                    self._send_json(start_app_generation_preview(config, payload), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    error_msg = str(exc)
+                    if "app_not_published" in error_msg or "missing_publish_record" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.PRECONDITION_FAILED)
+                    elif "multiple_apps_found" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
+                    else:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 6 and parts[:3] == ["api", "app-generation", "runs"] and parts[4:] == ["preview", "stop"]:
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    payload["run_id"] = parts[3]
+                    self._send_json(stop_app_generation_preview(config, payload), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:3] == ["api", "app-generation", "runs"] and parts[4] == "patch-app":
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    payload["run_id"] = parts[3]
+                    self._send_json(patch_app_generation_run(config, payload), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    error_msg = str(exc)
+                    if "app_not_published" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.PRECONDITION_FAILED)
+                    elif "target_path_outside_generated_apps" in error_msg or "anchor_not_found" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
+                    else:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "acceptance":
                 try:
                     self._send_json(
                         generate_release_readiness(parts[2], runs_dir=config.runs_dir, repo_root=config.repo_root),
@@ -617,6 +1987,76 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                 return
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
+        def _handle_app_generation_get(self, path: str, query: str) -> None:
+            parts = [part for part in path.split("/") if part]
+            if len(parts) < 4:
+                self._send_json({"error": "Run id is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            run_id = parts[3]
+            if len(parts) == 4:
+                self._send_json(build_app_generation_nodes(run_id, runs_dir=config.runs_dir, repo_root=config.repo_root))
+                return
+            if len(parts) == 6 and parts[4] == "artifacts" and parts[5] == "preview":
+                params = parse_qs(query)
+                artifact_path = (params.get("path") or [""])[0]
+                self._send_json(
+                    read_app_generation_artifact_preview(
+                        run_id,
+                        artifact_path,
+                        runs_dir=config.runs_dir,
+                        repo_root=config.repo_root,
+                    )
+                )
+                return
+            if len(parts) == 6 and parts[4] == "events" and parts[5] == "stream":
+                events = stream_app_generation_run_events(
+                    run_id,
+                    runs_dir=config.runs_dir,
+                    repo_root=config.repo_root,
+                )
+                self._send_sse_stream(events)
+                return
+            if len(parts) == 5 and parts[4] == "context":
+                params = parse_qs(query)
+                node_id = (params.get("node_id") or [""])[0]
+                selected_variant = (params.get("selected_variant") or ["codex"])[0]
+                if not node_id:
+                    self._send_json({"error": "node_id query parameter is required"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                self._send_json(
+                    build_app_generation_node_context(
+                        run_id,
+                        node_id,
+                        selected_variant=selected_variant,
+                        runs_dir=config.runs_dir,
+                        repo_root=config.repo_root,
+                    )
+                )
+                return
+            if len(parts) == 6 and parts[4:] == ["preview", "status"]:
+                try:
+                    self._send_json(get_app_generation_preview_status(config, run_id))
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 6 and parts[4:] == ["preview", "logs"]:
+                try:
+                    query_params = parse_qs(query)
+                    tail = int(query_params.get("tail", ["200"])[0])
+                    self._send_json(get_app_generation_preview_logs(config, run_id, tail=tail))
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+
         def _serve_static(self, path: str) -> None:
             relative = "index.html" if path in {"", "/"} else path.lstrip("/")
             target = _safe_child(config.dashboard_dir.resolve(), relative)
@@ -648,6 +2088,32 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _send_sse_stream(self, events: Iterable[dict[str, Any]]) -> None:
+            """Send a server-sent events stream.
+
+            Each item must be a dict with ``type`` and ``payload`` (the same
+            shape as ``agent_bridge.StreamEvent``). Items are serialized as
+            ``data: <json>\\n\\n``. Connection stays open until the iterator
+            terminates or the client disconnects.
+            """
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            try:
+                for event in events:
+                    payload = _redact(event)
+                    line = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    try:
+                        self.wfile.write(line.encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+            except Exception:  # noqa: BLE001
+                return
 
     return DashboardHandler
 
@@ -739,7 +2205,11 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("tool_context/codex.md", "Codex Tool Context", "run"),
         ("task.yaml", "Task Package", "run"),
         ("context.md", "Context", "run"),
+        ("input_prd.md", "Input PRD", "run"),
         ("requirements/brief_analysis.json", "Requirement Analysis", "run"),
+        ("requirements/normalized_prd.md", "Normalized PRD", "run"),
+        ("benchmark_context.md", "Benchmark Context", "run"),
+        ("benchmark_context.json", "Benchmark Context JSON", "run"),
         ("requirements/requirement_understanding.candidate.json", "Requirement Understanding Candidate", "run"),
         ("requirements/requirement_quality_report.json", "Requirement Quality Report", "run"),
         ("requirements/clarification.md", "Requirement Clarification", "run"),
@@ -759,6 +2229,7 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("planning/tdd_plan.md", "TDD Plan", "run"),
         ("planning/tdd_plan.json", "TDD Plan JSON", "run"),
         ("planning/planning_quality_report.json", "Planning Quality Report", "run"),
+        ("app_contract.json", "App Contract", "run"),
         ("prd.md", "PRD", "run"),
         ("tech_spec.md", "Tech Spec", "run"),
         ("architecture_diagram.md", "Architecture Diagram", "run"),
@@ -773,8 +2244,11 @@ def _build_artifact_view(run_dir: Path, repo_root: Path, record: dict[str, Any])
         ("implementation_completion_gate.md", "Implementation Completion Gate", "run"),
         ("implementation_completion_gate.json", "Implementation Completion Gate JSON", "run"),
         ("codex/diff.patch", "Diff Evidence", "run"),
+        ("benchmark_diff.md", "Benchmark Diff", "run"),
+        ("agqs_score.json", "AGQS Score", "run"),
         ("review_report.md", "Review Report", "run"),
         ("test_report.md", "Test Report", "run"),
+        ("preview_instructions.md", "Preview Instructions", "run"),
         ("final_report.md", "Final Report", "run"),
         ("memory_recall.md", "Historical Task Recall", "run"),
         ("memory_recall.json", "Memory Recall JSON", "run"),
@@ -1013,6 +2487,965 @@ def _read_production_readiness(run_dir: Path) -> dict[str, Any]:
         return {}
     payload = _safe_read_json(path)
     return _redact(payload) if isinstance(payload, dict) else {}
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if item is not None]
+    if isinstance(value, dict):
+        return [str(item) for item in value.values() if item is not None]
+    return [str(value)]
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        text = str(item)
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _relative_to(path: Path, base: Path) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(Path(base).resolve())).replace("\\", "/")
+    except (ValueError, OSError):
+        return str(path)
+
+
+_ARTIFACT_TITLES: dict[str, str] = {
+    "input_prd.md": "原始 PRD",
+    "requirements/normalized_prd.md": "标准化 PRD",
+    "benchmark_context.md": "Benchmark 上下文",
+    "benchmark_context.json": "Benchmark 上下文 JSON",
+    "context_pack.md": "上下文打包",
+    "app_contract.json": "应用契约",
+    "acceptance_criteria.md": "验收标准",
+    "planning/acceptance_coverage_matrix.json": "验收覆盖矩阵",
+    "planning/tdd_plan.json": "TDD 计划",
+    "codex/implementation_trace.json": "实现追踪",
+    "codex/diff.patch": "实现 Diff",
+    "benchmark_diff.md": "Benchmark 能力差距",
+    "agqs_score.json": "AGQS 评分",
+    "codex/verification_record.json": "验证记录",
+    "review_report.md": "评审报告",
+    "test_report.md": "测试报告",
+    "preview_instructions.md": "预览说明",
+    "final_report.md": "最终报告",
+    "AGENTS.md": "AGENTS 守则",
+    "DESIGN.md": "设计约定",
+}
+
+
+def _artifact_title(path: str) -> str:
+    text = str(path)
+    if text in _ARTIFACT_TITLES:
+        return _ARTIFACT_TITLES[text]
+    return Path(text).name or text
+
+
+def _artifact_summary(path: Path) -> str:
+    try:
+        if not path.exists() or not path.is_file():
+            return "未生成"
+        size = path.stat().st_size
+        if size == 0:
+            return "空文件"
+        if path.suffix.lower() == ".json":
+            payload = _safe_read_json(path)
+            if isinstance(payload, dict):
+                keys = ", ".join(list(payload.keys())[:6])
+                return f"JSON · {len(payload)} keys · {keys}"
+            if isinstance(payload, list):
+                return f"JSON · {len(payload)} items"
+            return "JSON 产物"
+        if path.suffix.lower() in {".md", ".txt", ".yaml", ".yml"}:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+            return (first_line[:120] + "…") if len(first_line) > 120 else (first_line or f"{size} bytes")
+        return f"{size} bytes"
+    except OSError:
+        return "无法读取"
+
+
+_SKILL_STAGES: dict[str, str] = {
+    "using_agent_skills": "route",
+    "spec_driven_development": "spec",
+    "context_engineering": "context",
+    "planning_and_task_breakdown": "plan",
+    "incremental_implementation": "implement",
+    "test_driven_development": "verify",
+    "code_review_and_quality": "review",
+    "ai_coding_quality_review": "review",
+    "debugging_and_error_recovery": "recover",
+}
+
+
+_SKILL_REASONS: dict[str, str] = {
+    "using_agent_skills": "为本次生成链路选择合适的 skill 组合。",
+    "spec_driven_development": "把 PRD 拆成可验证的目标、范围、假设和验收口径。",
+    "context_engineering": "压缩上下文，避免把长文直接喂给 LLM。",
+    "planning_and_task_breakdown": "把验收标准拆成可执行 slices 和 TDD plan。",
+    "incremental_implementation": "按 slice 受控生成代码，保持隔离 worktree。",
+    "test_driven_development": "验证生成应用满足验收标准。",
+    "code_review_and_quality": "评审 diff、产物质量与发布就绪。",
+    "ai_coding_quality_review": "审视 AI 生成代码的架构、契约和安全漂移。",
+    "debugging_and_error_recovery": "verification 失败时定位根因并恢复。",
+}
+
+
+def _skill_stage(skill_id: str) -> str:
+    return _SKILL_STAGES.get(skill_id, "stage")
+
+
+def _skill_reason(skill_id: str) -> str:
+    return _SKILL_REASONS.get(skill_id, f"Apply {skill_id} for this node.")
+
+
+def _coverage_score(run_dir: Path) -> float:
+    matrix = _safe_read_json(run_dir / "planning" / "acceptance_coverage_matrix.json")
+    if not isinstance(matrix, dict):
+        return 0.6 if (run_dir / "acceptance_criteria.md").exists() else 0.4
+    rows = matrix.get("rows") if isinstance(matrix.get("rows"), list) else matrix.get("coverage")
+    if not isinstance(rows, list) or not rows:
+        return 0.7
+    covered = sum(1 for row in rows if isinstance(row, dict) and row.get("status") in {"covered", "passed", "ok"})
+    return max(0.5, min(1.0, covered / len(rows))) if rows else 0.7
+
+
+def _engineering_score(run_dir: Path, outputs: list[dict[str, Any]], risks: list[dict[str, Any]]) -> float:
+    contract_ok = (run_dir / "app_contract.json").exists()
+    trace_ok = (run_dir / "codex" / "implementation_trace.json").exists()
+    plan_ok = (run_dir / "planning" / "tdd_plan.json").exists()
+    output_ready = sum(1 for item in outputs if isinstance(item, dict) and item.get("exists")) / max(1, len(outputs))
+    base = 0.5 + 0.15 * contract_ok + 0.15 * trace_ok + 0.1 * plan_ok + 0.1 * output_ready
+    base -= 0.05 * min(3, len(risks))
+    return max(0.4, min(1.0, base))
+
+
+def _scope_boundary_score(run_dir: Path) -> float:
+    contract = _safe_read_json(run_dir / "app_contract.json")
+    if not isinstance(contract, dict):
+        return 0.55
+    fixed = sum(1 for key in ("frontend", "backend", "storage", "database") if str(contract.get(key, "")))
+    return max(0.5, min(1.0, 0.55 + 0.1 * fixed))
+
+
+def _file_hash(path: Path) -> str:
+    try:
+        if not path.exists() or not path.is_file():
+            return ""
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+        return "sha256:" + digest.hexdigest()
+    except OSError:
+        return ""
+
+
+def _slug_from_contract(contract: dict[str, Any]) -> str:
+    if not isinstance(contract, dict):
+        return ""
+    slug = str(contract.get("app_slug") or "").strip()
+    if slug:
+        return slug
+    name = str(contract.get("app_name") or "").strip().lower()
+    if not name:
+        return ""
+    cleaned: list[str] = []
+    for ch in name:
+        if ch.isalnum():
+            cleaned.append(ch)
+        elif ch in {" ", "_", "-"}:
+            cleaned.append("-")
+    slug = "".join(cleaned).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug
+
+
+def _app_generation_provider_statuses(*, repo_root: Path = Path(".")) -> list[dict[str, Any]]:
+    from growth_dev.team.agent_bridge import provider_status
+
+    return [
+        provider_status("codex", repo_root=repo_root),
+        provider_status("pi_agent", repo_root=repo_root),
+        provider_status("llm", repo_root=repo_root),
+    ]
+
+
+def _variant_usage(node: dict[str, Any], selected_variant: str) -> dict[str, Any]:
+    variants = node.get("variants") if isinstance(node, dict) else []
+    if isinstance(variants, list):
+        for variant in variants:
+            if isinstance(variant, dict) and str(variant.get("variant_id", "")) == selected_variant:
+                usage = variant.get("usage")
+                if isinstance(usage, dict):
+                    return dict(usage)
+    node_usage = node.get("usage") if isinstance(node, dict) else None
+    if isinstance(node_usage, dict):
+        return dict(node_usage)
+    return {
+        "prompt_tokens": "unknown",
+        "completion_tokens": "unknown",
+        "total_tokens": "unknown",
+        "estimated_cost": "unknown",
+        "usage_source": "none",
+    }
+
+
+def _node_available_actions(node_id: str) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = [
+        {"type": "explain_node", "target_node_id": node_id, "label": "解释当前节点"},
+        {"type": "compare_variants", "target_node_id": node_id, "variants": ["rule", "codex"], "label": "对比 rule 与 codex"},
+        {"type": "suggest_input_patch", "target_node_id": node_id, "label": "建议调整节点输入"},
+        {"type": "rerun_from_node", "target_node_id": node_id, "label": "从此节点重跑"},
+    ]
+    if node_id != "implementation":
+        actions.insert(3, {"type": "select_variant", "target_node_id": node_id, "label": "选择下游使用的 variant"})
+    return actions
+
+
+def _revision_artifacts(items: list[Any]) -> list[dict[str, Any]]:
+    revisions: list[dict[str, Any]] = []
+    if not isinstance(items, list):
+        return revisions
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        revisions.append(
+            {
+                "path": str(item.get("path", "")),
+                "status": str(item.get("status", "")),
+                "content_hash": str(item.get("content_hash", "")),
+                "title": str(item.get("title", "")),
+                "summary": str(item.get("summary", "")),
+                "preview": dict(item.get("preview") or {}),
+            }
+        )
+    return revisions
+
+
+def _agent_actions_for_mode(mode: str, context: dict[str, Any], message: str) -> list[dict[str, Any]]:
+    node_id = str(context.get("node_id", "")) if isinstance(context, dict) else ""
+    source_run_id = str(context.get("run_id", "")) if isinstance(context, dict) else ""
+    comparison_group_id = str(context.get("comparison_group_id", "")) if isinstance(context, dict) else ""
+    selected_variant = str(context.get("selected_variant", "codex")) if isinstance(context, dict) else "codex"
+    if mode == "compare":
+        return [
+            {
+                "type": "compare_variants",
+                "target_node_id": node_id,
+                "variants": ["rule", "codex"],
+                "summary": "对比 rule 与 codex 在此节点的输出和 usage。",
+            }
+        ]
+    if mode == "edit":
+        return [
+            {
+                "type": "suggest_input_patch",
+                "target_node_id": node_id,
+                "patch_summary": message[:80] or "建议调整节点输入。",
+                "override_instructions": message,
+            }
+        ]
+    if mode == "rerun":
+        return [
+            {
+                "type": "rerun_from_node",
+                "source_run_id": source_run_id,
+                "rerun_from_node": node_id,
+                "selected_variant": selected_variant,
+                "override_instructions": message,
+                "comparison_group_id": comparison_group_id,
+            }
+        ]
+    if mode == "clarify":
+        return [
+            {
+                "type": "ask_clarification",
+                "target_node_id": node_id,
+                "question": message or "需要补充哪些上下文？",
+            }
+        ]
+    return [
+        {
+            "type": "explain_node",
+            "target_node_id": node_id,
+            "summary": f"节点 {node_id} 的输入、过程、输出与风险摘要。",
+        }
+    ]
+
+
+def _agent_response_message(mode: str, context: dict[str, Any], message: str) -> str:
+    node_id = str(context.get("node_id", "")) if isinstance(context, dict) else ""
+    selected_variant = str(context.get("selected_variant", "codex")) if isinstance(context, dict) else "codex"
+    app_slug = str(context.get("app_slug", "")) if isinstance(context, dict) else ""
+    inputs = context.get("inputs", []) if isinstance(context, dict) else []
+    outputs = context.get("outputs", []) if isinstance(context, dict) else []
+    ready_outputs = [item for item in outputs if isinstance(item, dict) and item.get("status") == "ready"]
+    risk_count = len(context.get("risks", [])) if isinstance(context, dict) else 0
+    head = f"应用 {app_slug} · 节点 {node_id} · variant={selected_variant}"
+    if mode == "compare":
+        return f"{head}\n对比说明：rule 提供确定性 baseline；codex 提供更细致的实现细节。当前节点有 {len(ready_outputs)} 份产物已就绪。"
+    if mode == "edit":
+        return f"{head}\n收到调整诉求：{message[:120]}。已生成 suggest_input_patch 待你确认后写入新 run inputs。"
+    if mode == "rerun":
+        return f"{head}\n已准备从该节点创建新 run 的说明，不会修改旧 run。"
+    if mode == "clarify":
+        return f"{head}\n需要澄清：{message[:120]}"
+    return f"{head}\n该节点有 {len(inputs)} 项输入、{len(ready_outputs)} 项就绪输出、{risk_count} 项风险记录。"
+
+
+def _node_phases(
+    node_id: str,
+    process_state: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+    output_refs: list[dict[str, Any]],
+    run_dir: Path,
+) -> list[dict[str, Any]]:
+    """Derive phase-level timeline for a node.
+
+    For ``implementation`` nodes: parse ``implementation_trace.json`` steps.
+    For other nodes: use ``APP_GENERATION_NODE_PHASE_TEMPLATES`` + artifact existence.
+    """
+
+    if node_id == "implementation":
+        return _implementation_phases(run_dir, tool_calls, output_refs)
+    template = APP_GENERATION_NODE_PHASE_TEMPLATES.get(node_id)
+    if not template:
+        return _fallback_phase(node_id, process_state, output_refs)
+    phases: list[dict[str, Any]] = []
+    output_map = {str(ref.get("path")): ref for ref in output_refs if isinstance(ref, dict)}
+    for spec in template:
+        phase_id = str(spec.get("id", ""))
+        label = str(spec.get("label", phase_id))
+        artifact_paths = [str(p) for p in spec.get("artifacts", [])]
+        matched_artifacts = [p for p in artifact_paths if output_map.get(p, {}).get("exists")]
+        all_exist = all(output_map.get(p, {}).get("exists") for p in artifact_paths)
+        any_exist = any(output_map.get(p, {}).get("exists") for p in artifact_paths)
+        status = "completed" if all_exist else ("running" if any_exist else "pending")
+        phases.append({
+            "id": phase_id,
+            "label": label,
+            "status": status,
+            "started_at": "",
+            "finished_at": "",
+            "summary": f"{len(matched_artifacts)}/{len(artifact_paths)} 产物就绪" if artifact_paths else label,
+            "artifacts": matched_artifacts,
+        })
+    return phases
+
+
+def _implementation_phases(run_dir: Path, tool_calls: list[dict[str, Any]], output_refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Parse ``implementation_trace.json`` steps as phases for the ``implementation`` node."""
+
+    trace = _read_implementation_trace(run_dir)
+    if not isinstance(trace, dict) or not trace.get("steps"):
+        return _fallback_phase("implementation", {}, output_refs)
+    phases: list[dict[str, Any]] = []
+    for step in trace.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        phases.append({
+            "id": str(step.get("id", "")),
+            "label": str(step.get("title", "")),
+            "status": str(step.get("status", "pending")),
+            "started_at": str(step.get("started_at", "")),
+            "finished_at": str(step.get("finished_at", "")),
+            "summary": str(step.get("summary", "")),
+            "artifacts": [str(p) for p in step.get("artifacts", []) if p],
+        })
+    fix_slice_path = run_dir / "codex" / "fix_slice_record.json"
+    if fix_slice_path.exists():
+        fix_record = _safe_read_json(fix_slice_path)
+        status = "completed" if fix_record.get("status") == "completed" else "failed"
+        phases.append({
+            "id": "fix_slice",
+            "label": "Benchmark Fix Slice",
+            "status": status,
+            "started_at": str(fix_record.get("started_at", "")),
+            "finished_at": str(fix_record.get("finished_at", "")),
+            "summary": f"{len(fix_record.get('remediated_capabilities', []))} 能力修复" if status == "completed" else "修复失败",
+            "artifacts": ["codex/fix_slice_prompt.md", "codex/fix_slice_record.json"],
+        })
+    return phases
+
+
+def _fallback_phase(node_id: str, process_state: dict[str, Any], output_refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Single-phase fallback when no template is available."""
+
+    any_output = any(ref.get("exists") for ref in output_refs if isinstance(ref, dict))
+    status = "completed" if any_output else ("running" if process_state.get("status") == "running" else "pending")
+    return [{
+        "id": "execute",
+        "label": "执行节点",
+        "status": status,
+        "started_at": "",
+        "finished_at": "",
+        "summary": f"{sum(1 for ref in output_refs if ref.get('exists'))}/{len(output_refs)} 产物就绪" if output_refs else "执行中",
+        "artifacts": [str(ref.get("path")) for ref in output_refs if ref.get("exists")],
+    }]
+
+
+def _build_app_generation_node(
+    definition: dict[str, Any],
+    run_dir: Path,
+    repo_root: Path,
+    record: dict[str, Any],
+    process: dict[str, Any],
+    comparison_group_id: str,
+) -> dict[str, Any]:
+    node_id = str(definition["id"])
+    input_refs = [_app_artifact_ref(path, run_dir, repo_root) for path in definition.get("inputs", [])]
+    output_refs = [_app_artifact_ref(path, run_dir, repo_root) for path in _node_output_paths(definition, run_dir)]
+    process_state = _node_process(definition, run_dir, record, process)
+    risks = _node_risks(node_id, record, process_state, output_refs, run_dir)
+    _annotate_validation_status(input_refs, risks)
+    _annotate_validation_status(output_refs, risks)
+    usage = _node_usage(node_id, run_dir, record)
+    scores = _node_scores(node_id, run_dir, output_refs, risks)
+    tool_calls = _node_tool_calls(node_id, run_dir, record)
+    status = _node_status(input_refs, output_refs, process_state, risks, record)
+    selected_variant = "codex" if node_id == "implementation" or str(record.get("executor", "")) == "codex" else "rule"
+    variants = _node_variants(node_id, output_refs, usage, scores, risks, selected_variant)
+    phases = _node_phases(node_id, process_state, tool_calls, output_refs, run_dir)
+    return {
+        "id": node_id,
+        "title": str(definition.get("title", node_id)),
+        "summary": str(definition.get("summary", "")),
+        "status": status,
+        "selected_variant": selected_variant,
+        "inputs": input_refs,
+        "process": process_state,
+        "outputs": output_refs,
+        "output_summary": _output_summary(output_refs),
+        "phases": phases,
+        "skills": _node_skills(definition),
+        "tool_calls": tool_calls,
+        "usage": usage,
+        "scores": scores,
+        "risks": risks,
+        "variants": variants,
+        "comparison": _node_comparison(node_id, variants, selected_variant),
+        "comparison_group_id": comparison_group_id,
+    }
+
+
+def _node_output_paths(definition: dict[str, Any], run_dir: Path) -> list[str]:
+    outputs = [str(item) for item in definition.get("outputs", [])]
+    node_id = str(definition.get("id", ""))
+    if node_id == "context_contract":
+        for path in ("benchmark_context.md", "benchmark_context.json"):
+            if (run_dir / path).exists():
+                outputs.append(path)
+    if node_id == "planning_tdd":
+        slices_dir = run_dir / "slices"
+        if slices_dir.exists():
+            outputs.extend(_relative_to(path, run_dir) for path in sorted(slices_dir.glob("*.yaml")))
+    if node_id == "implementation":
+        for path in ("benchmark_diff.md", "agqs_score.json"):
+            if (run_dir / path).exists():
+                outputs.append(path)
+        contract = _safe_read_json(run_dir / "app_contract.json")
+        generated_dir = str(contract.get("generated_app_dir", ""))
+        worktree_dir = run_dir / "worktree" / generated_dir
+        for relative in _string_list(contract.get("required_files", [])):
+            outputs.append(f"worktree/{generated_dir}/{relative}" if generated_dir else f"worktree/{relative}")
+        if worktree_dir.exists():
+            for path in sorted(worktree_dir.rglob("*")):
+                if path.is_file():
+                    outputs.append(_relative_to(path, run_dir))
+    return _dedupe_strings(outputs)
+
+
+def _app_artifact_ref(path: str, run_dir: Path, repo_root: Path) -> dict[str, Any]:
+    scope = "repo" if path in {"AGENTS.md", "DESIGN.md"} else "run"
+    target = repo_root / path if scope == "repo" else run_dir / path
+    exists = target.exists() and target.is_file()
+    size = target.stat().st_size if exists else 0
+    content_hash = _file_hash(target) if exists else ""
+    summary = _artifact_summary(target) if exists else "未生成"
+    read_url = ""
+    if exists and scope == "run":
+        read_url = f"/api/runs/{quote(run_dir.name)}/artifact?path={quote(path)}"
+    preview = _app_artifact_preview_ref(path, target, run_dir.name, exists, scope, size)
+    return {
+        "path": path,
+        "scope": scope,
+        "title": _artifact_title(path),
+        "status": "ready" if exists else "missing",
+        "validation_status": "success" if exists else "pending",
+        "summary": summary,
+        "content_hash": content_hash,
+        "read_url": read_url,
+        "preview": preview,
+        "exists": exists,
+        "size_bytes": size,
+    }
+
+
+def _annotate_validation_status(refs: list[dict[str, Any]], risks: list[dict[str, Any]]) -> None:
+    """Mutate ``refs`` so each artifact carries an evidence-driven ``validation_status``.
+
+    Rules:
+      - missing artifact (``exists=False``) stays ``pending``.
+      - existing artifact referenced by a ``blocked`` risk becomes ``error``.
+      - existing artifact referenced by a ``warning`` risk becomes ``warning``
+        (but not downgraded from ``error``).
+      - otherwise existing artifact is ``success``.
+    Risks attach to artifacts via ``risk.artifact_refs`` (list of paths).
+    """
+
+    blocked_paths: set[str] = set()
+    warning_paths: set[str] = set()
+    for risk in risks:
+        if not isinstance(risk, dict):
+            continue
+        severity = str(risk.get("severity", "")).strip()
+        refs_list = risk.get("artifact_refs", [])
+        if not isinstance(refs_list, list):
+            continue
+        for entry in refs_list:
+            ref_path = str(entry).strip()
+            if not ref_path:
+                continue
+            if severity == "blocked":
+                blocked_paths.add(ref_path)
+            elif severity == "warning":
+                warning_paths.add(ref_path)
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        if not ref.get("exists"):
+            ref["validation_status"] = "pending"
+            continue
+        path = str(ref.get("path", ""))
+        if path in blocked_paths:
+            ref["validation_status"] = "error"
+        elif path in warning_paths:
+            ref["validation_status"] = "warning"
+        else:
+            ref["validation_status"] = "success"
+
+
+def _output_summary(refs: list[dict[str, Any]]) -> dict[str, int]:
+    """Aggregate validation outcomes across ``refs`` for compact node badges."""
+
+    summary = {"total": 0, "ready": 0, "success": 0, "warning": 0, "error": 0, "pending": 0}
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        summary["total"] += 1
+        if ref.get("exists"):
+            summary["ready"] += 1
+        status = str(ref.get("validation_status", "pending"))
+        if status in summary:
+            summary[status] += 1
+    return summary
+
+
+def _app_artifact_preview_ref(path: str, target: Path, run_id: str, exists: bool, scope: str, size: int) -> dict[str, Any]:
+    if not exists or scope != "run" or not path.startswith("artifacts/"):
+        return {"enabled": False, "kind": "missing", "mime_type": "", "size_bytes": size, "read_url": ""}
+    mime_type = _preview_mime_type(target)
+    return {
+        "enabled": True,
+        "kind": _preview_kind(target, mime_type),
+        "mime_type": mime_type,
+        "size_bytes": size,
+        "read_url": f"/api/app-generation/runs/{quote(run_id)}/artifacts/preview?path={quote(path)}",
+    }
+
+
+def _preview_mime_type(path: Path) -> str:
+    guessed, _encoding = mimetypes.guess_type(str(path))
+    if guessed:
+        return guessed
+    suffix = path.suffix.lower()
+    if suffix in {".md", ".markdown"}:
+        return "text/markdown"
+    if suffix in {".json"}:
+        return "application/json"
+    if suffix in {".yaml", ".yml"}:
+        return "application/yaml"
+    if suffix in {".js", ".mjs"}:
+        return "text/javascript"
+    return "application/octet-stream"
+
+
+def _preview_kind(path: Path, mime_type: str) -> str:
+    suffix = path.suffix.lower()
+    if mime_type.startswith("image/"):
+        return "image"
+    if mime_type == "application/pdf" or suffix == ".pdf":
+        return "pdf"
+    if suffix in {".js", ".mjs", ".ts", ".tsx", ".jsx", ".css", ".html", ".json", ".yaml", ".yml", ".py", ".sh"}:
+        return "code"
+    if mime_type.startswith("text/") or suffix in {".md", ".markdown", ".txt", ".log"}:
+        return "text"
+    return "binary"
+
+
+def _node_process(definition: dict[str, Any], run_dir: Path, record: dict[str, Any], process: dict[str, Any]) -> dict[str, Any]:
+    agent_ids = [str(item) for item in definition.get("agents", [])]
+    agent_runs = [item for item in record.get("agent_runs", []) if isinstance(item, dict) and str(item.get("agent_id", "")) in agent_ids]
+    events = [
+        event
+        for event in _read_events(run_dir)
+        if str(event.get("agent_id", "")) in agent_ids or _event_matches_node(str(definition.get("id", "")), event)
+    ][-8:]
+    logs = _latest_log_lines(run_dir, max_lines=6)
+    statuses = [str(item.get("status", "")) for item in agent_runs if item.get("status")]
+    if any(status in {"failed", "blocked"} for status in statuses):
+        status = "blocked"
+    elif any(status == "running" for status in statuses) or (str(process.get("status", "")) in {"running", "starting"} and str(definition.get("id")) == "implementation"):
+        status = "running"
+    elif statuses and all(status == "completed" for status in statuses):
+        status = "completed"
+    else:
+        status = "not_started"
+    return {
+        "status": status,
+        "agent_ids": agent_ids,
+        "agent_runs": [_redact(item) for item in agent_runs],
+        "events": events,
+        "logs": logs,
+        "summary": _node_process_summary(str(definition.get("id", "")), status),
+    }
+
+
+def _event_matches_node(node_id: str, event: dict[str, Any]) -> bool:
+    event_name = str(event.get("event", ""))
+    return (
+        node_id in {"skill_routing", "prd_input", "prd_normalization", "context_contract", "planning_tdd"}
+        and event_name in {"complex_task_artifacts_generated", "memory_recall_generated"}
+    ) or (node_id == "preview_delivery" and event_name == "run_completed")
+
+
+def _node_process_summary(node_id: str, status: str) -> str:
+    labels = {
+        "completed": "节点已有可审计产物。",
+        "running": "节点正在执行或等待后台进程结束。",
+        "blocked": "节点存在阻塞或风险事件。",
+        "not_started": "尚未观察到该节点执行证据。",
+    }
+    return f"{node_id}: {labels.get(status, '状态未知。')}"
+
+
+def _node_skills(definition: dict[str, Any]) -> list[dict[str, Any]]:
+    primary = str(definition.get("primary_skill", ""))
+    companions = [str(item) for item in definition.get("companion_skills", [])]
+    result: list[dict[str, Any]] = []
+    if primary:
+        result.append(
+            {
+                "id": primary,
+                "stage": _skill_stage(primary),
+                "priority": "P0",
+                "role": "primary",
+                "why": _skill_reason(primary),
+                "inputs": [str(item) for item in definition.get("inputs", [])],
+                "outputs": [str(item) for item in definition.get("outputs", [])],
+                "status": "used",
+            }
+        )
+    for skill in companions:
+        result.append(
+            {
+                "id": skill,
+                "stage": _skill_stage(skill),
+                "priority": "P0",
+                "role": "companion",
+                "why": _skill_reason(skill),
+                "inputs": [str(item) for item in definition.get("inputs", [])],
+                "outputs": [str(item) for item in definition.get("outputs", [])],
+                "status": "recommended",
+            }
+        )
+    return result
+
+
+def _node_tool_calls(node_id: str, run_dir: Path, record: dict[str, Any]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    trace = _read_implementation_trace(run_dir)
+    if node_id == "implementation" and trace:
+        for step in trace.get("steps", []) if isinstance(trace.get("steps"), list) else []:
+            if not isinstance(step, dict):
+                continue
+            step_id = str(step.get("id", ""))
+            if step_id == "codex_running":
+                calls.append(
+                    {
+                        "tool_call_id": "codex_exec_001",
+                        "tool_name": "codex exec",
+                        "provider": "codex",
+                        "node_id": node_id,
+                        "status": str(step.get("status", trace.get("status", "unknown"))),
+                        "started_at": str(step.get("started_at", "")),
+                        "finished_at": str(step.get("finished_at", "")),
+                        "input_summary": "使用 prompt bundle 生成本地应用。",
+                        "output_summary": str(step.get("summary", "生成 diff 和 implementation trace。")),
+                        "artifact_refs": ["codex/implementation_trace.json", "codex/diff.patch"],
+                        "risk_events": _string_list(trace.get("risk_events", [])),
+                    }
+                )
+    if node_id == "verification":
+        verification = _safe_read_json(run_dir / "codex" / "verification_record.json")
+        for index, command in enumerate(verification.get("commands", []) if isinstance(verification.get("commands"), list) else [], start=1):
+            if not isinstance(command, dict):
+                continue
+            calls.append(
+                {
+                    "tool_call_id": f"verification_command_{index:03d}",
+                    "tool_name": "verification command",
+                    "provider": "local",
+                    "node_id": node_id,
+                    "status": "completed" if command.get("exit_code") == 0 else "failed",
+                    "started_at": str(command.get("started_at", "")),
+                    "finished_at": str(command.get("finished_at", "")),
+                    "input_summary": str(command.get("command", "")),
+                    "output_summary": f"exit_code={command.get('exit_code')}",
+                    "artifact_refs": ["codex/verification_record.json", "test_report.md"],
+                    "risk_events": _string_list(verification.get("risk_events", [])),
+                }
+            )
+    if not calls:
+        events = _read_events(run_dir)
+        for index, event in enumerate(events[-4:], start=1):
+            if _event_matches_node(node_id, event):
+                calls.append(
+                    {
+                        "tool_call_id": f"run_event_{index:03d}",
+                        "tool_name": str(event.get("event", "run event")),
+                        "provider": "team_runtime",
+                        "node_id": node_id,
+                        "status": str(event.get("status", "observed")),
+                        "started_at": str(event.get("created_at", "")),
+                        "finished_at": str(event.get("created_at", "")),
+                        "input_summary": "",
+                        "output_summary": str(event.get("summary", event.get("event", ""))),
+                        "artifact_refs": [],
+                        "risk_events": [],
+                    }
+                )
+    return calls
+
+
+def _node_usage(node_id: str, run_dir: Path, record: dict[str, Any]) -> dict[str, Any]:
+    if node_id in {"skill_routing", "prd_input", "prd_normalization", "context_contract", "planning_tdd", "review_quality", "verification", "preview_delivery"}:
+        base = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "estimated_cost": "unknown", "usage_source": "rule", "confidence": "baseline"}
+    else:
+        base = {"prompt_tokens": "unknown", "completion_tokens": "unknown", "total_tokens": "unknown", "estimated_cost": "unknown", "usage_source": "none", "confidence": "missing"}
+    observed = _parse_observed_usage(run_dir)
+    if node_id == "implementation" and observed:
+        return observed
+    return base
+
+
+def _parse_observed_usage(run_dir: Path) -> dict[str, Any]:
+    stdout_path = run_dir / "codex" / "stdout.jsonl"
+    if stdout_path.exists():
+        for line in stdout_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else payload.get("token_usage")
+            if isinstance(usage, dict):
+                normalized = _normalize_usage(usage)
+                normalized["usage_source"] = "codex/stdout.jsonl"
+                normalized["confidence"] = "observed"
+                return normalized
+    for path in (run_dir / "codex" / "last_message.json", run_dir / "code_run_record.json", run_dir / "codex" / "implementation_trace.json"):
+        payload = _safe_read_json(path)
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        if usage:
+            normalized = _normalize_usage(usage)
+            normalized["usage_source"] = _relative_to(path, run_dir)
+            normalized["confidence"] = "observed"
+            return normalized
+    return {}
+
+
+def _normalize_usage(usage: dict[str, Any]) -> dict[str, Any]:
+    prompt = usage.get("prompt_tokens", usage.get("input_tokens", "unknown"))
+    completion = usage.get("completion_tokens", usage.get("output_tokens", "unknown"))
+    total = usage.get("total_tokens", "unknown")
+    if total == "unknown" and isinstance(prompt, int | float) and isinstance(completion, int | float):
+        total = int(prompt) + int(completion)
+    return {
+        "prompt_tokens": prompt if prompt != "" else "unknown",
+        "completion_tokens": completion if completion != "" else "unknown",
+        "total_tokens": total if total != "" else "unknown",
+        "elapsed_ms": usage.get("elapsed_ms", "unknown"),
+        "estimated_cost": usage.get("estimated_cost", "unknown"),
+        "model": usage.get("model", "unknown"),
+        "provider": usage.get("provider", "codex"),
+    }
+
+
+def _node_scores(node_id: str, run_dir: Path, outputs: list[dict[str, Any]], risks: list[dict[str, Any]]) -> dict[str, Any]:
+    existing = [item for item in outputs if item.get("exists")]
+    completeness = len(existing) / max(1, len(outputs))
+    coverage = _coverage_score(run_dir)
+    engineering = _engineering_score(run_dir, outputs, risks)
+    ui_fit = 0.8 if (run_dir / "worktree").exists() else (0.55 if node_id == "implementation" else 0.7)
+    risk_score = min(1.0, len(risks) * 0.2)
+    scores = {
+        "goal_clarity": round(max(0.5, completeness), 2),
+        "scope_boundary": round(_scope_boundary_score(run_dir), 2),
+        "acceptance_coverage": round(coverage, 2),
+        "engineering_readiness": round(engineering, 2),
+        "ui_fit": round(ui_fit, 2),
+        "product_effect": round((completeness + coverage + engineering + ui_fit) / 4, 2),
+        "risk_score": round(risk_score, 2),
+        "score_source": "deterministic_rubric_v1",
+    }
+    agqs = _safe_read_json(run_dir / "agqs_score.json")
+    if node_id in {"implementation", "review_quality", "verification", "preview_delivery"} and agqs:
+        capability_items = agqs.get("capability_coverage", []) if isinstance(agqs.get("capability_coverage"), list) else []
+        covered = sum(1 for item in capability_items if isinstance(item, dict) and item.get("status") == "covered")
+        total = len(capability_items)
+        scores.update(
+            {
+                "benchmark_agqs": agqs.get("overall_agqs", "unknown"),
+                "benchmark_hard_gate": agqs.get("hard_gate_status", "unknown"),
+                "benchmark_capability_coverage": round(covered / total, 2) if total else "unknown",
+                "score_source": "deterministic_rubric_v1+agqs_static_parity",
+            }
+        )
+    return scores
+
+
+def _node_risks(node_id: str, record: dict[str, Any], process_state: dict[str, Any], outputs: list[dict[str, Any]], run_dir: Path) -> list[dict[str, Any]]:
+    risks: list[dict[str, Any]] = []
+    for index, risk in enumerate(_string_list(record.get("risk_events", [])), start=1):
+        risks.append({"id": f"record_risk_{index}", "severity": "warning", "summary": risk, "artifact_refs": []})
+    missing = [item["path"] for item in outputs if not item.get("exists")]
+    if missing and node_id not in {"implementation"}:
+        risks.append({"id": "missing_outputs", "severity": "warning", "summary": "部分节点输出尚未生成。", "artifact_refs": missing[:6]})
+    contract = _safe_read_json(run_dir / "app_contract.json")
+    if node_id in {"context_contract", "implementation", "verification"} and contract:
+        target_stack = contract.get("target_stack") if isinstance(contract.get("target_stack"), dict) else {}
+        if target_stack.get("database") not in {"none", None}:
+            risks.append({"id": "database_not_allowed", "severity": "blocked", "summary": "v1 不允许生成数据库依赖。", "artifact_refs": ["app_contract.json"]})
+        if target_stack.get("storage") not in {"localStorage", None}:
+            risks.append({"id": "storage_not_localstorage", "severity": "blocked", "summary": "v1 持久化层只能是浏览器 localStorage。", "artifact_refs": ["app_contract.json"]})
+    if node_id in {"implementation", "review_quality", "verification", "preview_delivery"}:
+        agqs = _safe_read_json(run_dir / "agqs_score.json")
+        if agqs:
+            for event in _string_list(agqs.get("blocking_events", [])):
+                risks.append(
+                    {
+                        "id": _risk_id(event),
+                        "severity": "blocked",
+                        "summary": _benchmark_risk_summary(event),
+                        "artifact_refs": ["benchmark_diff.md", "agqs_score.json"],
+                    }
+                )
+            for warning in _string_list(agqs.get("warnings", [])):
+                risks.append(
+                    {
+                        "id": _risk_id(warning),
+                        "severity": "warning",
+                        "summary": _benchmark_risk_summary(warning),
+                        "artifact_refs": ["benchmark_diff.md", "agqs_score.json"],
+                    }
+                )
+    return risks
+
+
+def _risk_id(value: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9]+", "_", str(value)).strip("_").lower()
+    return text or "risk"
+
+
+def _benchmark_risk_summary(value: str) -> str:
+    text = str(value)
+    prefix = "benchmark_parity_missing:"
+    if text.startswith(prefix):
+        return f"Benchmark 能力缺失：{text[len(prefix):]}"
+    return text
+
+
+def _node_status(
+    inputs: list[dict[str, Any]],
+    outputs: list[dict[str, Any]],
+    process_state: dict[str, Any],
+    risks: list[dict[str, Any]],
+    record: dict[str, Any],
+) -> str:
+    if any(item.get("severity") == "blocked" for item in risks):
+        return "blocked"
+    if process_state.get("status") == "running":
+        return "running"
+    if process_state.get("status") == "blocked":
+        return "blocked"
+    if outputs and all(item.get("exists") for item in outputs[: max(1, min(3, len(outputs)))]):
+        return "warning" if risks else "completed"
+    if inputs and all(item.get("exists") for item in inputs):
+        return "ready"
+    if str(record.get("status", "")) in {"failed", "blocked"}:
+        return "blocked"
+    return "not_started"
+
+
+def _node_variants(
+    node_id: str,
+    outputs: list[dict[str, Any]],
+    codex_usage: dict[str, Any],
+    scores: dict[str, Any],
+    risks: list[dict[str, Any]],
+    selected_variant: str,
+) -> list[dict[str, Any]]:
+    rule_outputs = outputs if node_id != "implementation" else [item for item in outputs if item["path"] in {"app_contract.json", "planning/tdd_plan.json"}]
+    codex_status = "completed" if outputs and any(item.get("exists") for item in outputs) else "not_available"
+    return [
+        {
+            "variant_id": "rule",
+            "strategy": "rule",
+            "status": "completed" if rule_outputs else "not_available",
+            "outputs": rule_outputs,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "estimated_cost": "unknown", "usage_source": "rule"},
+            "scores": scores,
+            "risks": risks,
+        },
+        {
+            "variant_id": "codex",
+            "strategy": "codex",
+            "status": codex_status if node_id == "implementation" else ("completed" if selected_variant == "codex" else "not_available"),
+            "outputs": outputs,
+            "usage": codex_usage if node_id == "implementation" else {"prompt_tokens": "unknown", "completion_tokens": "unknown", "total_tokens": "unknown", "estimated_cost": "unknown", "usage_source": "none"},
+            "scores": scores,
+            "risks": risks,
+        },
+    ]
+
+
+def _node_comparison(node_id: str, variants: list[dict[str, Any]], selected_variant: str) -> dict[str, Any]:
+    if node_id == "implementation":
+        summary = "代码实现节点固定走 Codex/LLM；rule 只作为路径、契约、风险和评分 baseline。"
+    else:
+        summary = "rule 提供确定性 baseline；Codex/LLM 可作为解释、建议和后续重跑来源。"
+    return {
+        "summary": summary,
+        "recommended_variant": selected_variant,
+        "reasons": [
+            "rule token 成本为 0，用于结构化检查。",
+            "Codex/LLM usage 缺失时显示 unknown，不做估算。",
+        ],
+    }
 
 
 def _ci_gate_view(ci_status: dict[str, Any]) -> dict[str, str]:

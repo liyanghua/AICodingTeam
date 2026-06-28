@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "opportunity": {
+            "type": "string"
+          },
+          "demand_score": {
+            "type": "number"
+          },
+          "growth_score": {
+            "type": "number"
+          },
+          "competition_score": {
+            "type": "number"
+          },
+          "profit_score": {
+            "type": "number"
+          },
+          "supply_chain_score": {
+            "type": "number"
+          },
+          "differentiation_score": {
+            "type": "number"
+          },
+          "total_score": {
+            "type": "number"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

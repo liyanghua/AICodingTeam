@@ -98,6 +98,7 @@ class TeamCliTests(unittest.TestCase):
         parser = _build_parser()
         examples = [
             ["code", "--brief", "实现一个小改动"],
+            ["app", "generate", "--prd-text", "# Todo App", "--app-slug", "todo-prototype"],
             ["review", "--run-id", "team-run-1"],
             ["test", "--run-id", "team-run-1"],
             ["report", "--run-id", "team-run-1"],
@@ -107,6 +108,63 @@ class TeamCliTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 args = parser.parse_args(argv)
                 self.assertTrue(callable(args.func))
+
+    def test_app_generate_cli_foreground_runs_app_generation_domain(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+
+            exit_code = main(
+                [
+                    "app",
+                    "generate",
+                    "--foreground",
+                    "--executor",
+                    "deterministic",
+                    "--prd-text",
+                    "# Todo Prototype\n\n用户可以新增和完成待办。",
+                    "--app-slug",
+                    "todo-prototype",
+                    "--runs-dir",
+                    str(runs_dir),
+                    "--run-id",
+                    "app-cli-run",
+                    "--repo-root",
+                    str(Path.cwd()),
+                ]
+            )
+
+            run_dir = runs_dir / "app-cli-run"
+            record = json.loads((run_dir / "team_run_record.json").read_text(encoding="utf-8"))
+            contract = json.loads((run_dir / "app_contract.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(record["domain_id"], "app_generation")
+        self.assertEqual(record["inputs"]["app_slug"], "todo-prototype")
+        self.assertEqual(contract["generated_app_dir"], "generated_apps/todo-prototype")
+
+    def test_app_generate_cli_requires_prd_input(self) -> None:
+        from growth_dev.cli import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            exit_code = main(
+                [
+                    "app",
+                    "generate",
+                    "--foreground",
+                    "--executor",
+                    "deterministic",
+                    "--app-slug",
+                    "todo-prototype",
+                    "--runs-dir",
+                    str(root / "runs"),
+                ]
+            )
+
+        self.assertEqual(exit_code, 2)
 
     def test_team_init_cli_generates_eval_and_team_yaml(self) -> None:
         from growth_dev.cli import main

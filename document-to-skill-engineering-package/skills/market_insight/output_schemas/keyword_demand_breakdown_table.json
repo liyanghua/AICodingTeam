@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string"
+          },
+          "search_popularity": {
+            "type": "number"
+          },
+          "growth_rate": {
+            "type": "number"
+          },
+          "competition_index": {
+            "type": "number"
+          },
+          "root_terms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "demand_type": {
+            "type": "string"
+          },
+          "audience": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "product_opportunity": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

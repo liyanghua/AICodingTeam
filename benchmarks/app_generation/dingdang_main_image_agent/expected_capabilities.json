@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "dingdang_main_image_agent",
+  "product_capabilities": [
+    {
+      "id": "product_image_upload",
+      "label": "产品图上传",
+      "required": true,
+      "expected_behavior": "用户必须能上传产品图；Stage 4 真实出图前产品图为必填输入",
+      "detection": {
+        "match_any": ["productimage", "product_image", "产品图"],
+        "evidence_files": ["public/index.html", "public/app.js", "src/**/*.js"]
+      }
+    },
+    {
+      "id": "reference_image_upload",
+      "label": "参考图上传",
+      "required": true,
+      "expected_behavior": "用户必须能上传可选参考图；系统能把参考图用于风格或结构判断",
+      "detection": {
+        "match_any": ["referenceimage", "reference_image", "参考图"],
+        "evidence_files": ["public/index.html", "public/app.js", "src/**/*.js"]
+      }
+    },
+    {
+      "id": "stage_workflow",
+      "label": "四阶段工作流",
+      "required": true,
+      "expected_values": ["需求诊断", "创意方案", "策略落地", "Prompt 生成与执行"],
+      "detection": {
+        "match_any": ["stage", "需求诊断", "创意方案", "策略落地"]
+      }
+    },
+    {
+      "id": "task_type_gate",
+      "label": "任务类型确认阻断",
+      "required": true,
+      "expected_values": ["完整 8 张主图", "8 张首图测点击率"],
+      "detection": {
+        "match_any": ["task_type", "tasktype", "任务类型", "完整 8 张主图", "8 张首图"]
+      }
+    },
+    {
+      "id": "concept_single_choice",
+      "label": "创意方案单选",
+      "required": true,
+      "forbidden_behavior": ["跨方案混搭", "未确认自动进入下一阶段"],
+      "detection": {
+        "match_any": ["selectedconcept", "concept_id", "creative_concept", "单选", "radio"]
+      }
+    },
+    {
+      "id": "platform_strategy",
+      "label": "平台策略差异",
+      "required": true,
+      "expected_values": ["天猫", "淘宝", "抖音", "拼多多"],
+      "detection": {
+        "match_any": ["天猫", "淘宝", "抖音", "拼多多"]
+      }
+    },
+    {
+      "id": "eight_image_plan",
+      "label": "8 张主图规划",
+      "required": true,
+      "expected_count": 8,
+      "detection": {
+        "match_any": ["8 张", "eight_images", "image_plan", "8张", "main_image_plan"]
+      }
+    },
+    {
+      "id": "prompt_layers",
+      "label": "Prompt 分层",
+      "required": true,
+      "minimum_layers": 3,
+      "detection": {
+        "match_any": ["prompt_layer", "layered_prompt", "layer1", "prompt分层", "negative_prompt"]
+      }
+    },
+    {
+      "id": "local_iteration",
+      "label": "第 X 张第 Y 层局部迭代",
+      "required": true,
+      "detection": {
+        "match_any": ["iteration", "iterate", "局部迭代", "重写第", "regenerate_layer", "第 X 张", "第 Y 层", "iteration-feedback", "重新生成"]
+      }
+    },
+    {
+      "id": "image_provider_proxy",
+      "label": "显式图片 Provider 代理",
+      "required": true,
+      "expected_behavior": "本地 Node server 通过显式配置的 OpenAI 或 OpenRouter provider 出图；API key 只在服务端读取",
+      "detection": {
+        "match_any": ["/api/images/generate", "/api/v1/images", "input_references", "OPENROUTER_API_BASE_URL"],
+        "evidence_files": ["server.js", "src/server/**/*.js"],
+        "placeholders_allowed": ["sk-your-key-here", "sk-or-v1-your-key-here", "sk-test"]
+      }
+    },
+    {
+      "id": "single_image_generation",
+      "label": "单张图片生成",
+      "required": true,
+      "expected_behavior": "用户能对任意一张主图单独触发真实图片生成",
+      "detection": {
+        "match_any": ["generateimage(", "generate-single", "data-action=\"generate\"", "单张"]
+      }
+    },
+    {
+      "id": "batch_image_generation",
+      "label": "批量图片生成",
+      "required": true,
+      "expected_behavior": "用户能一次触发 8 张主图的顺序生成，并看到每张图状态",
+      "detection": {
+        "match_any": ["batchgenerate", "batch-generate", "generateall", "生成全部", "批量"]
+      }
+    },
+    {
+      "id": "prompt_download",
+      "label": "Prompt 下载",
+      "required": true,
+      "expected_behavior": "用户能下载单张图对应的 Prompt",
+      "detection": {
+        "match_any": ["downloadprompt", "download-prompt", "下载 prompt", "下载Prompt"]
+      }
+    },
+    {
+      "id": "image_download",
+      "label": "图片下载",
+      "required": true,
+      "expected_behavior": "用户能下载生成图片；provider 返回远程 URL 时也不能因为跨域 download 限制而静默失败",
+      "detection": {
+        "match_any": ["downloadimage", "download-image", "下载图片"]
+      }
+    },
+    {
+      "id": "provider_setup_error",
+      "label": "Provider 配置错误提示",
+      "required": true,
+      "expected_behavior": "未配置 provider key、模型不支持参考图或请求超时时，界面显示清晰错误而不是卡住",
+      "detection": {
+        "match_any": ["provider_not_configured", "not configured", "未配置", "setup error", "未设置", "未找到"]
+      }
+    }
+  ],
+  "runtime_expectations": {
+    "frontend": "native_spa_or_equivalent_local_prototype",
+    "backend": "node_local_server_or_static_preview",
+    "storage": "localStorage",
+    "database": "none",
+    "preview_required": true
+  },
+  "safety_expectations": {
+    "secret_files_forbidden": [".env"],
+    "secret_persistence": "forbidden",
+    "hidden_network_calls": "forbidden",
+    "external_provider_calls": "must_be_explicit"
+  }
+}

@@ -12,7 +12,9 @@
       artifactPaths: [
         "task.yaml",
         "context.md",
+        "input_prd.md",
         "requirements/brief_analysis.json",
+        "requirements/normalized_prd.md",
         "requirements/requirement_quality_report.json",
         "acceptance_criteria.md",
         "context_pack.md",
@@ -21,7 +23,7 @@
     {
       id: "design",
       agents: ["product", "architect", "ux", "qa"],
-      artifactPaths: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/planning_quality_report.json"],
+      artifactPaths: ["requirements/normalized_prd.md", "app_contract.json", "prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/planning_quality_report.json"],
     },
     {
       id: "implementation",
@@ -62,7 +64,7 @@
     design: ["prd.md", "tech_spec.md", "ui_spec.md", "eval.md", "planning/acceptance_coverage_matrix.md", "planning/acceptance_coverage_matrix.json", "planning/planning_quality_report.json", "task_workspace.md"],
     implementation: ["coding_prompt.md", "tool_context/codex.md", "codex/implementation_trace.json", "codex/failure_classification.md", "codex/failure_classification.json", "codex/slice_loop_state.json", "implementation_completion_gate.md", "implementation_completion_gate.json", "codex/diff.patch", "task_journal.md"],
     quality: ["review_report.md", "test_report.md", "task_journal.md"],
-    delivery: ["final_report.md", "task_workspace.md", "task_journal.md"],
+    delivery: ["preview_instructions.md", "final_report.md", "task_workspace.md", "task_journal.md"],
     release: ["release_readiness.md", "release_readiness.json", "pr_draft.md"],
     github_pr_ci: ["github_pr.md", "github_pr.json", "ci_status.md", "ci_status.json"],
     staging: ["staging_readiness.md", "staging_readiness.json", "staging_rehearsal.md", "staging_rehearsal.json"],

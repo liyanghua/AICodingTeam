@@ -1,0 +1,65 @@
+domain_id: app_generation
+title: PRD To Local App Generation
+summary: Generate a lightweight local prototype app from a PRD for fast product validation.
+task_type: app_generation
+priority: P0
+input_schema:
+  prd_text:
+    type: string
+    required: false
+  prd_file:
+    type: path
+    required: false
+  app_slug:
+    type: string
+    required: true
+  ui_style:
+    type: string
+    required: false
+  seed_data:
+    type: object
+    required: false
+defaults:
+  output_root: generated_apps
+  frontend: native_spa
+  backend: node_stdlib
+  storage: localStorage
+  database: "none"
+output_schema:
+  app_slug: string
+  generated_app_dir: string
+  preview_command: string
+  preview_url: string
+  changed_files: list
+  tests_run: list
+  risk_events: list
+  blockers: list
+allowed_paths:
+  - generated_apps/
+  - tests/
+  - domains/app_generation/
+  - docs/
+required_before_coding_artifacts:
+  - input_prd.md
+  - requirements/normalized_prd.md
+  - app_contract.json
+risk_rules:
+  - manual_human_apply_only
+  - no_database
+  - local_storage_only
+  - no_secret_persistence
+  - no_hidden_network_calls
+  - no_external_deploy
+evaluation_rules:
+  - input_prd_artifact_created
+  - normalized_prd_created
+  - app_contract_created
+  - generated_app_under_allowed_path
+  - native_spa_node_server_shape
+  - local_storage_persistence_only
+  - preview_instructions_created
+  - tests_or_clear_blocker_recorded
+  - no_disallowed_risk_behavior
+verification_commands:
+  - node --check generated_apps/{app_slug}/server.js
+  - python3 -m unittest discover -s tests -v

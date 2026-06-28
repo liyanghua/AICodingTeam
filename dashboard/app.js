@@ -1514,20 +1514,57 @@ function statusText(status) {
   return t(`diffView.${status || "modified"}`, status || "");
 }
 
-async function startRun(event) {
-  event.preventDefault();
+function syncRequestMode() {
+  const modeControl = $("request-mode");
+  const appSlugField = $("app-slug-field");
+  const domain = $("domain");
+  const mode = modeControl ? modeControl.value : "task";
+  const isAppGeneration = mode === "app_generation";
+  if (appSlugField) appSlugField.hidden = !isAppGeneration;
+  if (domain && isAppGeneration) domain.value = "app_generation";
+  if (domain && !isAppGeneration && domain.value === "app_generation") domain.value = "web_monitoring";
+}
+
+function buildRunPayload() {
+  const mode = $("request-mode") ? $("request-mode").value : "task";
   const brief = $("brief").value.trim();
   if (!brief) {
     $("brief").focus();
-    return;
+    return null;
   }
-  const payload = {
-    brief,
-    domain: $("domain").value.trim() || "web_monitoring",
+
+  const basePayload = {
     executor: $("executor").value,
     provider: $("provider").value,
     model: $("model").value.trim(),
   };
+
+  if (mode === "app_generation") {
+    const appSlug = $("app-slug").value.trim();
+    const prdText = brief;
+    if (!appSlug) {
+      $("app-slug").focus();
+      return null;
+    }
+    return {
+      ...basePayload,
+      brief: `根据 PRD 生成本地应用：${appSlug}`,
+      domain: "app_generation",
+      inputs_json: { app_slug: appSlug, prd_text: prdText },
+    };
+  }
+
+  return {
+    ...basePayload,
+    brief,
+    domain: $("domain").value.trim() || "web_monitoring",
+  };
+}
+
+async function startRun(event) {
+  event.preventDefault();
+  const payload = buildRunPayload();
+  if (!payload) return;
   const data = await fetchJson("/api/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1552,7 +1589,9 @@ function startPolling() {
 async function boot() {
   await loadI18n();
   $("run-form").addEventListener("submit", startRun);
+  if ($("request-mode")) $("request-mode").addEventListener("change", syncRequestMode);
   $("refresh-runs").addEventListener("click", refreshRuns);
+  syncRequestMode();
   await refreshRuns();
   startPolling();
 }

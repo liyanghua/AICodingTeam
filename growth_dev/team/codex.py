@@ -36,7 +36,7 @@ CODEX_RESPONSE_SCHEMA: dict[str, Any] = {
 DEFAULT_ALLOWED_PATHS = ["growth_dev/", "dashboard/", "tests/", "domains/", "tasks/", "README.md", "AGENTS.md", "DESIGN.md"]
 DEFAULT_VERIFICATION_COMMANDS = ["python3 -m unittest discover -s tests -v"]
 TASK_ALLOWED_PATH_MARKERS = ("allowed_paths", "allowed paths", "allowed_files", "allowed files", "允许路径")
-TASK_ALLOWED_PATH_SAFE_ROOTS = ("third_party", "tests", "domains", "growth_dev", "dashboard", "skills", "docs", "tasks", ".github")
+TASK_ALLOWED_PATH_SAFE_ROOTS = ("third_party", "tests", "domains", "growth_dev", "dashboard", "skills", "docs", "tasks", "generated_apps", ".github")
 TASK_ALLOWED_PATH_SAFE_ROOT_FILES = ("README.md", "AGENTS.md", "DESIGN.md", "pyproject.toml")
 TASK_ALLOWED_PATH_FORBIDDEN_PREFIXES = (
     "runs/",
@@ -46,11 +46,18 @@ TASK_ALLOWED_PATH_FORBIDDEN_PREFIXES = (
 )
 TASK_ALLOWED_PATH_FORBIDDEN_SUFFIXES = (".key", ".pem", ".p12", ".pfx")
 TASK_ALLOWED_PATH_PATTERN = re.compile(
-    r"(?<![\w./-])(?:(?:third_party|tests|domains|growth_dev|dashboard|skills|docs|tasks|\.github)(?:/[\w.-]+)+/?|(?:README|AGENTS|DESIGN)\.md|pyproject\.toml)(?![\w./-])"
+    r"(?<![\w./-])(?:(?:third_party|tests|domains|growth_dev|dashboard|skills|docs|tasks|generated_apps|\.github)(?:/[\w.-]+)+/?|(?:README|AGENTS|DESIGN)\.md|pyproject\.toml)(?![\w./-])"
 )
 UPSTREAM_CONTEXT_ARTIFACTS = [
     "task.yaml",
     "context.md",
+    "input_prd.md",
+    "requirements/normalized_prd.md",
+    "app_contract.json",
+    "benchmark_context.md",
+    "benchmark_context.json",
+    "reference_app_index.md",
+    "preview_instructions.md",
     "requirements/capability_boundary.md",
     "planning/tdd_plan.md",
     "prd.md",
@@ -67,7 +74,16 @@ FAILURE_CLASSIFICATION_MD_PATH = "codex/failure_classification.md"
 SLICE_LOOP_STATE_PATH = "codex/slice_loop_state.json"
 IMPLEMENTATION_COMPLETION_GATE_JSON_PATH = "implementation_completion_gate.json"
 IMPLEMENTATION_COMPLETION_GATE_MD_PATH = "implementation_completion_gate.md"
+APP_RUNTIME_VERIFICATION_PATH = "codex/app_runtime_verification.json"
 SLICE_LOOP_EXECUTION_STRATEGY = "single_codex_pass_over_planned_slices_v1"
+BENCHMARK_FIX_SLICE_DISABLE_ENV = "BENCHMARK_FIX_SLICE_DISABLE"
+BENCHMARK_FIX_SLICE_MAX_ROUNDS = 1
+BENCHMARK_FIX_SLICE_PROMPT_PATH = "codex/fix_slice_prompt.md"
+BENCHMARK_FIX_SLICE_STDOUT_PATH = "codex/fix_stdout.jsonl"
+BENCHMARK_FIX_SLICE_STDERR_PATH = "codex/fix_stderr.log"
+BENCHMARK_FIX_SLICE_LAST_MESSAGE_PATH = "codex/last_message_fix.json"
+BENCHMARK_FIX_SLICE_COMMAND_PATH = "codex/fix_command.json"
+BENCHMARK_FIX_SLICE_STATE_PATH = "codex/fix_state_summary.md"
 IMPLEMENTATION_TRACE_STEPS = [
     ("prepare_context", "准备上下文"),
     ("check_executor", "检查执行器"),
@@ -80,6 +96,12 @@ IMPLEMENTATION_TRACE_STEPS = [
 IMPLEMENTATION_TRACE_INPUT_TITLES = {
     "task.yaml": "任务包",
     "context.md": "上下文说明",
+    "input_prd.md": "原始 PRD",
+    "requirements/normalized_prd.md": "标准化 PRD",
+    "app_contract.json": "应用生成契约",
+    "benchmark_context.md": "Benchmark 能力契约",
+    "reference_app_index.md": "参考应用结构索引",
+    "preview_instructions.md": "本地预览说明",
     "prd.md": "PRD",
     "tech_spec.md": "技术方案",
     "ui_spec.md": "UI 规范",
@@ -127,6 +149,12 @@ NON_BLOCKING_CODEX_RISK_NOTE_MARKERS = [
     ("nearby_supporting", "required"),
     ("nearby supporting", "required"),
     ("modified tests/", "supporting test boundary", "no runs", "env-file", "remote key"),
+    ("preview bind", "sandbox", "eperm"),
+    ("provider is not configured", "setup error", "does not persist secrets"),
+    ("external image provider", "explicit", "server-side", "no hidden network"),
+    ("image provider capability", "explicit", "server-side", "no hidden network"),
+    ("declared verification commands passed", "eperm"),
+    ("captcha", "proxy", "fingerprint"),
 ]
 
 
@@ -433,6 +461,78 @@ class CodexExecutor:
         files_changed = sorted(set(changed_files + _string_list(response.get("files_changed", []))))
         tests_run = _string_list(response.get("tests_run", []))
         boundary_violations = _unrelated_changed_files(changed_files, bundle.allowed_paths)
+        benchmark_evaluation = _evaluate_benchmark_parity_if_needed(context, worktree_dir)
+        app_runtime_verification = _run_app_runtime_verification_if_needed(
+            context=context,
+            commands=bundle.verification_commands,
+            worktree_dir=worktree_dir,
+            codex_dir=self.codex_dir,
+            run_dir=self.run_dir,
+            env=self._process_env(),
+            timeout_seconds=min(self.config.timeout_seconds, 60),
+        )
+        app_runtime_events = _string_list(app_runtime_verification.get("blocking_events", []))
+        if app_runtime_events and benchmark_evaluation.get("enabled"):
+            benchmark_evaluation = {
+                **benchmark_evaluation,
+                "blocking_events": _dedupe(_string_list(benchmark_evaluation.get("blocking_events", [])) + app_runtime_events),
+                "artifacts": _dedupe(_string_list(benchmark_evaluation.get("artifacts", [])) + [APP_RUNTIME_VERIFICATION_PATH]),
+            }
+        first_round_state = {
+            "exit_code": completed.returncode,
+            "summary": str(response.get("summary", "")),
+            "files_changed": files_changed,
+        }
+        fix_slice_result = self._maybe_run_benchmark_fix_slice(
+            context=context,
+            bundle=bundle,
+            worktree_dir=worktree_dir,
+            previous_record=first_round_state,
+            first_evaluation=benchmark_evaluation,
+        )
+        fix_slice_record: dict[str, Any] | None = None
+        if fix_slice_result.get("attempted"):
+            fix_slice_record = fix_slice_result.get("fix_record")
+            new_evaluation = fix_slice_result.get("new_evaluation") or benchmark_evaluation
+            benchmark_evaluation = new_evaluation
+            fix_response = fix_slice_result.get("response") or {}
+            response = {**response, **{k: v for k, v in fix_response.items() if v not in (None, "")}}
+            response_risk_events = _string_list(response.get("risk_events", []))
+            response_blocking_risk_events, non_blocking_risk_events = classify_codex_risk_events(response_risk_events)
+            blockers = _string_list(response.get("blockers", []))
+            response_blockers = list(blockers)
+            changed_files = _changed_files(worktree_dir)
+            diff_path, status_path = _write_diff_artifacts(worktree_dir, self.codex_dir)
+            diff_policy_hits = _scan_implementation_risks(diff_path.read_text(encoding="utf-8") if diff_path.exists() else "")
+            files_changed = sorted(set(changed_files + _string_list(response.get("files_changed", []))))
+            tests_run = _string_list(response.get("tests_run", []))
+            boundary_violations = _unrelated_changed_files(changed_files, bundle.allowed_paths)
+            app_runtime_verification = _run_app_runtime_verification_if_needed(
+                context=context,
+                commands=bundle.verification_commands,
+                worktree_dir=worktree_dir,
+                codex_dir=self.codex_dir,
+                run_dir=self.run_dir,
+                env=self._process_env(),
+                timeout_seconds=min(self.config.timeout_seconds, 60),
+            )
+            app_runtime_events = _string_list(app_runtime_verification.get("blocking_events", []))
+            if app_runtime_events and benchmark_evaluation.get("enabled"):
+                benchmark_evaluation = {
+                    **benchmark_evaluation,
+                    "blocking_events": _dedupe(_string_list(benchmark_evaluation.get("blocking_events", [])) + app_runtime_events),
+                    "artifacts": _dedupe(_string_list(benchmark_evaluation.get("artifacts", [])) + [APP_RUNTIME_VERIFICATION_PATH]),
+                }
+            fix_exit_code = int(fix_slice_result.get("exit_code", 0))
+            validation_events = list(fix_slice_result.get("validation_events") or validation_events)
+            completed = subprocess.CompletedProcess(completed.args, fix_exit_code, completed.stdout, completed.stderr)
+            failure_category = classify_codex_failure(completed.stderr, fix_exit_code, "coder")
+            if fix_slice_result.get("status") == "failed":
+                blockers.append(f"benchmark_fix_slice_failed:{fix_slice_result.get('reason', 'unknown')}")
+                response_blocking_risk_events = _dedupe(
+                    response_blocking_risk_events
+                    + [f"benchmark_fix_slice_failed:{fix_slice_result.get('reason', 'unknown')}"]
+                )
         classification = _build_failure_classification(
             run_id=context.run_id,
             exit_code=completed.returncode,
@@ -441,8 +541,10 @@ class CodexExecutor:
             tests_run=tests_run,
             codex_blockers=response_blockers,
             codex_risk_events=response_risk_events,
-            codex_blocking_risk_events=response_blocking_risk_events,
-            codex_non_blocking_risk_events=non_blocking_risk_events,
+            codex_blocking_risk_events=response_blocking_risk_events
+            + _string_list(benchmark_evaluation.get("blocking_events", []))
+            + app_runtime_events,
+            codex_non_blocking_risk_events=non_blocking_risk_events + _string_list(benchmark_evaluation.get("warnings", [])),
             diff_policy_hits=diff_policy_hits,
             allowed_paths=bundle.allowed_paths,
             boundary_violations=boundary_violations,
@@ -469,6 +571,7 @@ class CodexExecutor:
                 "diff_path": _relative_to(diff_path, self.run_dir),
                 "exit_code": completed.returncode,
                 "failure_classification": FAILURE_CLASSIFICATION_JSON_PATH,
+                **({"app_runtime_verification": APP_RUNTIME_VERIFICATION_PATH} if app_runtime_verification else {}),
             }
         )
         _trace_step(
@@ -485,9 +588,6 @@ class CodexExecutor:
             "agent": "coder",
             "executor": "codex",
             "status": status,
-            "run_id": context.run_id,
-            "domain_id": context.domain.domain_id,
-            "model": self.config.model,
             "reasoning_effort": self.config.reasoning_effort,
             "provider": self.config.provider.redacted_dict() if self.config.provider else {"name": "default"},
             "worktree_path": str(worktree_dir),
@@ -516,6 +616,15 @@ class CodexExecutor:
                 "command": _relative_to(bundle.command_path, self.run_dir),
                 "implementation_trace": IMPLEMENTATION_TRACE_PATH,
                 "failure_classification": FAILURE_CLASSIFICATION_JSON_PATH,
+                **({"app_runtime_verification": APP_RUNTIME_VERIFICATION_PATH} if app_runtime_verification else {}),
+                **(
+                    {
+                        "benchmark_diff": "benchmark_diff.md",
+                        "agqs_score": "agqs_score.json",
+                    }
+                    if benchmark_evaluation.get("enabled")
+                    else {}
+                ),
             },
         }
         completion_paths: list[str] = []
@@ -548,6 +657,11 @@ class CodexExecutor:
                 completion_gate=completion_gate,
             )
         _attach_slice_loop_artifacts(record, slice_loop_output_paths + completion_paths)
+        if fix_slice_record is not None:
+            record["benchmark_fix_slice"] = fix_slice_record
+            output_paths.extend(_string_list(fix_slice_result.get("output_paths", [])))
+            record["artifacts"]["benchmark_fix_slice_prompt"] = fix_slice_record["artifacts"]["prompt"]
+            record["artifacts"]["benchmark_fix_slice_last_message"] = fix_slice_record["artifacts"]["last_message"]
         trace["status"] = status
         trace["current_step"] = "finalize_result"
         trace["risk_events"] = risk_events
@@ -573,6 +687,9 @@ class CodexExecutor:
                 FAILURE_CLASSIFICATION_MD_PATH,
             ]
         )
+        if app_runtime_verification:
+            output_paths.append(APP_RUNTIME_VERIFICATION_PATH)
+        output_paths.extend(_string_list(benchmark_evaluation.get("artifacts", [])))
         output_paths.append(context.write_json("code_run_record.json", record))
         return CodexStageResult(status, _dedupe(output_paths), risk_events, record["summary"], record)
 
@@ -755,6 +872,122 @@ class CodexExecutor:
 
     def _binary_available(self) -> bool:
         return Path(self.config.binary).exists() or shutil.which(self.config.binary) is not None
+
+    def _maybe_run_benchmark_fix_slice(
+        self,
+        *,
+        context: Any,
+        bundle: CodexPromptBundle,
+        worktree_dir: Path,
+        previous_record: dict[str, Any],
+        first_evaluation: dict[str, Any],
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {"attempted": False, "reason": "", "output_paths": []}
+        if not first_evaluation.get("enabled"):
+            result["reason"] = "evaluation_not_enabled"
+            return result
+        if previous_record.get("exit_code") != 0:
+            result["reason"] = "first_round_failed"
+            return result
+        blocking = _string_list(first_evaluation.get("blocking_events", []))
+        missing = _missing_capability_ids(blocking)
+        if not missing:
+            result["reason"] = "no_missing"
+            return result
+        if not _benchmark_fix_slice_enabled():
+            result["reason"] = "disabled_env"
+            return result
+        if not self._binary_available():
+            result["reason"] = "codex_binary_missing"
+            return result
+        fix_targets = _fix_slice_capability_targets(self.run_dir, missing)
+        prompt_path = self.codex_dir / "fix_slice_prompt.md"
+        stdout_path = self.codex_dir / "fix_stdout.jsonl"
+        stderr_path = self.codex_dir / "fix_stderr.log"
+        last_message_path = self.codex_dir / "last_message_fix.json"
+        command_path = self.codex_dir / "fix_command.json"
+        prompt_text = _build_fix_slice_prompt(
+            context=context,
+            bundle=bundle,
+            worktree_dir=worktree_dir,
+            previous_record=previous_record,
+            first_evaluation=first_evaluation,
+            fix_targets=fix_targets,
+        )
+        prompt_path.write_text(prompt_text, encoding="utf-8")
+        last_message_path.write_text("", encoding="utf-8")
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        command = build_codex_exec_command(
+            self.config,
+            worktree_dir=worktree_dir,
+            run_dir=self.run_dir,
+            output_schema_path=bundle.output_schema_path,
+            output_last_message_path=last_message_path,
+        )
+        write_json(
+            command_path,
+            {"command": command, "cwd": str(worktree_dir), "created_at": now_iso(), "round": 2},
+        )
+        completed = self._run_process(command, prompt_text, worktree_dir, stdout_path, stderr_path)
+        response, validation_events = _read_codex_response(last_message_path)
+        new_evaluation = _evaluate_benchmark_parity_if_needed(context, worktree_dir)
+        before = list(missing)
+        after_missing = _missing_capability_ids(_string_list(new_evaluation.get("blocking_events", [])))
+        succeeded = (
+            completed.returncode == 0
+            and bool(new_evaluation.get("enabled"))
+            and not after_missing
+            and not validation_events
+        )
+        status = "completed" if succeeded else "failed"
+        remediated = [cid for cid in before if cid not in after_missing]
+        output_paths = [
+            _relative_to(prompt_path, self.run_dir),
+            _relative_to(stdout_path, self.run_dir),
+            _relative_to(stderr_path, self.run_dir),
+            _relative_to(last_message_path, self.run_dir),
+            _relative_to(command_path, self.run_dir),
+        ]
+        fix_record = {
+            "attempted": True,
+            "status": status,
+            "round": 2,
+            "max_rounds": BENCHMARK_FIX_SLICE_MAX_ROUNDS + 1,
+            "before_missing": before,
+            "after_missing": after_missing,
+            "remediated_capabilities": remediated,
+            "exit_code": completed.returncode,
+            "validation_events": validation_events,
+            "summary": str(response.get("summary", "")),
+            "files_changed": _string_list(response.get("files_changed", [])),
+            "tests_run": _string_list(response.get("tests_run", [])),
+            "risk_events": _string_list(response.get("risk_events", [])),
+            "blockers": _string_list(response.get("blockers", [])),
+            "artifacts": {
+                "prompt": _relative_to(prompt_path, self.run_dir),
+                "stdout": _relative_to(stdout_path, self.run_dir),
+                "stderr": _relative_to(stderr_path, self.run_dir),
+                "last_message": _relative_to(last_message_path, self.run_dir),
+                "command": _relative_to(command_path, self.run_dir),
+            },
+        }
+        result.update(
+            {
+                "attempted": True,
+                "status": status,
+                "reason": "" if succeeded else _fix_slice_failure_reason(completed.returncode, validation_events, after_missing),
+                "fix_record": fix_record,
+                "output_paths": output_paths,
+                "new_evaluation": new_evaluation,
+                "before_missing": before,
+                "after_missing": after_missing,
+                "exit_code": completed.returncode,
+                "response": response,
+                "validation_events": validation_events,
+            }
+        )
+        return result
 
     def _run_process(self, command: list[str], prompt_text: str, cwd: Path, stdout_path: Path, stderr_path: Path) -> subprocess.CompletedProcess[str]:
         stdout_chunks: list[str] = []
@@ -961,10 +1194,348 @@ def _is_safe_task_allowed_path(path: str) -> bool:
 
 
 def _verification_commands(context: Any) -> list[str]:
+    app_generation_commands = _app_generation_verification_commands(context)
+    if app_generation_commands:
+        return app_generation_commands
     inputs = getattr(context, "inputs", {}) or {}
     domain = getattr(context, "domain", None)
     metadata = getattr(domain, "metadata", {}) or {}
-    return _string_list(inputs.get("verification_commands") or metadata.get("verification_commands") or DEFAULT_VERIFICATION_COMMANDS)
+    commands = _string_list(inputs.get("verification_commands") or metadata.get("verification_commands") or DEFAULT_VERIFICATION_COMMANDS)
+    return _format_app_generation_command_templates(commands, context)
+
+
+def _app_generation_verification_commands(context: Any) -> list[str]:
+    domain = getattr(context, "domain", None)
+    if getattr(domain, "domain_id", "") != "app_generation":
+        return []
+    contract_path = Path(getattr(context, "run_dir", ".")) / "app_contract.json"
+    if not contract_path.exists():
+        return []
+    try:
+        contract = read_json(contract_path)
+    except Exception:  # noqa: BLE001 - fall back to domain metadata.
+        return []
+    commands = _string_list(contract.get("verification_commands") if isinstance(contract, dict) else [])
+    return _format_app_generation_command_templates(commands, context)
+
+
+def _run_app_runtime_verification_if_needed(
+    *,
+    context: Any,
+    commands: list[str],
+    worktree_dir: Path,
+    codex_dir: Path,
+    run_dir: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    domain = getattr(context, "domain", None)
+    if getattr(domain, "domain_id", "") != "app_generation":
+        return {}
+    safe_commands = _app_runtime_safe_commands(commands)
+    if not safe_commands:
+        return {}
+    results: list[dict[str, Any]] = []
+    blocking_events: list[str] = []
+    for index, command in enumerate(safe_commands, start=1):
+        stdout_path = codex_dir / f"app_runtime_verify_{index}_stdout.log"
+        stderr_path = codex_dir / f"app_runtime_verify_{index}_stderr.log"
+        started_at = now_iso()
+        try:
+            completed = subprocess.run(
+                shlex.split(command),
+                cwd=worktree_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                env=env,
+            )
+            stdout = completed.stdout
+            stderr = completed.stderr
+            exit_code = completed.returncode
+        except Exception as exc:  # noqa: BLE001 - persisted as verification evidence.
+            stdout = ""
+            stderr = f"{type(exc).__name__}: {exc}"
+            exit_code = 1
+        stdout_path.write_text(stdout, encoding="utf-8")
+        stderr_path.write_text(stderr, encoding="utf-8")
+        if exit_code != 0:
+            blocking_events.append(f"app_runtime_verification_failed:{command}:{exit_code}")
+        results.append(
+            {
+                "command": command,
+                "exit_code": exit_code,
+                "started_at": started_at,
+                "finished_at": now_iso(),
+                "stdout_path": _relative_to(stdout_path, run_dir),
+                "stderr_path": _relative_to(stderr_path, run_dir),
+            }
+        )
+    record = {
+        "schema_version": 1,
+        "status": "passed" if not blocking_events else "failed",
+        "commands": results,
+        "blocking_events": blocking_events,
+        "worktree_path": str(worktree_dir),
+    }
+    write_json(codex_dir / "app_runtime_verification.json", record)
+    return record
+
+
+def _app_runtime_safe_commands(commands: list[str]) -> list[str]:
+    safe: list[str] = []
+    for command in commands:
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            continue
+        if len(parts) == 3 and parts[0] == "node" and parts[1] == "--check" and parts[2].startswith("generated_apps/"):
+            safe.append(command)
+            continue
+        if len(parts) == 2 and parts[0] == "node" and parts[1].startswith("generated_apps/") and parts[1].endswith("/runtime_smoke.js"):
+            safe.append(command)
+    return _dedupe(safe)
+
+
+def _evaluate_benchmark_parity_if_needed(context: Any, worktree_dir: Path) -> dict[str, Any]:
+    domain = getattr(context, "domain", None)
+    if getattr(domain, "domain_id", "") != "app_generation":
+        return {"enabled": False, "blocking_events": [], "warnings": [], "artifacts": []}
+    contract_path = Path(getattr(context, "run_dir", ".")) / "app_contract.json"
+    if not contract_path.exists():
+        return {"enabled": False, "blocking_events": [], "warnings": [], "artifacts": []}
+    contract = read_json(contract_path)
+    if contract.get("quality_mode") != "benchmark_parity":
+        return {"enabled": False, "blocking_events": [], "warnings": [], "artifacts": []}
+    from .app_generation import evaluate_benchmark_parity
+
+    return evaluate_benchmark_parity(run_dir=Path(getattr(context, "run_dir", ".")), worktree_dir=worktree_dir, contract=contract)
+
+
+def _format_app_generation_command_templates(commands: list[str], context: Any) -> list[str]:
+    inputs = getattr(context, "inputs", {}) or {}
+    app_slug = str(inputs.get("app_slug", "") or "").strip()
+    if not app_slug:
+        return commands
+    return [command.replace("{app_slug}", app_slug) for command in commands]
+
+
+def _benchmark_fix_slice_enabled() -> bool:
+    return os.environ.get(BENCHMARK_FIX_SLICE_DISABLE_ENV, "").strip() not in {"1", "true", "True", "yes", "on"}
+
+
+def _fix_slice_failure_reason(exit_code: int, validation_events: list[str], after_missing: list[str]) -> str:
+    if exit_code != 0:
+        return f"codex_exit:{exit_code}"
+    if validation_events:
+        return f"response_invalid:{validation_events[0]}"
+    if after_missing:
+        return f"still_missing:{','.join(after_missing)}"
+    return "unknown"
+
+
+def _missing_capability_ids(blocking_events: list[str]) -> list[str]:
+    prefix = "benchmark_parity_missing:"
+    missing: list[str] = []
+    for event in blocking_events:
+        if not isinstance(event, str):
+            continue
+        if event.startswith(prefix):
+            cid = event[len(prefix):].strip()
+            if cid and cid != "secret_leak" and cid != "generated_app_dir":
+                missing.append(cid)
+        if event.startswith("app_runtime_verification_failed:"):
+            missing.append("runtime_startup_smoke")
+    return _dedupe(missing)
+
+
+def _fix_slice_capability_targets(
+    run_dir: Path,
+    missing_capability_ids: list[str],
+) -> list[dict[str, Any]]:
+    benchmark_path = run_dir / "benchmark_context.json"
+    capabilities: list[dict[str, Any]] = []
+    if benchmark_path.exists():
+        try:
+            payload = read_json(benchmark_path)
+        except Exception:  # noqa: BLE001 - fallback to empty
+            payload = {}
+        if isinstance(payload, dict):
+            capabilities = [item for item in payload.get("required_capabilities", []) if isinstance(item, dict)]
+    capability_by_id = {str(item.get("id", "")): item for item in capabilities}
+    index_path = run_dir / "reference_app_index.json"
+    capability_files: dict[str, list[str]] = {}
+    if index_path.exists():
+        try:
+            index_payload = read_json(index_path)
+        except Exception:  # noqa: BLE001
+            index_payload = {}
+        if isinstance(index_payload, dict):
+            for item in index_payload.get("capability_to_files", []) or []:
+                if isinstance(item, dict):
+                    cid = str(item.get("capability_id", ""))
+                    files = [str(value) for value in (item.get("files") or []) if str(value).strip()]
+                    capability_files[cid] = files
+    targets: list[dict[str, Any]] = []
+    for cid in missing_capability_ids:
+        cap = capability_by_id.get(cid, {})
+        if not cap:
+            cap = _synthetic_fix_slice_capability(cid)
+        targets.append(
+            {
+                "id": cid,
+                "label": cap.get("label", cid),
+                "expected_behavior": cap.get("expected_behavior", ""),
+                "detection_hints": list(((cap.get("detection") or {}) if isinstance(cap.get("detection"), dict) else {}).get("match_any", []) or []),
+                "evidence_files": list(((cap.get("detection") or {}) if isinstance(cap.get("detection"), dict) else {}).get("evidence_files", []) or []),
+                "reference_files": capability_files.get(cid, []),
+            }
+        )
+    return targets
+
+
+def _synthetic_fix_slice_capability(capability_id: str) -> dict[str, Any]:
+    if capability_id == "runtime_startup_smoke":
+        return {
+            "id": capability_id,
+            "label": "Runtime startup smoke",
+            "expected_behavior": "The generated app must include runtime_smoke.js and it must pass without throwing before DOM events are bound.",
+            "detection": {"match_any": ["runtime_smoke.js", "runtime_init_ok", "DOMContentLoaded"]},
+        }
+    if capability_id == "openrouter_images_endpoint":
+        return {
+            "id": capability_id,
+            "label": "OpenRouter images endpoint",
+            "expected_behavior": "Use POST https://openrouter.ai/api/v1/images with input_references; do not use chat/completions plus modalities as the image path.",
+            "detection": {"match_any": ["https://openrouter.ai/api/v1/images", "input_references", "openai/gpt-image-1"]},
+        }
+    return {"id": capability_id, "label": capability_id, "expected_behavior": "", "detection": {"match_any": []}}
+
+
+def _build_fix_slice_prompt(
+    *,
+    context: Any,
+    bundle: CodexPromptBundle,
+    worktree_dir: Path,
+    previous_record: dict[str, Any],
+    first_evaluation: dict[str, Any],
+    fix_targets: list[dict[str, Any]],
+) -> str:
+    allowed_paths = bundle.allowed_paths
+    verification_commands = bundle.verification_commands
+    target_lines: list[str] = []
+    for target in fix_targets:
+        target_lines.append(f"- `{target['id']}` - {target.get('label', '')}")
+        if target.get("expected_behavior"):
+            target_lines.append(f"  - expected_behavior: {target['expected_behavior']}")
+        if target.get("detection_hints"):
+            target_lines.append(f"  - detection_hints: {', '.join(target['detection_hints'])}")
+        if target.get("evidence_files"):
+            target_lines.append(f"  - evidence_files: {', '.join(target['evidence_files'])}")
+        if target.get("reference_files"):
+            target_lines.append(f"  - reference_files: {', '.join(target['reference_files'])}")
+    artifact_lines = _artifact_excerpt_lines(context)
+    runtime_lines = _runtime_verification_excerpt_lines(Path(getattr(context, "run_dir", ".")))
+    return "\n".join(
+        [
+            "# Codex Benchmark Fix Slice Prompt",
+            "",
+            "You are the `coding agent` running a fix-slice pass over the same worktree.",
+            "Your job is to remediate the missing benchmark capabilities listed below, without breaking what already passes.",
+            "",
+            "## Non-Negotiable Rules",
+            "- Reuse the existing worktree; do not re-scaffold the app from scratch.",
+            "- Only modify files that implement the listed missing capabilities or directly related glue.",
+            "- Do not break or remove previously covered capabilities, files, or routes.",
+            "- Do not introduce new dependencies; stay within Node stdlib and the v1 contract.",
+            "- Do not commit secrets; placeholder env example files remain placeholder.",
+            "- Stop and emit a blocker if a fix would require a prohibited behavior.",
+            "",
+            "## Benchmark Fix Slice",
+            f"- Round: 2 of {BENCHMARK_FIX_SLICE_MAX_ROUNDS + 1} (single fix-slice retry).",
+            f"- Missing capability count: {len(fix_targets)}.",
+            "",
+            "### Missing Capabilities",
+            *target_lines,
+            "",
+            "## Previous Attempt",
+            f"- Status: {previous_record.get('status', '')}",
+            f"- Summary: {previous_record.get('summary', '')}",
+            f"- Files changed: {', '.join(_string_list(previous_record.get('files_changed', []))) or 'none'}",
+            f"- Blocking events: {', '.join(_string_list(first_evaluation.get('blocking_events', []))) or 'none'}",
+            "",
+            "## Required Final Response",
+            "Return JSON that matches `codex/codex_response_schema.json` exactly.",
+            "",
+            "### `risk_events` Field Discipline",
+            "- Use `risk_events` only for problems that should block review or release of this run.",
+            "- Do NOT put capability-gap self-disclosure (e.g. `no external image model`, `placeholder previews only`, `no database; localStorage only`)",
+            "  or sandbox/runtime environment limits (e.g. `listen EPERM`, `sandboxCwd must be an absolute file URI`, manual browser preview blocked by sandbox) into `risk_events`.",
+            "  Describe them in `summary` or `next_action` instead.",
+            "- Decision rule: if it would not prevent the next reviewer from approving the diff, keep it out of `risk_events`.",
+            "",
+            "## Upstream Artifacts",
+            *artifact_lines,
+            "",
+            "## App Runtime Verification",
+            *runtime_lines,
+            "",
+            "## Allowed Files",
+            *[f"- {path}" for path in allowed_paths],
+            "",
+            "## Verification Commands",
+            *[f"- `{command}`" for command in verification_commands],
+            f"- Worktree: `{worktree_dir}`",
+        ]
+    ).rstrip() + "\n"
+
+
+def _runtime_verification_excerpt_lines(run_dir: Path) -> list[str]:
+    path = run_dir / APP_RUNTIME_VERIFICATION_PATH
+    if not path.exists():
+        return ["- No app runtime verification artifact recorded."]
+    try:
+        payload = read_json(path)
+    except Exception as exc:  # noqa: BLE001 - keep prompt generation robust.
+        return [f"- Could not read `{APP_RUNTIME_VERIFICATION_PATH}`: {type(exc).__name__}: {exc}"]
+    lines = [f"- Status: `{payload.get('status', 'unknown')}`"]
+    for item in payload.get("commands", []) or []:
+        if not isinstance(item, dict):
+            continue
+        lines.append(f"- `{item.get('command', '')}` -> exit `{item.get('exit_code', '')}`")
+        if item.get("stdout_path"):
+            lines.append(f"  - stdout: `{item.get('stdout_path')}`")
+            stdout_excerpt = _runtime_log_excerpt(run_dir, str(item.get("stdout_path", "")))
+            if stdout_excerpt:
+                lines.append(f"    - stdout_excerpt: {stdout_excerpt}")
+        if item.get("stderr_path"):
+            lines.append(f"  - stderr: `{item.get('stderr_path')}`")
+            stderr_excerpt = _runtime_log_excerpt(run_dir, str(item.get("stderr_path", "")))
+            if stderr_excerpt:
+                lines.append(f"    - stderr_excerpt: {stderr_excerpt}")
+    for event in _string_list(payload.get("blocking_events", [])):
+        lines.append(f"- blocking: `{event}`")
+    return lines or ["- No app runtime verification command results recorded."]
+
+
+def _runtime_log_excerpt(run_dir: Path, relative_path: str, *, max_chars: int = 600) -> str:
+    if not relative_path:
+        return ""
+    candidate = (run_dir / relative_path).resolve()
+    try:
+        candidate.relative_to(run_dir.resolve())
+    except ValueError:
+        return ""
+    if not candidate.exists() or not candidate.is_file():
+        return ""
+    text = candidate.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        return ""
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "..."
+    return json.dumps(text, ensure_ascii=False)
 
 
 def _build_state_summary(stage: str, context: Any, allowed_paths: list[str], verification_commands: list[str], worktree_dir: Path) -> str:
@@ -1052,6 +1623,21 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             "## Required Final Response",
             "Return JSON that matches `codex/codex_response_schema.json` exactly.",
             "",
+            "### `risk_events` Field Discipline",
+            "- Use `risk_events` only for problems that should block review or release of this run.",
+            "  Examples: a failing test that was hidden by skipping, schema/contract mismatch, missing required artifact, a prohibited behavior was introduced.",
+            "- Do NOT put the following into `risk_events`; describe them in `summary` or `next_action` instead:",
+            "  - Capability-gap self-disclosure that the implementation already represents explicitly,",
+            "    e.g. \"no external image model is called\", \"image generation is placeholder only\",",
+            "    \"no database; localStorage only\", \"no proxy / captcha / fingerprint\".",
+            "    These are implementation choices consistent with the PRD/contract, not blockers.",
+            "  - Sandbox / runtime environment limits encountered during verification,",
+            "    e.g. `listen EPERM`, `sandboxCwd must be an absolute file URI`,",
+            "    \"manual browser preview not completed because sandbox forbids localhost binding\",",
+            "    DNS/network not reachable, missing local binary.",
+            "    These are environmental, not defects of the generated code.",
+            "- Decision rule: if it would not prevent the next reviewer from approving the diff, keep it out of `risk_events`.",
+            "",
             "## State Summary",
             state_summary.rstrip(),
             "",
@@ -1059,6 +1645,7 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             "- The requested change is represented by a git diff in the worktree.",
             "- The final response names changed files and verification commands actually run.",
             "- Risk events and blockers are explicit and not hidden in prose.",
+            *_app_generation_prompt_lines(context),
             "",
             "## Codex Slice-Loop",
             *_slice_loop_prompt_lines(context),
@@ -1075,6 +1662,45 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             *[f"- `{command}`" for command in verification_commands],
         ]
     ).rstrip() + "\n"
+
+
+def _app_generation_prompt_lines(context: Any) -> list[str]:
+    domain = getattr(context, "domain", None)
+    if getattr(domain, "domain_id", "") != "app_generation":
+        return []
+    run_dir = Path(getattr(context, "run_dir", "."))
+    lines = [
+        "",
+        "## App Generation Runtime Contract",
+        "- Generate `runtime_smoke.js` in the app root.",
+        "- `node --check` is not sufficient: `runtime_smoke.js` must prove the browser entry script initializes without throwing before DOM events are bound.",
+        "- The generated SPA must render first-screen controls with options and bind primary button click handlers; silent no-op buttons are blockers.",
+    ]
+    benchmark_path = run_dir / "benchmark_context.json"
+    if benchmark_path.exists():
+        try:
+            benchmark = read_json(benchmark_path)
+        except Exception:  # noqa: BLE001 - prompt enhancement should not break non-benchmark runs.
+            benchmark = {}
+        instructions = _string_list(benchmark.get("instructions", []))
+        if instructions:
+            lines.extend(["", "## Benchmark-Specific Generation Requirements"])
+            lines.extend(f"- {item}" for item in instructions)
+    
+    # 图片生成类应用结构契约（见 docs/app_generation_prd_to_local_app_spec.md § 图片生成类 PRD 要求）
+    lines.extend([
+        "",
+        "## Image Generation App Structure Contract",
+        "When PRD explicitly requires image generation, main image generation, reference image output, or OpenAI/OpenRouter image capability:",
+        "- Frontend: model selector, provider config status badge (shows 'configured' / 'not configured', NOT the key itself), single/batch generate buttons, result area, error area.",
+        "- Backend: `GET /api/health` returns `{provider, configured, model, message}`; `POST /api/images/generate` reads API key from `process.env` only.",
+        "- Config: `.env.example` with placeholder keys and default model; `README.md` explains server-side `.env` setup.",
+        "- Anchors: Preserve `// === AGENT_EDIT:<id> START ===` and `// === AGENT_EDIT:<id> END ===` comment blocks for future `patch_app` replace_block operations.",
+        "- Forbidden: frontend API_KEY input field, `localStorage` key persistence, `config.json` key persistence.",
+        "",
+    ])
+    
+    return lines
 
 
 def _slice_loop_context_lines(context: Any) -> list[str]:
@@ -2023,7 +2649,9 @@ def _is_non_blocking_codex_risk_note(event: str) -> bool:
     lowered = event.lower()
     if lowered.startswith("note:") or lowered.startswith("non_blocking:") or lowered.startswith("non-blocking:"):
         return True
-    if lowered.startswith("no ") and all(marker in lowered for marker in ("scraping", "captcha", "proxy")):
+    if lowered.startswith(("no ", "no_", "no-")) and all(
+        marker in lowered for marker in ("scraping", "captcha", "proxy")
+    ):
         return True
     return any(all(marker in lowered for marker in marker_set) for marker_set in NON_BLOCKING_CODEX_RISK_NOTE_MARKERS)
 

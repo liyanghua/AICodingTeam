@@ -1,0 +1,34 @@
+hard_requirements:
+- required_outputs_present
+- evidence_required_for_each_conclusion
+- score_formula_required
+- no_data_no_strong_claim
+rules:
+- rule_id: strong_hot_gene
+  description: 强爆款基因：TOP50占比、TOP100占比、支付买家数占比、GMV占比任意2项满足
+  condition: count(top50_ratio>=0.30, top100_ratio>=0.20, buyer_ratio>=0.30, gmv_ratio>=0.30)
+    >= 2
+  output_label: 强爆款基因
+  severity: info
+- rule_id: trend_hot_gene
+  description: 趋势爆款基因：高增速商品占比、关键词搜索增长、买家增长、跨平台内容高热任意2项满足
+  condition: count(high_growth_product_ratio>=0.30, keyword_growth>=0.20, buyer_growth_30d>=0.50,
+    cross_platform_hot=true) >= 2
+  output_label: 趋势爆款基因
+  severity: info
+- rule_id: differentiated_opportunity_gene
+  description: 差异机会基因：评价痛点、问大家顾虑、TOP50承接少、价格带供给不足任意2项满足
+  condition: count(review_painpoint_ratio>=0.10, qa_concern_ratio>=0.10, top50_supply_count<5,
+    price_band_supply_ratio<0.15 and buyer_ratio>=0.25) >= 2
+  output_label: 差异机会基因
+  severity: info
+- rule_id: opportunity_score
+  description: 机会评分=需求明确度20+增长趋势20+竞争强度15+利润空间15+供应链可行性15+差异化强度15
+  condition: total_score >= 85 => 优先立项开发; 70-84 => 小批量测试; 60-69 => 继续观察; <60 => 暂不开发
+  output_label: 机会评分
+  severity: info
+quality_metrics:
+  workflow_node_success_rate: 0.95
+  data_requirement_coverage: 0.9
+  evidence_completeness: 0.95
+  output_schema_validity: 1.0

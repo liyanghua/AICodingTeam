@@ -1,0 +1,45 @@
+skill_id: market_insight
+name: 市场洞察 Skill
+version: 0.1.0
+runtime_compatibility:
+  - openclaw
+  - langgraph
+  - custom_agent_runtime
+
+input_schema:
+  category:
+    type: string
+    required: true
+    description: 三级类目或最小叶子类目
+  product_line:
+    type: string
+    required: true
+  analysis_period:
+    type: string
+    enum: [7d, 30d, monthly, seasonal]
+    default: 30d
+  business_goal:
+    type: string
+    enum: [新品开发, 爆款机会挖掘, 类目市场分析, 竞品突破, 产品升级, 价格带布局]
+  shop_stage:
+    type: string
+    enum: [新店, 成长期店铺, 爆款店铺, 多链接店铺]
+    required: false
+
+outputs:
+  - category_market_analysis_table
+  - top_300_product_analysis_table
+  - keyword_demand_breakdown_table
+  - keyword_root_top20_table
+  - review_qa_painpoint_table
+  - price_band_opportunity_table
+  - competitor_landscape_table
+  - competitor_visual_service_comparison_table
+  - cross_platform_trend_table
+  - product_development_listing_plan
+
+workflow_file: workflow.dag.yaml
+data_requirements_file: data_requirements.yaml
+tool_bindings_file: tool_bindings.yaml
+eval_rules_file: eval_rules.yaml
+evidence_schema_file: evidence_schema.yaml

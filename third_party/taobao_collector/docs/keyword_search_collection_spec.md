@@ -42,6 +42,9 @@ to explain what happened.
      next candidate.
    - Gate on keyword-input-page state before input. The generic word `搜索` is
      not sufficient because Taobao home also contains it.
+   - A search-door page with a focused `android.widget.EditText` / `searchEdit`
+     is a valid keyword-input page even when `历史搜索`, `猜你想搜`, or product
+     recommendation cards are visible below the input.
    - Do not use the orange home `搜索` button as a fallback because it may submit
      a stale query already shown on the home search bar.
    - Do not type if the search page was not reached.
@@ -69,6 +72,14 @@ to explain what happened.
    - Strong markers include: `综合`, `销量`, `店铺`, `宝贝`.
    - Real-list fallback markers include combinations of: `全部`, `品牌`,
      `官方自营`, `已售`, `人加购`, `¥`, `国补专区`, `旗舰店`, `店`.
+   - A result page can still expose the current query through a top
+     `searchEdit` TextView. Do not classify it as `keyword_input` unless the
+     same node is an editable/focused search field; result-list markers win over
+     unrelated focused scroll containers.
+   - If Taobao shows the non-risk search assistant onboarding tip
+     `万能搜升级啦，购物有疑问找AI助手` with a `知道了` button, tap `知道了`,
+     record `taobao_dismiss_search_ai_tip`, and continue waiting for the result
+     page.
    - If result page is not recognized, classify the current hierarchy as:
      `home_like`, `recommendation_like`, `result_like_unrecognized`, or
      `unknown`.
@@ -197,6 +208,7 @@ taobao_tap_home_search_box
 taobao_search_page_reached
 taobao_set_keyword_search_text
 taobao_submit_keyword_search
+taobao_dismiss_search_ai_tip          optional
 taobao_keyword_search_results_reached
 taobao_tap_result_card
 taobao_detail_non_video_image_selected
@@ -264,6 +276,8 @@ Tests must cover:
   is recognized as a result page.
 - Taobao home/recommendation pages are not misclassified as result pages.
 - Taobao home XML with `content-desc="搜索栏"` is not classified as keyword input.
+- Taobao search-door XML with focused `EditText` / `searchEdit` is classified as
+  keyword input even if history and recommendation cards are visible.
 - Keyword search uses detected home search-bar bounds before the calibrated
   fallback coordinate.
 - If tapping the home search bar does not open a keyword input page, the flow
@@ -271,6 +285,8 @@ Tests must cover:
 - uiautomator2 `ADB_KEYBOARD_CLEAR_TEXT` failure falls back to `ADB_INPUT_B64`
   for Chinese keywords.
 - Fallback input failure writes `taobao_keyword_text_input_failed`.
+- Search assistant onboarding tip `万能搜升级啦...知道了` is dismissed as a
+  non-risk prompt before result-page gating continues.
 - Search submit reaching recommendation/history page does not continue to card
   collection.
 - Result-page recognition failure stores XML/screenshot and observed markers.

@@ -28,6 +28,9 @@ class TaobaoConfig:
     detail_media_scan_max: int = 5
     detail_media_swipe_start: tuple[float, float] = (0.82, 0.35)
     detail_media_swipe_end: tuple[float, float] = (0.18, 0.35)
+    max_result_scrolls: int = 10
+    result_page_scroll_start: tuple[float, float] = (0.5, 0.78)
+    result_page_scroll_end: tuple[float, float] = (0.5, 0.34)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TaobaoConfig":
@@ -61,6 +64,15 @@ class TaobaoConfig:
                 payload.get("detail_media_swipe_end", [0.18, 0.35]),
                 "detail_media_swipe_end",
             ),
+            max_result_scrolls=int(payload.get("max_result_scrolls", 10)),
+            result_page_scroll_start=_point(
+                payload.get("result_page_scroll_start", [0.5, 0.78]),
+                "result_page_scroll_start",
+            ),
+            result_page_scroll_end=_point(
+                payload.get("result_page_scroll_end", [0.5, 0.34]),
+                "result_page_scroll_end",
+            ),
         )
         config.validate()
         return config
@@ -81,8 +93,12 @@ class TaobaoConfig:
             raise ValueError("detail_extra_top_n must be >= 0")
         if self.detail_media_scan_max < 1:
             raise ValueError("detail_media_scan_max must be >= 1")
+        if self.max_result_scrolls < 0:
+            raise ValueError("max_result_scrolls must be >= 0")
         _validate_ratio_point(self.detail_media_swipe_start, "detail_media_swipe_start")
         _validate_ratio_point(self.detail_media_swipe_end, "detail_media_swipe_end")
+        _validate_ratio_point(self.result_page_scroll_start, "result_page_scroll_start")
+        _validate_ratio_point(self.result_page_scroll_end, "result_page_scroll_end")
         if not self.taobao_package:
             raise ValueError("taobao_package must not be empty")
         if not self.remote_image_dir.startswith("/sdcard/"):

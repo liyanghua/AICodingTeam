@@ -1,0 +1,29 @@
+type: object
+required:
+- evidence_id
+- skill_run_id
+- step_id
+- claim
+- evidence_type
+- source_data
+properties:
+  evidence_id:
+    type: string
+  skill_run_id:
+    type: string
+  step_id:
+    type: string
+  claim:
+    type: string
+  evidence_type:
+    type: string
+  source_data:
+    type: array
+  computation:
+    type: object
+  rule_hit:
+    type: object
+  confidence:
+    type: number
+    minimum: 0
+    maximum: 1

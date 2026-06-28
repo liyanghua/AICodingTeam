@@ -1,0 +1,41 @@
+tool_bindings:
+  category_top_products_300:
+    primary_tool: internal_api.get_category_top_products
+    fallback_tools:
+      - bi_api.get_market_rank
+      - browser.export_sycm_market_rank
+      - manual_upload.parse_top_products_excel
+
+  category_keywords_top300:
+    primary_tool: internal_api.get_category_keywords
+    fallback_tools:
+      - bi_api.get_category_keywords
+      - browser.export_sycm_keywords
+      - browser.collect_taobao_suggest_keywords
+      - manual_upload.parse_keyword_excel
+
+  competitor_reviews_qa:
+    primary_tool: internal_api.get_competitor_reviews_qa
+    fallback_tools:
+      - browser.collect_taobao_reviews_qa
+      - manual_upload.parse_reviews_qa_excel
+
+  price_band_distribution:
+    primary_tool: compute.price_band_distribution
+    fallback_tools:
+      - internal_api.get_price_band_distribution
+      - manual_upload.parse_price_band_excel
+
+  competitor_landscape:
+    primary_tool: compute.competitor_landscape_from_top_products
+    fallback_tools:
+      - internal_api.get_competitor_landscape
+      - browser.collect_competitor_profile
+      - manual_upload.parse_competitor_excel
+
+  cross_platform_trend_signals:
+    primary_tool: external_web.exa_trend_search
+    fallback_tools:
+      - browser.collect_xhs_high_like_notes
+      - browser.collect_douyin_hot_products
+      - manual_upload.parse_cross_platform_excel

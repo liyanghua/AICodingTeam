@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PRD生成应用 · 可观测工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="app-generation-workbench" class="app-generation-workbench">
+      <header class="app-generation-header">
+        <div>
+          <p class="eyebrow">AI native</p>
+          <h1>PRD生成应用 · 可观测工作台</h1>
+          <p class="subtitle">用一份 PRD 触发完整生成链路，并对每个节点的输入、过程、产物、Skill、tool call、usage、风险与重跑关系做事实级观察。</p>
+        </div>
+        <nav class="app-generation-nav">
+          <a class="ghost small" href="/index.html">返回主工作台</a>
+        </nav>
+      </header>
+
+      <section class="app-generation-shell">
+        <aside id="app-generation-task-list" class="app-generation-task-list" aria-label="任务记录与对比组">
+          <div class="panel-header">
+            <h2>任务与对比组</h2>
+            <button id="app-generation-refresh" type="button" class="ghost small">刷新</button>
+          </div>
+          <form id="app-generation-upload-form" class="app-generation-upload-form">
+            <label for="app-generation-upload-prd">上传 PRD</label>
+            <textarea id="app-generation-upload-prd" placeholder="# App Title&#10;&#10;在此粘贴 PRD 内容…" rows="4"></textarea>
+            <div class="app-generation-upload-file-row">
+              <input type="file" id="app-generation-upload-file" accept=".md,.markdown,.txt" />
+              <label for="app-generation-upload-file" class="file-upload-label">或选择 PRD 文件 (.md)</label>
+            </div>
+            <div class="app-generation-upload-toolbar">
+              <label>
+                Executor:
+                <select id="app-generation-upload-executor">
+                  <option value="codex">Codex</option>
+                  <option value="llm">LLM</option>
+                  <option value="rule">Rule</option>
+                </select>
+              </label>
+              <label>
+                Provider:
+                <select id="app-generation-upload-provider">
+                  <option value="default">default</option>
+                  <option value="aicodemirror">aicodemirror</option>
+                </select>
+              </label>
+              <label>
+                Model:
+                <select id="app-generation-upload-model"></select>
+              </label>
+              <button type="submit" class="primary small">启动生成</button>
+            </div>
+            <p id="app-generation-upload-status" class="upload-status"></p>
+          </form>
+          <div id="app-generation-runs" class="app-generation-runs"></div>
+        </aside>
+
+        <section id="app-generation-node-workspace" class="app-generation-node-workspace" aria-label="节点流与节点详情">
+          <div class="app-generation-pipeline">
+            <div class="panel-header">
+              <h2 id="app-generation-pipeline-title">节点流</h2>
+              <span id="app-generation-pipeline-meta" class="meta"></span>
+            </div>
+            <div id="app-generation-node-list" class="app-generation-node-list" role="list"></div>
+          </div>
+
+          <article id="app-generation-node-detail" class="app-generation-node-detail" aria-live="polite">
+            <header class="app-generation-detail-header">
+              <div>
+                <p class="eyebrow" id="app-generation-node-kicker">选择左侧任务后查看节点详情</p>
+                <h2 id="app-generation-node-title">节点详情</h2>
+                <p id="app-generation-node-summary" class="summary-text"></p>
+              </div>
+              <span id="app-generation-node-status" class="mini-status status-muted">未选择</span>
+            </header>
+
+            <section class="app-generation-detail-card app-generation-app-preview-controls" data-focus-card="app_preview">
+              <div class="panel-header">
+                <h3>应用预览与发布</h3>
+              </div>
+              <div class="app-generation-app-preview-actions">
+                <button id="app-generation-publish-btn" type="button" class="ghost small" disabled>发布应用快照</button>
+                <button id="app-generation-preview-btn" type="button" class="primary small" disabled>启动应用预览</button>
+              </div>
+              <p id="app-generation-app-preview-status" class="meta"></p>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="timeline">
+              <div class="panel-header">
+                <h3>运行 Timeline</h3>
+                <span id="app-generation-timeline-meta" class="meta"></span>
+              </div>
+              <ol id="app-generation-timeline" class="app-generation-timeline"></ol>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="skill_routing">
+              <div class="panel-header">
+                <h3>Skill 路由</h3>
+              </div>
+              <div id="app-generation-skill-routing" class="summary-text"></div>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="variant_comparison">
+              <div class="panel-header">
+                <h3>变体与对比</h3>
+                <span id="app-generation-node-variant-meta" class="meta"></span>
+              </div>
+              <div id="app-generation-variants" class="app-generation-variants"></div>
+              <p id="app-generation-comparison" class="meta"></p>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="project_skills">
+              <div class="panel-header">
+                <h3>Project Skills</h3>
+              </div>
+              <ul id="app-generation-skills" class="app-generation-list"></ul>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="inputs">
+              <div class="panel-header">
+                <h3>输入</h3>
+              </div>
+              <ul id="app-generation-inputs" class="app-generation-list"></ul>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="outputs">
+              <div class="panel-header">
+                <h3>输出</h3>
+              </div>
+              <ul id="app-generation-outputs" class="app-generation-list"></ul>
+            </section>
+
+            <section class="app-generation-detail-card" data-focus-card="evidence">
+              <div class="panel-header">
+                <h3>Tool calls · Usage · Scores · 风险</h3>
+              </div>
+              <div class="app-generation-evidence-grid">
+                <div>
+                  <h4>Tool calls</h4>
+                  <ul id="app-generation-tool-calls" class="app-generation-list"></ul>
+                </div>
+                <div>
+                  <h4>Usage</h4>
+                  <dl id="app-generation-usage" class="app-generation-dl"></dl>
+                </div>
+                <div>
+                  <h4>Scores</h4>
+                  <dl id="app-generation-scores" class="app-generation-dl"></dl>
+                </div>
+                <div>
+                  <h4>风险</h4>
+                  <ul id="app-generation-risks" class="app-generation-list"></ul>
+                </div>
+              </div>
+            </section>
+          </article>
+        </section>
+
+        <aside id="app-generation-preview-rail" class="app-generation-preview-rail" aria-label="文件预览" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">文件预览</p>
+              <h2 id="app-generation-preview-title">未选择文件</h2>
+            </div>
+            <button id="app-generation-preview-close" type="button" class="ghost small">关闭</button>
+          </div>
+          <dl id="app-generation-preview-meta" class="app-generation-dl"></dl>
+          <div id="app-generation-preview-content" class="app-generation-preview-content"></div>
+        </aside>
+
+        <aside id="app-generation-agent-panel" class="app-generation-agent-panel" aria-label="右侧 Agent 协作区">
+          <div class="panel-header">
+            <h2>右侧 Agent</h2>
+            <span id="app-generation-agent-status" class="mini-status status-muted">未连接节点</span>
+          </div>
+          <div class="app-generation-agent-config">
+            <label>
+              <span>Provider</span>
+              <select id="app-generation-provider"></select>
+            </label>
+            <label>
+              <span>Mode</span>
+              <select id="app-generation-agent-mode">
+                <option value="auto">auto · 自动判断</option>
+                <option value="explain">explain · 解释节点</option>
+                <option value="compare">compare · 对比 variant</option>
+                <option value="edit">edit · 建议调整输入</option>
+                <option value="rerun">rerun · 重跑准备</option>
+                <option value="clarify">clarify · 澄清问题</option>
+              </select>
+            </label>
+          </div>
+          <p id="app-generation-provider-message" class="meta"></p>
+
+          <div class="app-generation-agent-context">
+            <span class="meta">node:</span> <code id="app-generation-agent-node">-</code>
+            <span class="meta">variant:</span> <code id="app-generation-agent-variant">-</code>
+            <span class="meta">revision:</span> <code id="app-generation-agent-revision">-</code>
+            <span class="meta">focus:</span> <code id="app-generation-agent-focus">-</code>
+          </div>
+
+          <div id="app-generation-agent-log" class="app-generation-agent-log" aria-live="polite"></div>
+
+          <form id="app-generation-agent-form" class="app-generation-agent-form">
+            <label for="app-generation-agent-input" class="sr-only">发送给 Agent</label>
+            <textarea id="app-generation-agent-input" rows="3" placeholder="向当前节点的 Agent 提问、要求对比或描述调整意图…"></textarea>
+            <div class="app-generation-agent-toolbar">
+              <button type="submit" class="primary">发送</button>
+              <button id="app-generation-rerun" type="button" class="ghost small">从此节点重跑</button>
+            </div>
+          </form>
+          <p id="app-generation-rerun-status" class="meta"></p>
+        </aside>
+      </section>
+    </main>
+    <script src="/app_generation.js"></script>
+  </body>
+</html>

@@ -243,6 +243,7 @@ class TeamRuntime:
         write_json(run_dir / "team_spec.json", self.team.to_dict())
         write_json(run_dir / "domain_spec.json", self.domain.to_dict())
         self._write_memory_recall(record)
+        self._write_app_generation_artifacts_if_needed(record, inputs=dict(inputs or {}))
 
         for agent in self.team.agents:
             gate_failed = self._run_gates_before(agent.id, record)
@@ -360,7 +361,7 @@ class TeamRuntime:
             GateSpec(
                 id="complex_task_ready",
                 before_agent="coder",
-                required_artifacts=COMPLEX_TASK_REQUIRED_ARTIFACTS,
+                required_artifacts=self._complex_task_required_artifacts(),
             ),
             record.run_dir,
         )
@@ -375,6 +376,15 @@ class TeamRuntime:
             missing_artifacts=result.missing_artifacts,
         )
         return result.status != "passed"
+
+    def _complex_task_required_artifacts(self) -> list[str]:
+        metadata = getattr(self.domain, "metadata", {}) or {}
+        extra = metadata.get("required_before_coding_artifacts", []) if isinstance(metadata, dict) else []
+        artifacts: list[str] = []
+        for item in [*COMPLEX_TASK_REQUIRED_ARTIFACTS, *[str(value) for value in extra]]:
+            if item and item not in artifacts:
+                artifacts.append(item)
+        return artifacts
 
     def _missing_declared_outputs(self, agent: AgentSpec, run_dir: Path) -> list[str]:
         return [output for output in agent.outputs if not _artifact_exists(run_dir, output)]
@@ -436,11 +446,37 @@ class TeamRuntime:
         for output_path in ("memory_recall.md", "memory_recall.json"):
             if output_path not in record.output_paths:
                 record.output_paths.append(output_path)
-        self._write_record(record)
         self._write_event(
             record,
             "memory_recall_generated",
             match_count=len(result.get("memory_recall", {}).get("matches", [])),
+        )
+
+    def _write_app_generation_artifacts_if_needed(self, record: TeamRunRecord, *, inputs: dict[str, Any]) -> None:
+        from .app_generation import is_app_generation_domain, prepare_app_generation_artifacts
+
+        if not is_app_generation_domain(self.domain):
+            return
+        try:
+            result = prepare_app_generation_artifacts(
+                run_id=record.run_id,
+                run_dir=record.run_dir,
+                inputs=inputs,
+            )
+        except Exception as exc:  # noqa: BLE001 - app_generation artifacts must not block run start.
+            self._write_event(record, "app_generation_artifacts_failed", error=str(exc))
+            return
+        for output_path in result.get("output_paths", []):
+            if output_path not in record.output_paths:
+                record.output_paths.append(output_path)
+            record.artifacts[Path(output_path).name] = output_path
+        self._write_record(record)
+        self._write_event(
+            record,
+            "app_generation_artifacts_prepared",
+            app_slug=result.get("app_slug"),
+            generated_app_dir=result.get("generated_app_dir"),
+            output_paths=result.get("output_paths", []),
         )
 
     def _write_complex_task_artifacts(self, record: TeamRunRecord, *, inputs: dict[str, Any]) -> bool:

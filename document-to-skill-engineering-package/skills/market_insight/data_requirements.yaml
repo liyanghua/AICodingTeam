@@ -1,0 +1,127 @@
+data_requirements:
+  - id: category_top_products_300
+    description: 获取指定类目行业前300商品榜单
+    required_fields:
+      - rank
+      - shop_name
+      - product_url
+      - product_image
+      - sales_or_pay_buyer_count
+      - gmv_or_transaction_index
+      - price
+      - price_band
+      - product_type
+      - material
+      - function
+      - style
+      - scene
+      - main_selling_point
+      - growth_7d
+      - growth_30d
+    freshness: 30d
+    preferred_sources:
+      - internal_dw.category_top_products
+      - bi_api.market_insight_rank
+      - browser.sycm_market_rank_export
+      - browser.diantoushi_export
+    fallback_sources:
+      - manual_upload.top_products_excel
+
+  - id: category_keywords_top300
+    description: 获取类目TOP300关键词及搜索人气、增长率、竞争度
+    required_fields:
+      - keyword
+      - search_popularity
+      - growth_rate
+      - competition_index
+      - click_rate
+      - conversion_rate
+      - root_terms
+      - demand_type
+    freshness: 30d
+    preferred_sources:
+      - internal_dw.category_keyword_rank
+      - bi_api.category_keywords
+      - browser.sycm_keyword_export
+      - browser.taobao_suggest_collect
+    fallback_sources:
+      - manual_upload.keyword_excel
+
+  - id: competitor_reviews_qa
+    description: 获取同类型排名前10竞品的评价、问大家、中差评、追评
+    required_fields:
+      - competitor_product_url
+      - review_text
+      - sentiment
+      - rating
+      - qa_question
+      - qa_answer
+      - painpoint_type
+      - sku_name
+      - created_at
+    freshness: 90d
+    preferred_sources:
+      - internal_dw.competitor_reviews_qa
+      - browser.taobao_reviews_qa_collect
+    fallback_sources:
+      - manual_upload.review_qa_excel
+
+  - id: price_band_distribution
+    description: 获取各价格带商品数、销量占比、GMV占比、竞争强度、毛利空间
+    required_fields:
+      - price_band
+      - product_count
+      - sales_ratio
+      - gmv_ratio
+      - avg_order_value
+      - competitor_count
+      - gross_margin_estimate
+    freshness: 30d
+    preferred_sources:
+      - internal_dw.price_band_distribution
+      - compute.from_category_top_products
+    fallback_sources:
+      - manual_upload.price_band_excel
+
+  - id: competitor_landscape
+    description: 获取直接竞品、学习竞品、防御竞品、趋势竞品、弱竞品信息
+    required_fields:
+      - competitor_type
+      - shop_name
+      - product_url
+      - price
+      - sku_count
+      - main_selling_point
+      - visual_structure
+      - review_painpoints
+      - traffic_structure
+      - competitor_strength
+    freshness: 30d
+    preferred_sources:
+      - internal_dw.competitor_landscape
+      - browser.taobao_competitor_collect
+      - compute.from_top_products_and_reviews
+    fallback_sources:
+      - manual_upload.competitor_excel
+
+  - id: cross_platform_trend_signals
+    description: 获取小红书、抖音、公开网页中的趋势内容、热点元素、评论需求
+    required_fields:
+      - platform
+      - content_url
+      - likes_or_sales
+      - topic
+      - product_elements
+      - audience
+      - scene
+      - comment_needs
+      - taobao_supply_status
+      - migration_method
+      - opportunity_level
+    freshness: 30d
+    preferred_sources:
+      - browser.xhs_high_like_notes
+      - browser.douyin_hot_products
+      - external_web.exa_trend_search
+    fallback_sources:
+      - manual_upload.cross_platform_excel
