@@ -357,7 +357,7 @@ def _load_benchmark_context(source: str) -> dict[str, Any] | None:
             "Image providers must be explicit, server-side, and configured through placeholders or local environment only.",
             "Provider setup failures must be visible to users and must not persist secrets.",
             "For OpenRouter image generation, use POST https://openrouter.ai/api/v1/images with input_references; do not use chat/completions plus modalities as the image path.",
-            "Use openai/gpt-image-1 as the default OpenRouter image model when OPENROUTER_IMAGE_MODEL is empty.",
+            "Use openai/gpt-5.4-image-2 as the default OpenRouter image model when OPENROUTER_IMAGE_MODEL is empty.",
             "Local iteration must understand 第 X 张第 Y 层, update the targeted prompt layer, show visible feedback, and mark that image for regeneration.",
         ],
     }
@@ -1101,7 +1101,7 @@ function handleHealthCheck(req, res) {{
   const openaiKey = process.env.OPENAI_API_KEY;
   const configured = !!(openrouterKey || openaiKey);
   const provider = openrouterKey ? 'openrouter' : (openaiKey ? 'openai' : 'none');
-  const model = process.env.OPENROUTER_IMAGE_MODEL || process.env.OPENAI_IMAGE_MODEL || 'openai/gpt-image-1';
+  const model = process.env.OPENROUTER_IMAGE_MODEL || process.env.OPENAI_IMAGE_MODEL || 'openai/gpt-5.4-image-2';
   
   res.statusCode = 200;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1141,7 +1141,7 @@ function handleImageGenerate(req, res) {{
       return;
     }}
     
-    const model = payload.model || process.env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-image-1';
+    const model = payload.model || process.env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-5.4-image-2';
     const prompt = payload.prompt || '生成一张商业主图';
     
     // 调用 OpenRouter /api/v1/images（OpenRouter 图片协议，见 docs/prd_to_local_app_spec.md）
@@ -1250,8 +1250,8 @@ server.listen(PORT, HOST, () => {{
     <div class="card">
       <label for="model-select">选择模型：</label>
       <select id="model-select">
+        <option value="openai/gpt-5.4-image-2">openai/gpt-5.4-image-2</option>
         <option value="openai/gpt-image-1">openai/gpt-image-1</option>
-        <option value="openai/dall-e-3">openai/dall-e-3</option>
       </select>
     </div>
     <!-- === AGENT_EDIT:model-selector END === -->
@@ -1402,7 +1402,7 @@ button.primary:hover {
     app_js = f"""const STATE_KEY = '{app_slug}-model';
 
 // Load model selection from localStorage (NOT API_KEY)
-let selectedModel = 'openai/gpt-image-1';
+let selectedModel = 'openai/gpt-5.4-image-2';
 try {{
   const stored = localStorage.getItem(STATE_KEY);
   if (stored) {{
@@ -1515,7 +1515,7 @@ document.addEventListener('DOMContentLoaded', () => {{
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
 
 # OpenRouter 图片模型（默认）
-OPENROUTER_IMAGE_MODEL=openai/gpt-image-1
+OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2
 
 # 或使用 OpenAI 直连
 # OPENAI_API_KEY=sk-your-openai-key-here
@@ -1560,14 +1560,14 @@ node server.js
 
 ```dotenv
 OPENROUTER_API_KEY=sk-or-v1-your-real-key-here
-OPENROUTER_IMAGE_MODEL=openai/gpt-image-1
+OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2
 ```
 
 ### 方式 2：启动前 export 环境变量
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-v1-your-real-key-here
-export OPENROUTER_IMAGE_MODEL=openai/gpt-image-1
+export OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2
 node server.js
 ```
 

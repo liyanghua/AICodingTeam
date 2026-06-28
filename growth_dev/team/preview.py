@@ -19,6 +19,23 @@ ALLOWED_COMMANDS = frozenset({"node", "python3", "python"})
 ALLOWED_DIR_MARKER = "generated_apps"
 PORT_SCAN_LIMIT = 50
 HEALTH_POLL_INTERVAL = 0.1
+ENV_WHITELIST = frozenset(
+    {
+        "IMAGE_PROVIDER",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_API_BASE_URL",
+        "OPENROUTER_IMAGE_MODEL",
+        "OPENROUTER_IMAGE_SIZE",
+        "OPENROUTER_IMAGE_QUALITY",
+        "OPENROUTER_IMAGE_OUTPUT_FORMAT",
+        "IMAGE_REQUEST_TIMEOUT_MS",
+        "OPENAI_API_KEY",
+        "OPENAI_IMAGE_MODEL",
+        "OPENAI_IMAGE_SIZE",
+        "OPENAI_IMAGE_QUALITY",
+        "OPENAI_IMAGE_OUTPUT_FORMAT",
+    }
+)
 
 
 @dataclass
@@ -31,6 +48,7 @@ class PreviewRunRequest:
     health_path: str = "/"
     health_timeout_seconds: float = 5.0
     repo_root: Path = field(default_factory=lambda: Path("."))
+    inject_env: bool = True
 
 
 @dataclass
@@ -96,6 +114,22 @@ def wait_for_health(url: str, *, timeout: float) -> tuple[bool, str]:
     return False, f"health check timeout after {timeout}s ({last_error})"
 
 
+def _inject_preview_env(repo_root: Path) -> dict[str, str]:
+    env_path = repo_root / ".env"
+    if not env_path.exists():
+        return {}
+    injected: dict[str, str] = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if key in ENV_WHITELIST:
+            injected[key] = value.strip().strip("'\"")
+    return injected
+
+
 def _validate_request(request: PreviewRunRequest) -> None:
     resolved = request.generated_app_dir.resolve()
     if ALLOWED_DIR_MARKER not in resolved.parts:
@@ -126,6 +160,8 @@ def start_preview(request: PreviewRunRequest, *, runs_dir: Path) -> PreviewRunRe
     url = f"http://127.0.0.1:{port}{request.health_path}"
 
     env = dict(os.environ)
+    if request.inject_env:
+        env.update(_inject_preview_env(request.repo_root.resolve()))
     env["PORT"] = str(port)
     env["PREVIEW_PORT"] = str(port)
 

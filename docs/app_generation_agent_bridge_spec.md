@@ -688,8 +688,11 @@ dashboard 透传规则：
 | `verify_patch` | 用户要求验证刚才修改或重跑 smoke | `verify_patch` |
 | `rollback_patch` | 用户要求撤回已应用 patch | `rollback_patch` |
 | `promote_patch_to_generation_rule` | 用户要求以后生成也遵守本次修复 | `promote_patch_to_generation_rule` |
+| `delegate_code_repair` | 修复需要完整代码上下文、同文件多处联动修改或无法用单个稳定锚点表达 | 委托 Code Agent 生成 patch |
 
 当 `focus.card="app_preview"` 且用户消息包含“报错 / not configured / timeout / 模型 / provider / API key / 生图 / 按钮 / 下载 / 局部迭代”等信号时，`auto` 必须优先解析为 `patch_app` 或 `diagnose_app_bug`，不得只解释当前节点。
+
+短期实现中，`patch_app` 只用于锚点明确的小范围已发布应用修复。若修复需要对同一个文件多个分散区域做联动修改，右侧 Agent 不应继续构造多个 `replace_text`，而应输出 `delegate_code_repair` 或使用单个 `replace_block` 重写一个已存在的 `AGENT_EDIT` 区间。
 
 ### PatchSet action
 
@@ -716,12 +719,43 @@ dashboard 透传规则：
 
 PatchSet 规则：
 
-- `target_path` 必须以 `generated_apps/<slug>/` 开头，不得指向 worktree、`codex/` 或仓库源码。
+- `target_path` 必须是完整 run-relative 路径 `generated_apps/<slug>/<file>`，例如 `generated_apps/input-prd/server.js`。不得写成 `<slug>/server.js`、`server.js`、`worktree/generated_apps/<slug>/server.js` 或绝对路径。
+- `target_path` 不得指向 worktree、`codex/`、仓库源码、`.env`、`node_modules`、`app_publish.json` 或任意 secret 文件。
 - v1 `edit_kind` 支持 `replace_block`、`append`、`create_file`、`replace_text`。
 - `replace_text` 必须精确匹配 `old_content`；任一 patch 不匹配则整个 PatchSet dry-run 失败。
+- 短期实现要求一个 PatchSet 内同一 `target_path` 只能出现一次。多处修改同一文件时，必须合并为单个 patch。
+- 同一文件多处修改的首选方式是 `replace_block`，以一个 `// === AGENT_EDIT:<id> START ===` 锚点替换整个区间。不要输出多个指向同一文件的 `replace_text`。
 - dry-run 不写文件，只返回整体 diff、风险和验证计划。
 - apply 必须先校验全部 patch，再写任何文件；任一失败时保持原文件不变。
 - apply 成功后写 `app_patches/` 证据，触发验证；若 preview 正在运行，触发两阶段重启。
+
+### delegate_code_repair action
+
+`delegate_code_repair` 是长期修复路径。它把右侧 Agent 理解到的问题交给中间 Code Agent，由 Code Agent 读取完整应用上下文并生成可确认 patch。
+
+```json
+{
+  "type": "delegate_code_repair",
+  "summary": "委托 Code Agent 修复图片模型配置",
+  "target": "published_app",
+  "problem_source": "app_preview",
+  "requires_confirmation": true,
+  "repair_request": {
+    "app_slug": "input-prd",
+    "problem": "单张生图仍使用 gpt-image-1，未读取 OPENROUTER_IMAGE_MODEL",
+    "constraints": ["只修改当前已发布应用", "不重跑 PRD", "保留现有工作流"],
+    "expected_behavior": ["服务端优先读取 OPENROUTER_IMAGE_MODEL", "前端请求不得覆盖服务端模型"],
+    "verification": ["node --check server.js", "node --check public/app.js", "node runtime_smoke.js"]
+  }
+}
+```
+
+协议边界：
+
+- 右侧 PI-Agent 只产出 `repair_request`，不直接写文件。
+- Code Agent 是唯一代码修改执行者；Codex、PI-code 或其他 provider 必须统一挂到 `CodeAgentExecutor`。
+- Code Agent 输出仍必须走 dry-run diff、用户确认、apply、验证、证据记录和预览重启。
+- `delegate_code_repair` 不等于 `rerun_from_node`：它修的是当前已发布快照，不重跑完整 PRD 流程。
 
 ### verify / rollback / promote actions
 

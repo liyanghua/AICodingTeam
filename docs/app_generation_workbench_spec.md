@@ -66,6 +66,8 @@
 - usage：token、耗时、估算成本。
 - scores：产品效果、工程可执行性、验收覆盖、风险。
 
+`implementation` 节点的执行过程必须支持 Codex 实时进度展示，规范见 [`docs/app_generation_codex_observability_spec.md`](app_generation_codex_observability_spec.md)。执行过程卡片不得只显示“运行中”；当 Codex 已启动但尚未产出最终 diff 时，必须展示最近的 `CodexProgressEvent`，例如“启动 Code Agent”“运行命令”“修改文件”“运行验证”“生成候选 diff”。如果 30 秒没有新事件且最终状态未出现，显示“Code Agent 仍在运行，暂无新输出”。
+
 点击任意节点后，中间区域必须切换到该节点详情，右侧 Agent 区必须同步当前 `NodeContext`。
 
 点击任意详情卡片或中间产物文件时，右侧 Agent 区还必须同步 `AgentInteractionContext`：
@@ -207,6 +209,8 @@
 - 选择某个 variant 作为下游输入。
 - 从当前节点触发重跑。
 - 向用户提出澄清问题。
+
+当右侧 Agent 触发 `delegate_code_repair` 时，右侧 Agent 区必须展示「Code Agent 修复进度」卡片。该卡片从 `app_repairs/<repair_id>/progress_status.json` 和 `progress.jsonl` 读取状态，展示已接收修复请求、已复制发布快照、已启动 Codex、正在执行、正在验证、候选 diff 已生成或失败原因。该卡片只展示摘要和受控日志引用，不展示完整 prompt、源码、stdout 或 secret。
 
 Agent 输出只能成为可确认动作或可追溯 patch；任何对 artifact 或已发布应用的修改必须先落 patch 文件再覆写，禁止无证据原地覆盖。禁止直接修改 `runs/<run_id>/codex/` 原始 Codex 输出。
 

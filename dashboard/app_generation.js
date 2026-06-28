@@ -337,6 +337,7 @@ function agentActionTitle(action) {
     suggest_artifact_regeneration: "重跑当前产物",
     patch_artifact: "修改产物",
     patch_app: "修改已发布应用",
+    delegate_code_repair: "委托 Code Agent 修复",
     rerun_from_node: "从节点重跑",
     select_variant: "切换变体",
     ask_clarification: "澄清问题",
@@ -999,6 +1000,22 @@ async function patchAppFile(runId, payload) {
   });
 }
 
+async function startDelegateCodeRepair(runId, payload) {
+  return fetchJSON(`/api/app-generation/runs/${encodeURIComponent(runId)}/delegate-code-repair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function applyDelegateCodeRepair(runId, payload) {
+  return fetchJSON(`/api/app-generation/runs/${encodeURIComponent(runId)}/delegate-code-repair/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 function renderDiffLines(diffText) {
   const container = el("pre", { className: "app-generation-diff-body" });
   if (!diffText) {
@@ -1365,6 +1382,10 @@ async function handleAgentAction(action) {
     await handlePatchAppAction(action);
     return;
   }
+  if (action.type === "delegate_code_repair") {
+    await handleDelegateCodeRepairAction(action);
+    return;
+  }
   if (action.type === "patch_artifact") {
     appendAgentLog("system", `patch_artifact 暂未在 UI 接线（target_node=${action.target_node || "-"}，target_path=${action.target_path || "-"}）。`);
     return;
@@ -1386,40 +1407,129 @@ async function handleAgentAction(action) {
   appendAgentLog("system", `${agentActionTitle(action)} 已记录，暂无自动执行步骤。`);
 }
 
+async function handleDelegateCodeRepairAction(action) {
+  if (!state.selectedRunId) {
+    appendAgentLog("system", "delegate_code_repair 需要先选择 run。");
+    return;
+  }
+  const repairRequest = action.repair_request || {};
+  if (!repairRequest || typeof repairRequest !== "object") {
+    appendAgentLog("system", "delegate_code_repair 缺少 repair_request。");
+    return;
+  }
+  appendAgentLog("system", "正在委托 Code Agent 准备候选修复 diff…");
+  let prepared;
+  try {
+    prepared = await startDelegateCodeRepair(state.selectedRunId, {
+      repair_request: repairRequest,
+      action_id: action.action_id || "",
+      agent_provider: action.source || action.provider || "",
+    });
+  } catch (err) {
+    appendAgentLog("system", `delegate_code_repair prepare 失败：${err.message}`);
+    return;
+  }
+  const risks = Array.isArray(prepared.risk_events) ? prepared.risk_events : [];
+  const blockers = Array.isArray(prepared.blockers) ? prepared.blockers : [];
+  appendAgentLog(
+    "system",
+    `Code Agent 候选修复状态：${prepared.status || "unknown"} · 改动 ${(prepared.changed_files || []).length} 个文件` +
+      (risks.length || blockers.length ? ` · 风险/阻塞 ${risks.length + blockers.length}` : "")
+  );
+  if (prepared.status !== "prepared") {
+    appendAgentLog("system", "候选修复未通过 prepare，旧应用未修改。", prepared);
+    return;
+  }
+  const userConfirmed = await showDiffModal({
+    targetPath: (prepared.changed_files || []).join("，") || prepared.app_slug || "published app",
+    editKind: "delegate_code_repair",
+    summary: action.summary || repairRequest.problem || "Code Agent 候选修复",
+    diff: prepared.diff || "",
+  });
+  if (!userConfirmed) {
+    appendAgentLog("system", "用户取消了 delegate_code_repair apply，旧应用未修改。");
+    return;
+  }
+  appendAgentLog("system", "正在应用 Code Agent 候选修复并重启预览…");
+  try {
+    const applied = await applyDelegateCodeRepair(state.selectedRunId, {
+      repair_id: prepared.repair_id,
+      action_id: action.action_id || "",
+      summary: action.summary || repairRequest.problem || "",
+      agent_provider: action.source || action.provider || "",
+    });
+    const restart = applied.restart || {};
+    const restartLine = restart.status
+      ? `重启：${restart.status}${restart.new_pid ? ` · 新 pid=${restart.new_pid}` : ""}${restart.url ? ` · ${restart.url}` : ""}`
+      : "未触发重启（预览未启动）";
+    appendAgentLog("system", `delegate_code_repair 已应用。${restartLine}`);
+    if (restart.url && state.appPreview) {
+      const iframe = document.querySelector(".app-generation-app-preview-iframe");
+      if (iframe) iframe.src = restart.url + "?t=" + Date.now();
+      state.appPreview = { ...state.appPreview, url: restart.url, port: restart.new_port, pid: restart.new_pid };
+    }
+    await refreshNodeContext();
+  } catch (err) {
+    appendAgentLog("system", `delegate_code_repair apply 失败：${err.message}`);
+  }
+}
+
 async function handlePatchAppAction(action) {
   if (!state.selectedRunId) {
     appendAgentLog("system", "patch_app 需要先选择 run。");
     return;
   }
-  const targetPath = action.target_path || "";
-  const editKind = action.edit_kind || "";
-  const newContent = action.new_content || "";
+  const patches = Array.isArray(action.patches) ? action.patches : [];
+  const targetPath = action.target_path || patches[0]?.target_path || "";
+  const editKind = action.edit_kind || patches[0]?.edit_kind || "";
   const summary = action.summary || action.patch_summary || "";
-  if (!targetPath || !editKind) {
+  const patchPayload = {
+    summary,
+    action_id: action.action_id || "",
+    patch_set_id: action.patch_set_id || "",
+    problem_source: action.problem_source || "",
+    preserve_capabilities: Array.isArray(action.preserve_capabilities) ? action.preserve_capabilities : [],
+    verification: Array.isArray(action.verification) ? action.verification : [],
+  };
+  if (patches.length) {
+    patchPayload.patches = patches.map((patch) => ({
+      target_path: patch.target_path || "",
+      edit_kind: patch.edit_kind || "",
+      new_content: patch.new_content || "",
+      old_content: patch.old_content || "",
+      anchor: patch.anchor || "",
+      summary: patch.summary || summary,
+    }));
+  } else {
+    patchPayload.target_path = targetPath;
+    patchPayload.edit_kind = editKind;
+    patchPayload.new_content = action.new_content || "";
+    patchPayload.old_content = action.old_content || "";
+    patchPayload.anchor = action.anchor || "";
+  }
+
+  const invalidPatch = patches.length
+    ? patchPayload.patches.find((patch) => !patch.target_path || !patch.edit_kind)
+    : (!targetPath || !editKind);
+  if (invalidPatch) {
     appendAgentLog("system", `patch_app 缺少 target_path 或 edit_kind（target_path=${targetPath || "-"}，edit_kind=${editKind || "-"}）。`);
     return;
   }
 
-  appendAgentLog("system", `正在预览 patch_app 改动（${targetPath} · ${editKind}）…`);
+  const targetLabel = patches.length > 1 ? `${patches.length} 个文件` : targetPath;
+  const editLabel = patches.length > 1 ? "PatchSet" : editKind;
+  appendAgentLog("system", `正在预览 patch_app 改动（${targetLabel} · ${editLabel}）…`);
   let dryRunResult;
   try {
-    dryRunResult = await patchAppFile(state.selectedRunId, {
-      target_path: targetPath,
-      edit_kind: editKind,
-      new_content: newContent,
-      summary,
-      anchor: action.anchor || "",
-      action_id: action.action_id || "",
-      dry_run: true,
-    });
+    dryRunResult = await patchAppFile(state.selectedRunId, { ...patchPayload, dry_run: true });
   } catch (err) {
     appendAgentLog("system", `patch_app dry_run 失败：${err.message}`);
     return;
   }
 
   const userConfirmed = await showDiffModal({
-    targetPath,
-    editKind,
+    targetPath: patches.length > 1 ? (dryRunResult.patches || []).map((patch) => patch.target_path).join("，") : targetPath,
+    editKind: editLabel,
     summary,
     diff: dryRunResult.diff || "",
   });
@@ -1429,16 +1539,9 @@ async function handlePatchAppAction(action) {
     return;
   }
 
-  appendAgentLog("system", `正在应用 patch_app（${targetPath} · ${editKind}）…`);
+  appendAgentLog("system", `正在应用 patch_app（${targetLabel} · ${editLabel}）…`);
   try {
-    const result = await patchAppFile(state.selectedRunId, {
-      target_path: targetPath,
-      edit_kind: editKind,
-      new_content: newContent,
-      summary,
-      anchor: action.anchor || "",
-      action_id: action.action_id || "",
-    });
+    const result = await patchAppFile(state.selectedRunId, patchPayload);
     const restart = result.restart || {};
     const restartLine = restart.status
       ? `重启：${restart.status}${restart.new_pid ? ` · 新 pid=${restart.new_pid}` : ""}${restart.url ? ` · ${restart.url}` : ""}`

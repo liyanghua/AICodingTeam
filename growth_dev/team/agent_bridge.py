@@ -14,6 +14,7 @@ Design contract (see docs/app_generation_agent_bridge_spec.md):
 """
 
 import atexit
+import hashlib
 import json
 import os
 import re
@@ -55,6 +56,13 @@ PI_ALLOWED_ACTION_TYPES: tuple[str, ...] = (
     "rerun_from_node",
     "select_variant",
     "ask_clarification",
+    "patch_app",
+    "delegate_code_repair",
+    "patch_artifact",
+    "diagnose_app_bug",
+    "verify_patch",
+    "rollback_patch",
+    "promote_patch_to_generation_rule",
 )
 
 _PI_TRAILING_ACTIONS_PROTOCOL = (
@@ -64,7 +72,13 @@ _PI_TRAILING_ACTIONS_PROTOCOL = (
     "  {\"actions\": [{\"type\": \"...\", \"summary\": \"...\", \"requires_confirmation\": true}]}\n"
     "  ```\n"
     f"- type 必须取自：{', '.join(PI_ALLOWED_ACTION_TYPES)}。\n"
-    "- 不要在回答中夹带或复述文件原文；建议改动放进 patch_summary / override_instructions。\n"
+    "- app_preview 下遇到报错、not configured、timeout、模型、provider、API key、生图、按钮、下载、局部迭代，优先输出 patch_app 或 delegate_code_repair，不要只解释节点。\n"
+    "- 路由：单 token / 单锚点可逐字定位（换模型名、改文案、单点配置）→ patch_app；多文件 / 加功能 / 改逻辑 / 跨函数联动 / 说不清具体行 → delegate_code_repair。\n"
+    "- patch_app 使用 PatchSet：{\"type\":\"patch_app\",\"patches\":[{\"target_path\":\"generated_apps/<slug>/server.js\",\"edit_kind\":\"replace_text\",\"old_content\":\"从 app_patch_targets.agent_edit_anchors 逐字复制\",\"new_content\":\"修改后内容\"}],\"preserve_capabilities\":[\"已通过能力\"],\"verification\":[\"node --check server.js\",\"GET /api/health\"],\"problem_source\":\"app_preview\",\"requires_confirmation\":true}。\n"
+    "- old_content 必须从 AgentPromptContext.app_patch_targets[].agent_edit_anchors[].old_content 逐字复制，不允许凭空生造。\n"
+    "- delegate_code_repair 只描述问题与目标，不写 diff：{\"type\":\"delegate_code_repair\",\"target\":\"published_app\",\"problem_source\":\"app_preview\",\"repair_request\":{\"app_slug\":\"<slug>\",\"problem\":\"问题陈述\",\"constraints\":[\"只修改当前已发布应用\",\"不重跑 PRD\",\"保留现有工作流\"],\"expected_behavior\":[\"期望行为\"],\"verification\":[\"node --check server.js\"]},\"requires_confirmation\":true}。\n"
+    "- 无法定位唯一锚点、或改动跨多处时，输出 delegate_code_repair 交给 Code Agent，不要输出空 patches 的 patch_app，也不要硬凑多个 replace_text。\n"
+    "- 不要在回答中夹带或复述完整文件原文；建议改动放进 PatchSet。\n"
     "- 若没有可执行建议，省略该 JSON 块即可。"
 )
 
@@ -119,6 +133,67 @@ def _parse_trailing_actions(
             normalized["context_revision"] = context_revision
         cleaned.append(normalized)
     return text[: match.start()].rstrip(), cleaned
+
+
+def _patch_app_action_is_executable(action: dict[str, Any]) -> bool:
+    if action.get("type") != "patch_app":
+        return True
+    patches = action.get("patches")
+    if isinstance(patches, list) and patches:
+        return all(
+            isinstance(patch, dict)
+            and bool(str(patch.get("target_path") or "").strip())
+            and bool(str(patch.get("edit_kind") or "").strip())
+            for patch in patches
+        )
+    return bool(str(action.get("target_path") or "").strip() and str(action.get("edit_kind") or "").strip())
+
+
+def _actions_have_patch_app(actions: list[dict[str, Any]]) -> bool:
+    return any(action.get("type") == "patch_app" and _patch_app_action_is_executable(action) for action in actions)
+
+
+def _safe_actions_with_patch_fallback(
+    *,
+    actions: list[dict[str, Any]],
+    node_context: dict[str, Any],
+    interaction_context: dict[str, Any] | None,
+    resolved_intent: str,
+    user_message: str,
+    provider_text: str,
+    prompt_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    safe_actions = [action for action in actions if _patch_app_action_is_executable(action)]
+    if resolved_intent == "patch_app" and not _actions_have_patch_app(safe_actions):
+        fallback_actions = _fallback_actions_for_provider_text(
+            node_context=node_context,
+            interaction_context=interaction_context,
+            resolved_intent=resolved_intent,
+            user_message=user_message,
+            provider_text=provider_text,
+            prompt_context=prompt_context,
+        )
+        if fallback_actions:
+            if _actions_have_patch_app(fallback_actions):
+                return [action for action in safe_actions if action.get("type") != "patch_app"] + fallback_actions
+            return safe_actions or fallback_actions
+        return safe_actions
+    if resolved_intent == "delegate_code_repair" and not any(
+        action.get("type") == "delegate_code_repair" for action in safe_actions
+    ):
+        fallback_actions = _fallback_actions_for_provider_text(
+            node_context=node_context,
+            interaction_context=interaction_context,
+            resolved_intent=resolved_intent,
+            user_message=user_message,
+            provider_text=provider_text,
+            prompt_context=prompt_context,
+        )
+        if fallback_actions:
+            return safe_actions + [
+                action for action in fallback_actions if action.get("type") == "delegate_code_repair"
+            ]
+    return safe_actions
 
 
 def _redact_text(value: str) -> str:
@@ -244,7 +319,11 @@ def _resolve_intent(
             # the mode dropdown.
             requested = "auto"
 
-    wants_rerun = any(token in message for token in ("重跑", "重新生成", "重新跑", "再生成", "再跑")) or "rerun" in text
+    negates_rerun = any(token in message for token in ("不重跑", "不要重跑", "别重跑", "不用重跑")) or "do not rerun" in text or "don't rerun" in text
+    wants_rerun = (
+        not negates_rerun
+        and (any(token in message for token in ("重跑", "重新生成", "重新跑", "再生成", "再跑")) or "rerun" in text)
+    )
     if wants_rerun:
         artifact_words = any(token in message for token in ("文件", "产物", "基于这个", "当前"))
         if artifact_ref and _operation_allowed(allowed, "suggest_artifact_regeneration") and (
@@ -264,6 +343,17 @@ def _resolve_intent(
         return "explain_outputs"
     if any(token in message for token in ("对比", "差异", "哪个更好", "成本")) or "compare" in text or "usage" in text or "token" in text:
         return allowed_or_clarify("compare_variants")
+    if _mentions_app_repair(message):
+        if _mentions_complex_repair(message) and _operation_allowed(allowed, "delegate_code_repair"):
+            return "delegate_code_repair"
+        if _operation_allowed(allowed, "patch_app"):
+            return "patch_app"
+        if _operation_allowed(allowed, "delegate_code_repair"):
+            return "delegate_code_repair"
+        if _is_app_preview_focus(interaction_context) and _operation_allowed(allowed, "diagnose_app_bug"):
+            return "diagnose_app_bug"
+        if _is_app_preview_focus(interaction_context):
+            return "ask_clarification"
     if any(token in message for token in ("修改", "补充", "调整", "改一下", "改成")) or "patch" in text or "override" in text:
         if artifact_ref and _operation_allowed(allowed, "suggest_artifact_patch"):
             return "suggest_artifact_patch"
@@ -292,13 +382,279 @@ def _artifact_prompt_items(items: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _is_app_preview_focus(interaction_context: dict[str, Any] | None) -> bool:
+    focus = _interaction_focus(interaction_context)
+    return str(focus.get("card", "")) == "app_preview" or str(focus.get("view_mode", "")) == "app_preview"
+
+
+def _mentions_app_repair(message: str) -> bool:
+    text = message.lower()
+    chinese_tokens = ("报错", "模型", "生图", "按钮", "下载", "局部迭代", "没反应", "无法", "失败", "换成", "改成")
+    english_tokens = ("not configured", "timeout", "provider", "api key", "openrouter", "gpt-image", "gpt-5.4", "button", "download", "error")
+    return any(token in message for token in chinese_tokens) or any(token in text for token in english_tokens)
+
+
+def _mentions_complex_repair(message: str) -> bool:
+    """复杂修复语义：跨多处 / 加功能 / 改逻辑 / 说不清具体行，应委托 Code Agent。"""
+    text = message.lower()
+    chinese_tokens = (
+        "新增", "增加", "加一个", "加个", "添加", "功能", "重构", "逻辑", "流程",
+        "联动", "上传", "状态", "步骤", "改写", "支持", "集成", "校验", "重试",
+        "多处", "多个文件", "整体", "交互", "跨文件",
+    )
+    english_tokens = ("refactor", "feature", "implement", "workflow", "retry", "validation", "integrate")
+    return any(token in message for token in chinese_tokens) or any(token in text for token in english_tokens)
+
+
+def _file_summary(rel_path: str) -> str:
+    if rel_path == "server.js":
+        return "Node 本地服务入口，通常包含 health、静态资源和图片生成路由。"
+    if rel_path == "public/app.js":
+        return "前端交互逻辑，通常包含模型选择、按钮事件和 API 调用。"
+    if rel_path == "public/index.html":
+        return "前端页面结构，通常包含表单、按钮和模型选择控件。"
+    if rel_path == "public/styles.css":
+        return "前端样式文件。"
+    if rel_path == ".env.example":
+        return "服务端环境变量占位模板，不应包含真实 secret。"
+    if rel_path == "README.md":
+        return "生成应用的本地运行和配置说明。"
+    return "可 patch 的已发布应用文本文件。"
+
+
+def _anchor_purpose(line: str) -> str:
+    lowered = line.lower()
+    if "gpt-image-1" in lowered or "openrouter_image_model" in lowered or "openai_image_model" in lowered:
+        return "图片模型默认值"
+    if "image_provider" in lowered or "openrouter_api_key" in lowered or "openai_api_key" in lowered:
+        return "图片 provider 配置"
+    if "/api/images/generate" in lowered or "/api/health" in lowered:
+        return "服务端图片/健康检查接口"
+    if "button" in lowered or "生图" in line or "生成" in line:
+        return "前端按钮或生成交互"
+    if "download" in lowered:
+        return "下载交互"
+    return "可疑修复锚点"
+
+
+def _build_app_patch_targets(node_context: dict[str, Any]) -> list[dict[str, Any]]:
+    run_dir_raw = node_context.get("run_dir")
+    app_slug = str(node_context.get("app_slug", "")).strip()
+    if not run_dir_raw or not app_slug:
+        return []
+    run_dir = Path(str(run_dir_raw)).resolve()
+    app_dir = (run_dir / "generated_apps" / app_slug).resolve()
+    try:
+        app_dir.relative_to(run_dir.resolve())
+    except ValueError:
+        return []
+    candidates = [
+        "server.js",
+        "public/index.html",
+        "public/app.js",
+        "public/styles.css",
+        ".env.example",
+        "README.md",
+    ]
+    keywords = (
+        "gpt-image-1",
+        "OPENROUTER_IMAGE_MODEL",
+        "OPENAI_IMAGE_MODEL",
+        "IMAGE_PROVIDER",
+        "/api/images/generate",
+        "/api/health",
+        "生成",
+        "生图",
+        "download",
+        "model",
+        "provider",
+        "button",
+    )
+    targets: list[dict[str, Any]] = []
+    for rel_path in candidates:
+        path = (app_dir / rel_path).resolve()
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            path.relative_to(app_dir)
+        except ValueError:
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        if len(raw) > 256_000:
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        anchors: list[dict[str, Any]] = []
+        lines = text.splitlines()
+        for line_no, line in enumerate(lines, start=1):
+            if any(keyword in line for keyword in keywords) or any(keyword.lower() in line.lower() for keyword in keywords):
+                anchors.append(
+                    {
+                        "anchor_id": f"{Path(rel_path).stem}_{line_no}",
+                        "line_start": line_no,
+                        "line_end": line_no,
+                        "purpose": _anchor_purpose(line),
+                        "old_content": line,
+                    }
+                )
+            if len(anchors) >= 12:
+                break
+        targets.append(
+            {
+                "path": f"generated_apps/{app_slug}/{rel_path}",
+                "size_bytes": len(raw),
+                "content_hash": "sha256:" + hashlib.sha256(raw).hexdigest(),
+                "file_type": path.suffix.lstrip(".") or path.name,
+                "summary": _file_summary(rel_path),
+                "agent_edit_anchors": anchors,
+            }
+        )
+    return targets
+
+
+def _build_patch_app_fallback(
+    *,
+    user_message: str,
+    provider_text: str,
+    app_patch_targets: list[dict[str, Any]],
+    context_revision: str = "",
+) -> dict[str, Any] | None:
+    combined = f"{user_message}\n{provider_text}"
+    if not _mentions_app_repair(combined):
+        return None
+    target_model = ""
+    if "gpt-5.4-image-2" in combined:
+        target_model = "openai/gpt-5.4-image-2"
+    if not target_model:
+        return None
+    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for target in app_patch_targets:
+        if not isinstance(target, dict):
+            continue
+        for anchor in target.get("agent_edit_anchors", []):
+            if not isinstance(anchor, dict):
+                continue
+            old_content = str(anchor.get("old_content", ""))
+            if "gpt-image-1" in old_content:
+                matches.append((target, anchor))
+    if len(matches) != 1:
+        return None
+    target, anchor = matches[0]
+    old_content = str(anchor.get("old_content", ""))
+    new_content = old_content.replace("openai/gpt-image-1", target_model).replace("gpt-image-1", target_model)
+    if new_content == old_content:
+        return None
+    action: dict[str, Any] = {
+        "type": "patch_app",
+        "summary": f"将图片默认模型调整为 {target_model}",
+        "source": "provider_text_fallback",
+        "problem_source": "app_preview",
+        "patches": [
+            {
+                "target_path": target.get("path", ""),
+                "edit_kind": "replace_text",
+                "old_content": old_content,
+                "new_content": new_content,
+            }
+        ],
+        "preserve_capabilities": ["已通过的应用流程", "服务端读取 API key", "localStorage 不保存 secret"],
+        "verification": ["node --check server.js", "GET /api/health"],
+        "requires_confirmation": True,
+    }
+    if context_revision:
+        action["context_revision"] = context_revision
+    return action
+
+
+def _build_delegate_code_repair_action(
+    *,
+    node_context: dict[str, Any],
+    user_message: str,
+    context_revision: str = "",
+) -> dict[str, Any]:
+    app_slug = str(node_context.get("app_slug", "")).strip()
+    problem = (user_message or "").strip() or "已发布应用存在需要代码修复的问题。"
+    action: dict[str, Any] = {
+        "type": "delegate_code_repair",
+        "summary": f"委托 Code Agent 修复已发布应用 {app_slug}".strip(),
+        "source": "agent_bridge",
+        "target": "published_app",
+        "problem_source": "app_preview",
+        "repair_request": {
+            "app_slug": app_slug,
+            "problem": problem,
+            "constraints": ["只修改当前已发布应用", "不重跑 PRD", "保留现有工作流", "API key 只从服务端环境读取"],
+            "expected_behavior": [],
+            "verification": ["node --check server.js", "node --check public/app.js"],
+        },
+        "requires_confirmation": True,
+    }
+    if context_revision:
+        action["context_revision"] = context_revision
+    return action
+
+
+def _fallback_actions_for_provider_text(
+    *,
+    node_context: dict[str, Any],
+    interaction_context: dict[str, Any] | None,
+    resolved_intent: str,
+    user_message: str,
+    provider_text: str,
+    prompt_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]] | None:
+    if resolved_intent not in ("patch_app", "delegate_code_repair"):
+        return None
+    prompt_context = prompt_context or _agent_prompt_context(node_context, interaction_context, resolved_intent)
+    context_revision = str(node_context.get("context_revision", ""))
+    if resolved_intent == "delegate_code_repair":
+        return [
+            _build_delegate_code_repair_action(
+                node_context=node_context,
+                user_message=user_message,
+                context_revision=context_revision,
+            )
+        ]
+    action = _build_patch_app_fallback(
+        user_message=user_message,
+        provider_text=provider_text,
+        app_patch_targets=prompt_context.get("app_patch_targets", []) if isinstance(prompt_context, dict) else [],
+        context_revision=context_revision,
+    )
+    if action:
+        return [action]
+    allowed = _allowed_operations(interaction_context)
+    if _operation_allowed(allowed, "delegate_code_repair"):
+        return [
+            _build_delegate_code_repair_action(
+                node_context=node_context,
+                user_message=user_message,
+                context_revision=context_revision,
+            )
+        ]
+    return [
+        {
+            "type": "diagnose_app_bug",
+            "summary": "已识别为应用预览修复问题，但当前上下文无法安全定位唯一目标文件和 old_content。请打开相关文件预览或补充具体错误位置。",
+            "source": "provider_text_fallback",
+            "requires_confirmation": False,
+            "context_revision": context_revision,
+        }
+    ]
+
+
 def _agent_prompt_context(
     node_context: dict[str, Any],
     interaction_context: dict[str, Any] | None,
     resolved_intent: str,
 ) -> dict[str, Any]:
     focus = _interaction_focus(interaction_context)
-    return {
+    context = {
         "schema_version": 1,
         "run": {
             "run_id": node_context.get("run_id", ""),
@@ -330,6 +686,9 @@ def _agent_prompt_context(
         "allowed_operations": sorted(_allowed_operations(interaction_context)),
         "resolved_intent": resolved_intent,
     }
+    if _is_app_preview_focus(interaction_context) or resolved_intent in ("patch_app", "delegate_code_repair"):
+        context["app_patch_targets"] = _build_app_patch_targets(node_context)
+    return context
 
 
 def _baseline_actions(
@@ -418,6 +777,23 @@ def _baseline_actions(
                 "target_node_id": node_id,
                 "question": message or "需要补充哪些上下文？",
                 "requires_confirmation": False,
+            }
+        ]
+    if effective_intent in ("patch_app", "delegate_code_repair"):
+        fallback = _fallback_actions_for_provider_text(
+            node_context=node_context,
+            interaction_context=interaction_context,
+            resolved_intent=effective_intent,
+            user_message=message,
+            provider_text="",
+        )
+        return fallback or [
+            {
+                "type": "diagnose_app_bug",
+                "target_node_id": node_id,
+                "summary": "已识别为应用预览修复问题，但还需要定位具体文件和锚点。",
+                "requires_confirmation": False,
+                "context_revision": node_context.get("context_revision", ""),
             }
         ]
     return [
@@ -669,6 +1045,34 @@ class CodexProvider(AgentProvider):
         content = _extract_model_content(payload).strip()
         usage = _extract_usage(payload)
         final_message = content if content else baseline_message
+        cleaned_message, parsed_actions = _parse_trailing_actions(
+            final_message,
+            context_revision=str(node_context.get("context_revision", "")),
+        )
+        if parsed_actions:
+            prompt_context = _agent_prompt_context(node_context, interaction_context, resolved_intent)
+            actions = _safe_actions_with_patch_fallback(
+                actions=parsed_actions,
+                node_context=node_context,
+                interaction_context=interaction_context,
+                resolved_intent=resolved_intent,
+                user_message=message,
+                provider_text=cleaned_message or content,
+                prompt_context=prompt_context,
+            )
+            final_message = cleaned_message or baseline_message
+        elif content:
+            prompt_context = _agent_prompt_context(node_context, interaction_context, resolved_intent)
+            fallback_actions = _fallback_actions_for_provider_text(
+                node_context=node_context,
+                interaction_context=interaction_context,
+                resolved_intent=resolved_intent,
+                user_message=message,
+                provider_text=content,
+                prompt_context=prompt_context,
+            )
+            if fallback_actions:
+                actions = fallback_actions
         return {
             "provider": "codex",
             "status": "completed",
@@ -844,6 +1248,7 @@ class PiAgentProvider(AgentProvider):
             return
 
         resolved_intent = _resolve_intent(node_context, mode, message, interaction_context, intent)
+        prompt_context = _agent_prompt_context(node_context, interaction_context, resolved_intent)
         prompt = _pi_prompt_text(node_context, mode, message, interaction_context, intent, resolved_intent)
         actions = _baseline_actions(node_context, mode, message, interaction_context, intent, resolved_intent)
         context_revision = str(node_context.get("context_revision", "")) if isinstance(node_context, dict) else ""
@@ -864,16 +1269,46 @@ class PiAgentProvider(AgentProvider):
                 )
                 resolved_actions = payload.get("actions")
                 if not isinstance(resolved_actions, list):
-                    resolved_actions = parsed_actions if parsed_actions else actions
+                    if parsed_actions:
+                        resolved_actions = _safe_actions_with_patch_fallback(
+                            actions=parsed_actions,
+                            node_context=node_context,
+                            interaction_context=interaction_context,
+                            resolved_intent=resolved_intent,
+                            user_message=message,
+                            provider_text=cleaned_message,
+                            prompt_context=prompt_context,
+                        )
+                        actions_source = "pi_structured"
+                    else:
+                        fallback_actions = _fallback_actions_for_provider_text(
+                            node_context=node_context,
+                            interaction_context=interaction_context,
+                            resolved_intent=resolved_intent,
+                            user_message=message,
+                            provider_text=cleaned_message,
+                            prompt_context=prompt_context,
+                        )
+                        resolved_actions = fallback_actions if fallback_actions else actions
+                        actions_source = "provider_text_fallback" if fallback_actions else "deterministic_baseline"
+                else:
+                    resolved_actions = _safe_actions_with_patch_fallback(
+                        actions=[action for action in resolved_actions if isinstance(action, dict)],
+                        node_context=node_context,
+                        interaction_context=interaction_context,
+                        resolved_intent=resolved_intent,
+                        user_message=message,
+                        provider_text=cleaned_message,
+                        prompt_context=prompt_context,
+                    )
+                    actions_source = "provider_payload"
                 event = {
                     **event,
                     "payload": {
                         **payload,
                         "actions": resolved_actions,
                         "cleaned_message": self._redactor(cleaned_message),
-                        "actions_source": (
-                            "pi_structured" if parsed_actions else "deterministic_baseline"
-                        ),
+                        "actions_source": actions_source,
                         "context_revision": payload.get("context_revision") or context_revision,
                         "resolved_intent": payload.get("resolved_intent") or resolved_intent,
                     },

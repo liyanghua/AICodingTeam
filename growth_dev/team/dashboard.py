@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import webbrowser
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -607,6 +608,7 @@ def build_app_generation_node_context(
     repo_root: Path = Path("."),
     user_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    run_dir = _safe_run_dir(Path(runs_dir).resolve(), run_id)
     state = build_app_generation_nodes(run_id, runs_dir=runs_dir, repo_root=repo_root)
     node = next((item for item in state.get("nodes", []) if item.get("id") == node_id), None)
     if not isinstance(node, dict):
@@ -616,6 +618,7 @@ def build_app_generation_node_context(
     base_context = {
         "schema_version": 1,
         "run_id": run_id,
+        "run_dir": str(run_dir),
         "comparison_group_id": str(run.get("comparison_group_id", "")),
         "source_run_id": str(run.get("source_run_id", "")),
         "node_id": node_id,
@@ -1061,6 +1064,7 @@ def start_app_generation_preview(config: DashboardConfig, payload: dict[str, Any
             preview.stop_preview(record_path)
     
     preferred_port = int(payload.get("preferred_port") or 8788)
+    inject_env = bool(payload.get("inject_env", payload.get("sync_env", True)))
     request = preview.PreviewRunRequest(
         run_id=run_id,
         app_slug=app_slug,
@@ -1070,6 +1074,7 @@ def start_app_generation_preview(config: DashboardConfig, payload: dict[str, Any
         health_path="/",
         health_timeout_seconds=5.0,
         repo_root=repo_root,
+        inject_env=inject_env,
     )
     
     result = preview.start_preview(request, runs_dir=runs_dir)
@@ -1086,6 +1091,7 @@ def start_app_generation_preview(config: DashboardConfig, payload: dict[str, Any
         "record_path": str(result.record_path) if result.record_path else None,
         "log_path": str(result.log_path) if result.log_path else None,
         "risk_events": result.risk_events,
+        "inject_env": inject_env,
     })
 
 
@@ -1242,13 +1248,28 @@ def _restart_preview_two_stage(
     }
 
 
-def _apply_edit(original: str, edit_kind: str, new_content: str, anchor: str) -> str:
+def _apply_edit(
+    original: str,
+    edit_kind: str,
+    new_content: str,
+    anchor: str = "",
+    old_content: str = "",
+) -> str:
     if edit_kind == "create_file":
         return new_content
     if edit_kind == "append":
         if original and not original.endswith("\n"):
             return original + "\n" + new_content
         return original + new_content
+    if edit_kind == "replace_text":
+        if not old_content:
+            raise ValueError("replace_text requires old_content")
+        count = original.count(old_content)
+        if count == 0:
+            raise ValueError(f"old_content_not_found: {old_content[:80]}")
+        if count > 1:
+            raise ValueError(f"ambiguous_match: old_content appears {count} times")
+        return original.replace(old_content, new_content)
     if edit_kind == "replace_block":
         if not anchor:
             raise ValueError("anchor is required for replace_block")
@@ -1267,32 +1288,29 @@ def _apply_edit(original: str, edit_kind: str, new_content: str, anchor: str) ->
     raise ValueError(f"unknown_edit_kind: {edit_kind}")
 
 
-def patch_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
-    import difflib
-    import re
+def _normalized_patch_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_patches = payload.get("patches")
+    if isinstance(raw_patches, list):
+        patches = [entry for entry in raw_patches if isinstance(entry, dict)]
+        if len(patches) != len(raw_patches):
+            raise ValueError("patches must contain objects only")
+        if not patches:
+            raise ValueError("patches must not be empty")
+        return patches
+    return [
+        {
+            "target_path": payload.get("target_path"),
+            "edit_kind": payload.get("edit_kind"),
+            "new_content": payload.get("new_content", ""),
+            "anchor": payload.get("anchor", ""),
+            "old_content": payload.get("old_content", ""),
+            "summary": payload.get("summary", ""),
+        }
+    ]
 
-    run_id = str(payload.get("run_id") or "").strip()
-    if not run_id:
-        raise ValueError("run_id is required")
-    target_path_raw = str(payload.get("target_path") or "").strip()
-    if not target_path_raw:
-        raise ValueError("target_path is required")
-    edit_kind = str(payload.get("edit_kind") or "").strip()
-    if edit_kind not in {"append", "replace_block", "create_file"}:
-        raise ValueError(f"unsupported edit_kind: {edit_kind}")
-    new_content = str(payload.get("new_content") or "")
-    summary = str(payload.get("summary") or "").strip()
-    anchor = str(payload.get("anchor") or "").strip()
-    action_id = str(payload.get("action_id") or "").strip()
-    dry_run = bool(payload.get("dry_run") or False)
 
-    runs_dir = Path(config.runs_dir).resolve()
-    repo_root = Path(config.repo_root).resolve()
-    run_dir = _safe_run_dir(runs_dir, run_id)
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Run not found: {run_id}")
-
-    rel = Path(target_path_raw)
+def _validate_patch_target(run_dir: Path, rel_raw: str) -> tuple[Path, str, str]:
+    rel = Path(rel_raw)
     if rel.is_absolute() or ".." in rel.parts:
         raise ValueError("target_path_outside_generated_apps: path traversal not allowed")
     if not rel.parts or rel.parts[0] != "generated_apps":
@@ -1300,53 +1318,170 @@ def patch_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -
     if len(rel.parts) < 3:
         raise ValueError("target_path_outside_generated_apps: must include slug + file")
     app_slug = rel.parts[1]
-
     published_app_dir = run_dir / "generated_apps" / app_slug
     target_file = (run_dir / rel).resolve()
     try:
         target_file.relative_to(published_app_dir.resolve())
     except ValueError as exc:
         raise ValueError("target_path_outside_generated_apps: escapes published dir") from exc
+    return target_file, app_slug, str(rel.relative_to(Path("generated_apps") / app_slug))
 
-    if not published_app_dir.exists():
-        raise ValueError("app_not_published: published snapshot not found")
-    publish_record_path = published_app_dir / "app_publish.json"
-    if not publish_record_path.exists():
-        raise ValueError("app_not_published: app_publish.json missing")
 
-    if edit_kind == "create_file" and target_file.exists():
-        raise ValueError("file_already_exists: use replace_block or append")
-    original = target_file.read_text(encoding="utf-8") if target_file.exists() else ""
+def _run_patch_verification(app_dir: Path, commands: list[Any]) -> dict[str, Any]:
+    allowed = {
+        "node --check server.js": ["node", "--check", "server.js"],
+        "node --check public/app.js": ["node", "--check", "public/app.js"],
+        "node runtime_smoke.js": ["node", "runtime_smoke.js"],
+    }
+    results: list[dict[str, Any]] = []
+    risk_events: list[str] = []
+    for command in commands:
+        command_text = str(command).strip()
+        if not command_text:
+            continue
+        if command_text == "GET /api/health":
+            results.append({
+                "command": command_text,
+                "status": "skipped",
+                "reason": "requires_running_preview",
+            })
+            continue
+        argv = allowed.get(command_text)
+        if argv is None:
+            risk_events.append(f"verification_command_not_allowed:{command_text}")
+            results.append({
+                "command": command_text,
+                "status": "rejected",
+                "reason": "not_allowlisted",
+            })
+            continue
+        completed = subprocess.run(
+            argv,
+            cwd=app_dir,
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        results.append({
+            "command": command_text,
+            "status": "passed" if completed.returncode == 0 else "failed",
+            "exit_code": completed.returncode,
+            "stdout": completed.stdout[-1000:],
+            "stderr": completed.stderr[-1000:],
+        })
+    failed = any(item.get("status") in {"failed", "rejected"} for item in results)
+    return {
+        "status": "failed" if failed else "passed",
+        "commands": results,
+        "risk_events": risk_events,
+    }
 
-    updated = _apply_edit(original, edit_kind, new_content, anchor)
 
-    diff_lines = list(difflib.unified_diff(
-        original.splitlines(keepends=True),
-        updated.splitlines(keepends=True),
-        fromfile=f"a/{target_path_raw}",
-        tofile=f"b/{target_path_raw}",
-    ))
-    diff_text = "".join(diff_lines)
+def patch_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    import difflib
+
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    summary = str(payload.get("summary") or "").strip()
+    action_id = str(payload.get("action_id") or "").strip()
+    dry_run = bool(payload.get("dry_run") or False)
+    preserve_capabilities = payload.get("preserve_capabilities")
+    verification_commands = payload.get("verification")
+    problem_source = str(payload.get("problem_source") or "").strip()
+    patch_set_id = str(payload.get("patch_set_id") or uuid.uuid4()).strip()
+    if not isinstance(preserve_capabilities, list):
+        preserve_capabilities = []
+    if not isinstance(verification_commands, list):
+        verification_commands = []
+
+    runs_dir = Path(config.runs_dir).resolve()
+    repo_root = Path(config.repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    patch_payloads = _normalized_patch_payloads(payload)
+    prepared: list[dict[str, Any]] = []
+    app_slug = ""
+    merged_diff_parts: list[str] = []
+    seen_targets: set[Path] = set()
+    for patch in patch_payloads:
+        target_path_raw = str(patch.get("target_path") or "").strip()
+        if not target_path_raw:
+            raise ValueError("target_path is required")
+        edit_kind = str(patch.get("edit_kind") or "").strip()
+        if edit_kind not in {"append", "replace_block", "create_file", "replace_text"}:
+            raise ValueError(f"unsupported edit_kind: {edit_kind}")
+        target_file, target_app_slug, rel_file = _validate_patch_target(run_dir, target_path_raw)
+        if target_file in seen_targets:
+            raise ValueError("duplicate_patch_target: each file may appear only once per PatchSet")
+        seen_targets.add(target_file)
+        if app_slug and app_slug != target_app_slug:
+            raise ValueError("patchset_multiple_apps_not_supported")
+        app_slug = target_app_slug
+        published_app_dir = run_dir / "generated_apps" / app_slug
+        if not published_app_dir.exists():
+            raise ValueError("app_not_published: published snapshot not found")
+        publish_record_path = published_app_dir / "app_publish.json"
+        if not publish_record_path.exists():
+            raise ValueError("app_not_published: app_publish.json missing")
+
+        if edit_kind == "create_file" and target_file.exists():
+            raise ValueError("file_already_exists: use replace_block or append")
+        original = target_file.read_text(encoding="utf-8") if target_file.exists() else ""
+        new_content = str(patch.get("new_content") or "")
+        anchor = str(patch.get("anchor") or "").strip()
+        old_content = str(patch.get("old_content") or "")
+        updated = _apply_edit(original, edit_kind, new_content, anchor, old_content)
+        diff_lines = list(difflib.unified_diff(
+            original.splitlines(keepends=True),
+            updated.splitlines(keepends=True),
+            fromfile=f"a/{target_path_raw}",
+            tofile=f"b/{target_path_raw}",
+        ))
+        diff_text = "".join(diff_lines)
+        merged_diff_parts.append(diff_text)
+        prepared.append({
+            "target_path": target_path_raw,
+            "target_file": target_file,
+            "rel_file": rel_file,
+            "edit_kind": edit_kind,
+            "original": original,
+            "updated": updated,
+            "diff": diff_text,
+            "summary": str(patch.get("summary") or summary).strip(),
+        })
+
+    if not prepared:
+        raise ValueError("patches must not be empty")
+    diff_text = "\n".join(part for part in merged_diff_parts if part)
+    first_patch = prepared[0]
 
     if dry_run:
         return _redact({
             "status": "dry_run",
             "run_id": run_id,
             "app_slug": app_slug,
-            "target_path": target_path_raw,
+            "target_path": first_patch["target_path"],
+            "patch_set_id": patch_set_id,
+            "patches": [
+                {
+                    "target_path": item["target_path"],
+                    "edit_kind": item["edit_kind"],
+                    "summary": item["summary"],
+                }
+                for item in prepared
+            ],
             "diff": diff_text,
-            "edit_kind": edit_kind,
+            "edit_kind": first_patch["edit_kind"],
             "summary": summary,
         })
 
     patches_dir = run_dir / "app_patches"
     patches_dir.mkdir(parents=True, exist_ok=True)
     ts = int(time.time())
-    safe_file = re.sub(r"[^a-zA-Z0-9._-]", "_", str(rel.relative_to(Path("generated_apps") / app_slug)))
-    diff_filename = f"{ts}__app__{safe_file}.diff"
-    diff_path = patches_dir / diff_filename
-    diff_path.write_text(diff_text, encoding="utf-8")
-
     index_path = patches_dir / "index.json"
     if index_path.exists():
         index = _safe_read_json(index_path) or {"patches": []}
@@ -1354,23 +1489,56 @@ def patch_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -
             index = {"patches": []}
     else:
         index = {"patches": []}
+    backups: dict[Path, str | None] = {
+        item["target_file"]: (item["target_file"].read_text(encoding="utf-8") if item["target_file"].exists() else None)
+        for item in prepared
+    }
+    written_diffs: list[Path] = []
     applied_at = now_iso()
-    rel_file = str(rel.relative_to(Path("generated_apps") / app_slug))
-    index["patches"].append({
-        "ts": ts,
-        "node": "app",
-        "app_slug": app_slug,
-        "file": rel_file,
-        "diff_path": diff_filename,
-        "summary": summary,
-        "action_id": action_id,
-        "applied_at": applied_at,
-        "edit_kind": edit_kind,
-    })
-    write_json(index_path, index)
+    try:
+        for item in prepared:
+            item["target_file"].parent.mkdir(parents=True, exist_ok=True)
+            item["target_file"].write_text(item["updated"], encoding="utf-8")
+        for index_no, item in enumerate(prepared, start=1):
+            safe_file = re.sub(r"[^a-zA-Z0-9._-]", "_", item["rel_file"])
+            diff_filename = f"{ts}__app__{index_no:02d}__{safe_file}.diff"
+            diff_path = patches_dir / diff_filename
+            diff_path.write_text(item["diff"], encoding="utf-8")
+            written_diffs.append(diff_path)
+            index["patches"].append({
+                "ts": ts,
+                "node": "app",
+                "app_slug": app_slug,
+                "file": item["rel_file"],
+                "diff_path": diff_filename,
+                "summary": item["summary"] or summary,
+                "action_id": action_id,
+                "patch_set_id": patch_set_id,
+                "applied_at": applied_at,
+                "edit_kind": item["edit_kind"],
+                "problem_source": problem_source,
+                "preserve_capabilities": preserve_capabilities,
+                "verification": verification_commands,
+            })
+        write_json(index_path, index)
+    except Exception:
+        for target, original_text in backups.items():
+            if original_text is None:
+                try:
+                    target.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                target.write_text(original_text, encoding="utf-8")
+        for diff_path in written_diffs:
+            try:
+                diff_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
 
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    target_file.write_text(updated, encoding="utf-8")
+    published_app_dir = run_dir / "generated_apps" / app_slug
+    verification_result = _run_patch_verification(published_app_dir, verification_commands)
 
     restart_info = _restart_preview_two_stage(run_dir, runs_dir, repo_root, run_id)
 
@@ -1378,11 +1546,233 @@ def patch_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -
         "status": "applied",
         "run_id": run_id,
         "app_slug": app_slug,
-        "target_path": target_path_raw,
-        "diff_path": str(diff_path.relative_to(run_dir)),
+        "target_path": first_patch["target_path"],
+        "patch_set_id": patch_set_id,
+        "patches": [
+            {
+                "target_path": item["target_path"],
+                "edit_kind": item["edit_kind"],
+                "summary": item["summary"],
+            }
+            for item in prepared
+        ],
+        "diff_paths": [str(path.relative_to(run_dir)) for path in written_diffs],
+        "diff_path": str(written_diffs[0].relative_to(run_dir)) if written_diffs else "",
         "applied_at": applied_at,
         "summary": summary,
+        "verification": verification_result,
         "restart": restart_info,
+    })
+
+
+def start_app_generation_delegate_repair(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    import shutil
+
+    from .code_agent_executor import run_repair
+    from .codex import CodexExecutorConfig, load_aicodemirror_provider_from_env
+
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    repair_request = payload.get("repair_request")
+    if not isinstance(repair_request, dict):
+        raise ValueError("repair_request is required")
+
+    runs_dir = Path(config.runs_dir).resolve()
+    repo_root = Path(config.repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    app_slug = str(repair_request.get("app_slug") or payload.get("app_slug") or "").strip()
+    if not app_slug:
+        raise ValueError("app_slug is required")
+    repair_request = {**repair_request, "app_slug": app_slug}
+    published_app_dir = run_dir / "generated_apps" / app_slug
+    if not published_app_dir.exists() or not (published_app_dir / "app_publish.json").exists():
+        raise ValueError("app_not_published: published snapshot not found")
+
+    provider_config = None
+    if config.codex_provider == "aicodemirror":
+        env_path = Path(config.env_file)
+        if not env_path.is_absolute():
+            env_path = repo_root / env_path
+        provider_config = load_aicodemirror_provider_from_env(env_path)
+    elif config.codex_provider not in {"", "default"}:
+        raise ValueError(f"Unsupported codex provider: {config.codex_provider}")
+    codex_config = CodexExecutorConfig(
+        binary=config.codex_binary,
+        model=config.model,
+        reasoning_effort=config.reasoning_effort,
+        provider=provider_config,
+    )
+    repair_id = str(payload.get("repair_id") or f"repair-{timestamp_slug()}-{uuid.uuid4().hex[:8]}")
+    result = run_repair(repair_request, run_dir=run_dir, repo_root=repo_root, config=codex_config)
+
+    repairs_dir = run_dir / "app_repairs" / repair_id
+    repairs_dir.mkdir(parents=True, exist_ok=True)
+    write_json(repairs_dir / "repair_request.json", repair_request)
+    write_json(repairs_dir / "repair_result.json", result.to_dict())
+    diff_path = run_dir / result.diff_path if result.diff_path else None
+    copied_diff = ""
+    diff_text = ""
+    if diff_path and diff_path.exists():
+        copied = repairs_dir / "candidate.diff"
+        shutil.copyfile(diff_path, copied)
+        copied_diff = str(copied.relative_to(run_dir))
+        diff_text = copied.read_text(encoding="utf-8", errors="replace")
+    active_record = {
+        "repair_id": repair_id,
+        "app_slug": app_slug,
+        "status": result.status,
+        "created_at": now_iso(),
+        "candidate_dir": result.candidate_dir,
+        "diff_path": copied_diff or result.diff_path,
+        "repair_request_path": str((repairs_dir / "repair_request.json").relative_to(run_dir)),
+        "repair_result_path": str((repairs_dir / "repair_result.json").relative_to(run_dir)),
+    }
+    write_json(run_dir / "app_repairs" / "active.json", active_record)
+
+    return _redact({
+        "status": result.status,
+        "run_id": run_id,
+        "repair_id": repair_id,
+        "app_slug": app_slug,
+        "repair_request": repair_request,
+        "candidate_dir": result.candidate_dir,
+        "diff_path": copied_diff or result.diff_path,
+        "diff": diff_text,
+        "changed_files": result.changed_files,
+        "verification": result.verification_results,
+        "risk_events": result.risk_events,
+        "blockers": result.blockers,
+        "codex_artifacts": result.codex_artifacts,
+        "message": result.message,
+    })
+
+
+def apply_app_generation_delegate_repair(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    import shutil
+
+    run_id = str(payload.get("run_id") or "").strip()
+    repair_id = str(payload.get("repair_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    if not repair_id:
+        raise ValueError("repair_id is required")
+
+    runs_dir = Path(config.runs_dir).resolve()
+    repo_root = Path(config.repo_root).resolve()
+    run_dir = _safe_run_dir(runs_dir, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+    active_path = run_dir / "app_repairs" / "active.json"
+    active = _safe_read_json(active_path)
+    if str(active.get("repair_id") or "") != repair_id:
+        raise ValueError("repair_candidate_stale: active repair id does not match")
+    app_slug = str(active.get("app_slug") or "").strip()
+    if not app_slug:
+        raise ValueError("app_slug is required")
+    repairs_dir = run_dir / "app_repairs" / repair_id
+    result = _safe_read_json(repairs_dir / "repair_result.json")
+    if str(result.get("status") or "") != "prepared":
+        raise ValueError("repair_not_prepared: prepare did not produce an applyable candidate")
+    candidate_dir = run_dir / str(active.get("candidate_dir") or result.get("candidate_dir") or "")
+    if not candidate_dir.exists() or not candidate_dir.is_dir():
+        raise FileNotFoundError(f"Repair candidate not found: {candidate_dir}")
+
+    published_parent = run_dir / "generated_apps"
+    published_parent.mkdir(parents=True, exist_ok=True)
+    published_dir = published_parent / app_slug
+    backup_dir = run_dir / "app_repairs" / f"{repair_id}__published_backup"
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+    if published_dir.exists():
+        shutil.copytree(published_dir, backup_dir)
+        shutil.rmtree(published_dir)
+    try:
+        shutil.copytree(candidate_dir, published_dir, ignore=shutil.ignore_patterns("app_publish.json", "app_patches", "node_modules", ".env", ".env.*"))
+        diff_rel = str(active.get("diff_path") or result.get("diff_path") or "")
+        diff_text = (run_dir / diff_rel).read_text(encoding="utf-8") if diff_rel and (run_dir / diff_rel).exists() else ""
+        applied_at = now_iso()
+        publish_record = {
+            "published_at": applied_at,
+            "source_commit": "repair",
+            "app_slug": app_slug,
+            "files_count": sum(1 for path in published_dir.rglob("*") if path.is_file()),
+            "worktree_path": str(candidate_dir.relative_to(run_dir)) if candidate_dir.is_relative_to(run_dir) else str(candidate_dir),
+            "repair_id": repair_id,
+            "repair_request_path": str((repairs_dir / "repair_request.json").relative_to(run_dir)),
+        }
+        write_json(published_dir / "app_publish.json", publish_record)
+
+        patches_dir = run_dir / "app_patches"
+        patches_dir.mkdir(parents=True, exist_ok=True)
+        index_path = patches_dir / "index.json"
+        index = _safe_read_json(index_path) if index_path.exists() else {"patches": []}
+        if not isinstance(index.get("patches"), list):
+            index = {"patches": []}
+        safe_repair_id = re.sub(r"[^a-zA-Z0-9._-]", "_", repair_id)
+        diff_name = f"{int(time.time())}__delegate__{safe_repair_id}.diff"
+        (patches_dir / diff_name).write_text(diff_text, encoding="utf-8")
+        repair_request = _safe_read_json(repairs_dir / "repair_request.json")
+        verification_commands = repair_request.get("verification") if isinstance(repair_request.get("verification"), list) else []
+        index["patches"].append({
+            "ts": int(time.time()),
+            "node": "app",
+            "app_slug": app_slug,
+            "file": "*",
+            "diff_path": diff_name,
+            "summary": str(payload.get("summary") or repair_request.get("problem") or "delegate_code_repair"),
+            "action_id": str(payload.get("action_id") or ""),
+            "patch_set_id": repair_id,
+            "applied_at": applied_at,
+            "edit_kind": "delegate_code_repair",
+            "problem_source": "app_preview",
+            "repair_request": repair_request,
+            "verification": verification_commands,
+        })
+        write_json(index_path, index)
+    except Exception:
+        if published_dir.exists():
+            shutil.rmtree(published_dir)
+        if backup_dir.exists():
+            shutil.copytree(backup_dir, published_dir)
+        raise
+
+    verification_result = _run_patch_verification(published_dir, verification_commands)
+    restart_info = _restart_preview_two_stage(run_dir, runs_dir, repo_root, run_id)
+    adjustment = {
+        "event_id": f"adjustment-{timestamp_slug()}",
+        "type": "app_adjustment",
+        "run_id": run_id,
+        "app_slug": app_slug,
+        "resolved_intent": "delegate_code_repair",
+        "agent_provider": str(payload.get("agent_provider") or "unknown"),
+        "patch_status": "applied",
+        "verification_status": verification_result.get("status", "unknown"),
+        "rollback_available": backup_dir.exists(),
+        "repair_id": repair_id,
+        "diff_refs": [str((patches_dir / diff_name).relative_to(run_dir))],
+        "preview_status": restart_info,
+        "created_at": now_iso(),
+    }
+    events_path = run_dir / "adjustment_events.jsonl"
+    with events_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(adjustment, ensure_ascii=False) + "\n")
+    active["status"] = "applied"
+    active["applied_at"] = adjustment["created_at"]
+    write_json(active_path, active)
+
+    return _redact({
+        "status": "applied",
+        "run_id": run_id,
+        "repair_id": repair_id,
+        "app_slug": app_slug,
+        "diff_path": str((patches_dir / diff_name).relative_to(run_dir)),
+        "verification": verification_result,
+        "restart": restart_info,
+        "adjustment_event": adjustment,
     })
 
 
@@ -1866,6 +2256,50 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
                         self._send_json({"error": error_msg}, status=HTTPStatus.PRECONDITION_FAILED)
                     elif "target_path_outside_generated_apps" in error_msg or "anchor_not_found" in error_msg:
                         self._send_json({"error": error_msg}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
+                    else:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 5 and parts[:3] == ["api", "app-generation", "runs"] and parts[4] == "delegate-code-repair":
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    payload["run_id"] = parts[3]
+                    self._send_json(start_app_generation_delegate_repair(config, payload), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    error_msg = str(exc)
+                    if "app_not_published" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.PRECONDITION_FAILED)
+                    elif "repair" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
+                    else:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 6 and parts[:3] == ["api", "app-generation", "runs"] and parts[4:] == ["delegate-code-repair", "apply"]:
+                try:
+                    length = int(self.headers.get("Content-Length") or "0")
+                    raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    payload = json.loads(raw or "{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON object is required")
+                    payload["run_id"] = parts[3]
+                    self._send_json(apply_app_generation_delegate_repair(config, payload), status=HTTPStatus.OK)
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    error_msg = str(exc)
+                    if "stale" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.CONFLICT)
+                    elif "not_prepared" in error_msg:
+                        self._send_json({"error": error_msg}, status=HTTPStatus.PRECONDITION_FAILED)
                     else:
                         self._send_json({"error": error_msg}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
@@ -2708,6 +3142,8 @@ def _node_available_actions(node_id: str) -> list[dict[str, Any]]:
         {"type": "compare_variants", "target_node_id": node_id, "variants": ["rule", "codex"], "label": "对比 rule 与 codex"},
         {"type": "suggest_input_patch", "target_node_id": node_id, "label": "建议调整节点输入"},
         {"type": "rerun_from_node", "target_node_id": node_id, "label": "从此节点重跑"},
+        {"type": "patch_app", "target_node_id": node_id, "label": "修改已发布应用"},
+        {"type": "delegate_code_repair", "target_node_id": node_id, "label": "委托 Code Agent 修复应用"},
     ]
     if node_id != "implementation":
         actions.insert(3, {"type": "select_variant", "target_node_id": node_id, "label": "选择下游使用的 variant"})
@@ -3105,12 +3541,18 @@ def _node_process(definition: dict[str, Any], run_dir: Path, record: dict[str, A
     ][-8:]
     logs = _latest_log_lines(run_dir, max_lines=6)
     statuses = [str(item.get("status", "")) for item in agent_runs if item.get("status")]
+    record_status = str(record.get("status", ""))
+    process_status = str(process.get("status", ""))
     if any(status in {"failed", "blocked"} for status in statuses):
         status = "blocked"
-    elif any(status == "running" for status in statuses) or (str(process.get("status", "")) in {"running", "starting"} and str(definition.get("id")) == "implementation"):
-        status = "running"
     elif statuses and all(status == "completed" for status in statuses):
         status = "completed"
+    elif any(status == "running" for status in statuses) or (
+        record_status not in {"completed", "failed", "blocked"}
+        and process_status in {"running", "starting"}
+        and str(definition.get("id")) == "implementation"
+    ):
+        status = "running"
     else:
         status = "not_started"
     return {
@@ -3880,5 +4322,5 @@ def _redact(value: Any) -> Any:
 
 def _redact_text(value: str) -> str:
     text = re.sub(r"sk-[A-Za-z0-9_\-]+", "<redacted>", value)
-    text = text.replace(".env", "<env-file>")
+    text = re.sub(r"(?<!process)\.env\b", "<env-file>", text)
     return text

@@ -1,5 +1,6 @@
 """Tests for the app_generation Agent Bridge providers."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -132,6 +133,191 @@ class CodexProviderTests(unittest.TestCase):
         rerun_action = next(action for action in response["actions"] if action["type"] == "rerun_from_node")
         self.assertTrue(rerun_action["requires_confirmation"])
         self.assertEqual(rerun_action["rerun_from_node"], "planning_tdd")
+
+    def test_app_preview_repair_intent_generates_patch_app_from_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_dir = root / "runs" / "run-1" / "generated_apps" / "todo-prototype"
+            app_dir.mkdir(parents=True)
+            (app_dir / "server.js").write_text(
+                "const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';\n",
+                encoding="utf-8",
+            )
+            node_context = {**_NODE_CONTEXT, "run_id": "run-1", "run_dir": str(root / "runs" / "run-1")}
+            interaction_context = {
+                "focus": {"card": "app_preview", "view_mode": "app_preview"},
+                "allowed_operations": ["patch_app", "diagnose_app_bug"],
+            }
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=node_context,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="生成单张图时报 gpt-image-1 not configured，把默认模型换成 gpt-5.4-image-2",
+                repo_root=root,
+            )
+
+        self.assertEqual(response.get("resolved_intent"), "patch_app")
+        patch_action = next(action for action in response["actions"] if action["type"] == "patch_app")
+        self.assertEqual(patch_action["source"], "provider_text_fallback")
+        self.assertEqual(patch_action["patches"][0]["target_path"], "generated_apps/todo-prototype/server.js")
+        self.assertIn("openai/gpt-5.4-image-2", patch_action["patches"][0]["new_content"])
+
+    def test_app_repair_intent_injects_patch_targets_outside_app_preview_focus(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_dir = root / "runs" / "run-1" / "generated_apps" / "todo-prototype"
+            app_dir.mkdir(parents=True)
+            (app_dir / "server.js").write_text(
+                "const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';\n",
+                encoding="utf-8",
+            )
+            node_context = {**_NODE_CONTEXT, "run_id": "run-1", "run_dir": str(root / "runs" / "run-1")}
+            interaction_context = {
+                "focus": {"card": "node_summary", "view_mode": "node_detail"},
+                "allowed_operations": ["patch_app", "diagnose_app_bug", "suggest_input_patch"],
+            }
+            resolved = agent_bridge._resolve_intent(
+                node_context,
+                "explain",
+                "生成单张图时报 gpt-image-1 not configured，把默认模型换成 gpt-5.4-image-2",
+                interaction_context,
+                "auto",
+            )
+            context = agent_bridge._agent_prompt_context(node_context, interaction_context, resolved)
+
+        self.assertEqual(resolved, "patch_app")
+        self.assertIn("app_patch_targets", context)
+        self.assertEqual(context["app_patch_targets"][0]["path"], "generated_apps/todo-prototype/server.js")
+        self.assertTrue(context["app_patch_targets"][0]["agent_edit_anchors"])
+
+    def test_app_preview_repair_without_unique_anchor_returns_diagnose(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_dir = root / "runs" / "run-1" / "generated_apps" / "todo-prototype"
+            app_dir.mkdir(parents=True)
+            (app_dir / "server.js").write_text("const model = process.env.OPENROUTER_IMAGE_MODEL;\n", encoding="utf-8")
+            node_context = {**_NODE_CONTEXT, "run_id": "run-1", "run_dir": str(root / "runs" / "run-1")}
+            interaction_context = {
+                "focus": {"card": "app_preview", "view_mode": "app_preview"},
+                "allowed_operations": ["patch_app", "diagnose_app_bug"],
+            }
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=node_context,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="生成单张图时报 gpt-image-1 not configured，把默认模型换成 gpt-5.4-image-2",
+                repo_root=root,
+            )
+
+        self.assertEqual(response.get("resolved_intent"), "patch_app")
+        self.assertTrue(any(action["type"] == "diagnose_app_bug" for action in response["actions"]))
+        self.assertFalse(any(action["type"] == "patch_app" and not action.get("patches") for action in response["actions"]))
+
+    def test_invalid_patch_app_from_provider_text_is_replaced_by_fallback_patchset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_env(root, "aicodemirror_key=sk-test-abcdef123456\naicodemirror_base_url=https://example.test/api\n")
+            app_dir = root / "runs" / "run-1" / "generated_apps" / "todo-prototype"
+            app_dir.mkdir(parents=True)
+            (app_dir / "server.js").write_text(
+                "const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';\n",
+                encoding="utf-8",
+            )
+            node_context = {**_NODE_CONTEXT, "run_id": "run-1", "run_dir": str(root / "runs" / "run-1")}
+            interaction_context = {
+                "focus": {"card": "node_summary", "view_mode": "node_detail"},
+                "allowed_operations": ["patch_app", "diagnose_app_bug", "suggest_input_patch"],
+            }
+
+            def fake_http(_url: str, _headers: dict[str, str], _body: bytes) -> dict[str, object]:
+                content = (
+                    "建议只修改当前已发布应用，把 gpt-image-1 改为 gpt-5.4-image-2。\n"
+                    "```json\n"
+                    + json.dumps(
+                        {
+                            "actions": [
+                                {"type": "diagnose_app_bug", "summary": "模型配置未读取 OPENROUTER_IMAGE_MODEL", "requires_confirmation": False},
+                                {"type": "patch_app", "summary": "修改已发布应用", "requires_confirmation": True},
+                            ]
+                        }
+                    )
+                    + "\n```"
+                )
+                return {"choices": [{"message": {"content": content}}], "usage": {}}
+
+            provider = agent_bridge.CodexProvider(http_caller=fake_http)
+            response = provider.send_message(
+                node_context=node_context,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="生成单张图时报 gpt-image-1 not configured。我的 .env 里配置的是 OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2。",
+                repo_root=root,
+            )
+
+        self.assertEqual(response["resolved_intent"], "patch_app")
+        self.assertTrue(any(action["type"] == "diagnose_app_bug" for action in response["actions"]))
+        patch_action = next(action for action in response["actions"] if action["type"] == "patch_app")
+        self.assertTrue(patch_action.get("patches"))
+        self.assertEqual(patch_action["patches"][0]["target_path"], "generated_apps/todo-prototype/server.js")
+        self.assertIn("openai/gpt-5.4-image-2", patch_action["patches"][0]["new_content"])
+
+    def test_prompt_context_injects_app_patch_targets_not_full_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            app_dir = root / "runs" / "run-1" / "generated_apps" / "todo-prototype"
+            app_dir.mkdir(parents=True)
+            (app_dir / "server.js").write_text(
+                "const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';\nconst other = 'secret-free';\n",
+                encoding="utf-8",
+            )
+            node_context = {**_NODE_CONTEXT, "run_id": "run-1", "run_dir": str(root / "runs" / "run-1")}
+            context = agent_bridge._agent_prompt_context(
+                node_context,
+                {"focus": {"card": "app_preview", "view_mode": "app_preview"}},
+                "patch_app",
+            )
+
+        self.assertIn("app_patch_targets", context)
+        target = context["app_patch_targets"][0]
+        self.assertEqual(target["path"], "generated_apps/todo-prototype/server.js")
+        self.assertIn("content_hash", target)
+        self.assertIn("agent_edit_anchors", target)
+        self.assertNotIn("content_head", target)
+
+    def test_pi_protocol_and_parser_accept_patchset_actions(self) -> None:
+        self.assertIn("patch_app", agent_bridge.PI_ALLOWED_ACTION_TYPES)
+        self.assertIn("rollback_patch", agent_bridge.PI_ALLOWED_ACTION_TYPES)
+        text = (
+            "建议修复。\n```json\n"
+            + json.dumps(
+                {
+                    "actions": [
+                        {
+                            "type": "patch_app",
+                            "patches": [
+                                {
+                                    "target_path": "generated_apps/todo-prototype/server.js",
+                                    "edit_kind": "replace_text",
+                                    "old_content": "old",
+                                    "new_content": "new",
+                                }
+                            ],
+                            "requires_confirmation": True,
+                        }
+                    ]
+                }
+            )
+            + "\n```"
+        )
+        _cleaned, actions = agent_bridge._parse_trailing_actions(text, context_revision="rev1")
+        self.assertIsNotNone(actions)
+        self.assertEqual(actions[0]["type"], "patch_app")  # type: ignore[index]
+        self.assertEqual(actions[0]["context_revision"], "rev1")  # type: ignore[index]
 
     def test_llm_prompt_includes_business_context_for_inputs_question(self) -> None:
         captured: dict[str, object] = {}

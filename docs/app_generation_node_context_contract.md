@@ -41,6 +41,8 @@
   "preview_health": {},
   "provider_health": {},
   "generated_app_capability_gaps": [],
+  "execution_progress": {},
+  "code_repair_progress": {},
   "app_patch_targets": [],
   "adjustment_events": [],
   "user_overrides": [],
@@ -107,6 +109,70 @@
 - preview record、provider health、能力扫描结果或用户 override 发生变化时，必须更新 `context_revision`。
 - iframe 内容不注入 `NodeContext`。Agent 如果需要分析页面，只能使用 preview status、能力扫描、artifact 预览或用户描述。
 
+### Execution Progress 摘要字段
+
+`execution_progress` 描述当前节点最近的 Codex 执行进度，用于让右侧 Agent 和中间节点详情理解“现在执行到哪里”。它只包含摘要和引用，不包含完整 stdout、prompt、源码或 secret。
+
+```json
+{
+  "execution_progress": {
+    "operation_id": "implementation-coder",
+    "status": "running",
+    "current_title": "运行命令",
+    "current_summary": "Code Agent 正在运行 node --check server.js。",
+    "latest_event_at": "2026-06-28T12:01:10Z",
+    "elapsed_ms": 70000,
+    "progress_refs": [
+      "codex/coder_progress.jsonl",
+      "codex/coder_progress_status.json"
+    ],
+    "latest_events": [
+      {
+        "event_type": "codex_item_completed",
+        "title": "修改文件",
+        "summary": "已更新 generated_apps/input-prd/server.js。"
+      }
+    ]
+  }
+}
+```
+
+规则：
+
+- `execution_progress` 来自 [`docs/app_generation_codex_observability_spec.md`](app_generation_codex_observability_spec.md) 的 `CodexProgressEvent` 聚合。
+- 只保留最近少量事件摘要；完整进度通过 `progress_refs` 受控读取。
+- 30 秒无新事件且终态未出现时，UI 显示“Code Agent 仍在运行，暂无新输出”。
+- `execution_progress` 不改变 run 事实状态；最终状态仍以 run record 和验证产物为准。
+
+### Code Repair Progress 摘要字段
+
+`code_repair_progress` 描述右侧 Agent 触发 `delegate_code_repair` 后的 CodeAgentExecutor 执行进度。
+
+```json
+{
+  "code_repair_progress": {
+    "repair_id": "repair-20260628-abc123",
+    "status": "running",
+    "current_title": "启动 Code Agent",
+    "current_summary": "Codex 已启动，正在读取已发布应用快照。",
+    "latest_event_at": "2026-06-28T12:02:00Z",
+    "result_ready": false,
+    "diff_ready": false,
+    "progress_refs": [
+      "app_repairs/repair-20260628-abc123/progress.jsonl",
+      "app_repairs/repair-20260628-abc123/progress_status.json"
+    ]
+  }
+}
+```
+
+规则：
+
+- `code_repair_progress` 只用于对话协作和 UI 展示，不授权 Agent 直接写文件。
+- `diff_ready=true` 只表示候选 diff 可供用户确认，不等于已 apply。
+- `status=failed` 时必须带可行动摘要和 risk refs，旧已发布应用不得被修改。
+- 不注入完整 repair prompt、完整 stdout、完整源码、`.env` 或 API key。
+
 ### AppPreviewContext
 
 `focus.card="app_preview"` 时，后端必须从 `NodeContext` 派生 `AppPreviewContext` 注入 Agent prompt。该对象用于让 Agent 理解“当前运行应用发生了什么”，不是 iframe DOM 镜像。
@@ -171,6 +237,40 @@
 - 不列出 `app_publish.json`、`.env`、`node_modules`、二进制大文件或任何 secret 文件。
 - 可以包含 AGENT_EDIT 锚点和短摘要；不得默认包含完整文件正文。
 - Agent 需要完整内容时，必须通过受控 app file read 或 dry-run 机制请求，且读取结果只作为 tool evidence。
+
+### code_repair_context
+
+`code_repair_context` 告诉右侧 Agent 何时应把修复请求委托给 Code Agent，而不是继续直接构造 `patch_app`。
+
+```json
+{
+  "target": "published_app",
+  "app_slug": "input-prd",
+  "published_app_root": "generated_apps/input-prd",
+  "repairable_by_code_agent": true,
+  "code_agent_executor": {
+    "default_provider": "codex",
+    "available_providers": ["codex", "pi_code"]
+  },
+  "recommended_action": "delegate_code_repair",
+  "reason": "同一文件需要多处联动修改，无法用一个稳定 AGENT_EDIT 区间表达。",
+  "safe_context_refs": [
+    "app_publish.json",
+    "generated_apps/input-prd/server.js",
+    "generated_apps/input-prd/public/app.js",
+    "app_patches/index.json",
+    "preview/status.json"
+  ],
+  "verification": ["node --check server.js", "node --check public/app.js", "node runtime_smoke.js"]
+}
+```
+
+规则：
+
+- `code_repair_context` 只包含摘要、文件引用、hash、验证命令和安全约束，不包含完整源码、iframe DOM、完整 `.env`、API key 或未脱敏日志。
+- 当问题需要完整代码上下文、同一文件多处联动修改、跨文件行为理解或 provider 协议重写时，右侧 Agent 应输出 `delegate_code_repair`，由 `CodeAgentExecutor` 读取受控上下文并生成 patch。
+- `delegate_code_repair` 修复目标仍是当前已发布快照 `runs/<run_id>/generated_apps/<slug>/`，不是 worktree，也不是 `codex/` 原始输出。
+- Code Agent 输出仍必须走 dry-run diff、用户确认、apply、验证、证据记录和预览重启闭环；不得绕过 AgentAction。
 
 ### adjustment_events
 
@@ -623,6 +723,7 @@ Agent 转成 `AgentAction` 时的具体 action type（`patch_artifact` / `patch_
 | `suggest_input_patch` | 建议修改节点输入或 override | 否，确认后进入新 run 输入 |
 | `patch_artifact` | 直接修改 `artifacts/<node>/<file>` | 是，确认后写 `artifact_patches/` 证据并覆写文件 |
 | `patch_app` | 直接修改 `generated_apps/<slug>/<file>`（需先发布） | 是，确认后写 `app_patches/` 证据并触发两阶段重启 |
+| `delegate_code_repair` | 把复杂应用修复委托给 Code Agent 生成可确认 patch | 是，确认后进入 CodeAgentExecutor，再回到 patch/diff/验证闭环 |
 | `select_variant` | 选择当前显示或下游使用的 variant | 否，除非后续确认重跑 |
 | `rerun_from_node` | 从节点创建新 run | 是，必须确认 |
 | `ask_clarification` | 向用户提问 | 否 |
@@ -664,5 +765,6 @@ AgentAction 是工作台可执行动作的唯一入口。右侧 Agent、Codex、
 - 输入类变更进入 `user_overrides` 或新 run inputs。
 - 输出和中间产物是事实 artifact；修改必须走 `patch_artifact`（先写 `artifact_patches/<ts>__<node>__<file>.diff` 证据，再覆写 `artifacts/<node>/<file>`）或 `rerun_from_node`（创建新 run）。
 - 直接对已发布生成应用的修改必须走 `patch_app`（先写 `app_patches/<ts>__<file>.diff` 证据，再覆写 `generated_apps/<slug>/<file>` 并触发两阶段重启）。
+- 复杂已发布应用修复必须走 `delegate_code_repair`，由 `CodeAgentExecutor` 读取完整受控上下文后生成可确认 patch；右侧 Agent 不直接写代码。
 - 节点重跑必须创建新 run，并保留旧 run。
 - PI Agent 的 tool call 结果只作为右侧 tool evidence，除非被归一化为 AgentAction 并由用户确认，否则不进入节点事实层。

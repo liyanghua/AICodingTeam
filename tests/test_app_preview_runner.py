@@ -137,6 +137,57 @@ class PreviewRunnerTests(unittest.TestCase):
         self.assertEqual(captured_env["PORT"], "8799")
         self.assertEqual(captured_env["PREVIEW_PORT"], "8799")
 
+    def test_start_preview_injects_provider_env_whitelist(self) -> None:
+        from growth_dev.team.preview import PreviewRunRequest, start_preview
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / ".env").write_text(
+                "\n".join(
+                    [
+                        "IMAGE_PROVIDER=openrouter",
+                        "OPENROUTER_API_KEY=sk-or-v1-secret",
+                        "OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2",
+                        "DATABASE_URL=postgres://should-not-pass",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            runs_dir = root / "runs"
+            runs_dir.mkdir()
+            app_dir = root / "generated_apps" / "test"
+            app_dir.mkdir(parents=True)
+            captured_env = {}
+
+            class FakeProcess:
+                pid = 12345
+
+                def poll(self):
+                    return None
+
+            def fake_popen(*_args, **kwargs):
+                captured_env.update(kwargs.get("env") or {})
+                return FakeProcess()
+
+            request = PreviewRunRequest(
+                run_id="test-run",
+                app_slug="test",
+                generated_app_dir=app_dir,
+                preview_command=["node", "server.js"],
+                preferred_port=8799,
+                repo_root=root,
+            )
+
+            with mock.patch("growth_dev.team.preview.allocate_port", return_value=8799), \
+                mock.patch("growth_dev.team.preview.wait_for_health", return_value=(True, "ok")), \
+                mock.patch("growth_dev.team.preview.subprocess.Popen", side_effect=fake_popen):
+                start_preview(request, runs_dir=runs_dir)
+
+        self.assertEqual(captured_env["IMAGE_PROVIDER"], "openrouter")
+        self.assertEqual(captured_env["OPENROUTER_API_KEY"], "sk-or-v1-secret")
+        self.assertEqual(captured_env["OPENROUTER_IMAGE_MODEL"], "openai/gpt-5.4-image-2")
+        self.assertNotIn("DATABASE_URL", captured_env)
+
     @unittest.skipUnless(shutil.which("node") and CAN_BIND, "node or socket bind unavailable")
     def test_start_preview_launches_deterministic_app_and_returns_url(self) -> None:
         from growth_dev.team.app_generation import generate_deterministic_app_files

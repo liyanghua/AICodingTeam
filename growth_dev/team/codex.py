@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import threading
+import difflib
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -843,6 +844,115 @@ class CodexExecutor:
         output_paths.append(context.write_text("test_report.md", report))
         return CodexStageResult(verification_record["status"], _dedupe(output_paths), risk_events, "verification finished", verification_record)
 
+    def run_app_repair(self, context: Any) -> CodexStageResult:
+        """Prepare a candidate repair diff for the published generated app.
+
+        This is intentionally separate from ``run_coder``: it seeds the current
+        published snapshot into the isolated worktree, lets Codex repair only
+        ``generated_apps/<slug>/``, and returns a candidate diff. It does not
+        promote the result back into ``runs/<run_id>/generated_apps``.
+        """
+        bundle = self.write_prompt_bundle("app_repair", context)
+        output_paths = bundle.relative_paths(self.run_dir)
+        app_slug = str((getattr(context, "inputs", {}) or {}).get("app_slug") or "").strip()
+        if not app_slug:
+            record = self._failure_record("app_repair", bundle, "app_slug_missing")
+            output_paths.append(context.write_json("codex/app_repair_result.json", record))
+            return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+
+        published_app_dir = self.run_dir / "generated_apps" / app_slug
+        publish_record_path = published_app_dir / "app_publish.json"
+        if not published_app_dir.exists() or not publish_record_path.exists():
+            record = self._failure_record("app_repair", bundle, "app_not_published")
+            output_paths.append(context.write_json("codex/app_repair_result.json", record))
+            return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+
+        if not self._binary_available():
+            record = self._failure_record("app_repair", bundle, "codex_binary_missing", extra={"binary": self.config.binary})
+            output_paths.append(context.write_json("codex/app_repair_result.json", record))
+            return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+
+        try:
+            worktree_dir = self.prepare_worktree()
+            candidate_dir, baseline_dir = _seed_app_repair_candidate(
+                published_app_dir=published_app_dir,
+                worktree_dir=worktree_dir,
+                codex_dir=self.codex_dir,
+                app_slug=app_slug,
+            )
+        except Exception as exc:  # noqa: BLE001 - persisted for UI inspection.
+            record = self._failure_record("app_repair", bundle, f"app_repair_seed_failed:{type(exc).__name__}:{exc}")
+            output_paths.append(context.write_json("codex/app_repair_result.json", record))
+            return CodexStageResult("failed", output_paths, record["risk_events"], record["summary"], record)
+
+        command = build_codex_exec_command(
+            self.config,
+            worktree_dir=worktree_dir,
+            run_dir=self.run_dir,
+            output_schema_path=bundle.output_schema_path,
+            output_last_message_path=bundle.output_last_message_path,
+        )
+        write_json(bundle.command_path, {"command": command, "cwd": str(worktree_dir), "created_at": now_iso()})
+        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path)
+        response, validation_events = _read_codex_response(bundle.output_last_message_path)
+
+        diff_path = self.codex_dir / "app_repair_diff.patch"
+        changed_files = _write_directory_diff(baseline_dir, candidate_dir, diff_path, app_slug=app_slug)
+        verification_record = _run_app_repair_verification(
+            commands=bundle.verification_commands,
+            app_dir=candidate_dir,
+            codex_dir=self.codex_dir,
+            run_dir=self.run_dir,
+            env=self._process_env(),
+            timeout_seconds=min(self.config.timeout_seconds, 60),
+        )
+        verification_events = _string_list(verification_record.get("risk_events", []))
+        blockers = _string_list(response.get("blockers", []))
+        risk_events = _dedupe(validation_events + verification_events)
+        if completed.returncode != 0:
+            blockers.append(f"codex exited with {completed.returncode}")
+            risk_events.append(f"codex_exit_code:{completed.returncode}")
+        if not changed_files:
+            blockers.append("no_changed_files")
+            risk_events.append("no_changed_files")
+        status = "prepared" if not risk_events and not blockers else "failed"
+        record = {
+            "agent": "app_repair",
+            "executor": "codex",
+            "status": status,
+            "app_slug": app_slug,
+            "candidate_dir": _relative_to(candidate_dir, self.run_dir),
+            "baseline_dir": _relative_to(baseline_dir, self.run_dir),
+            "diff_path": _relative_to(diff_path, self.run_dir),
+            "changed_files": changed_files,
+            "summary": str(response.get("summary") or "Code Agent repair candidate prepared."),
+            "tests_run": _string_list(response.get("tests_run", [])),
+            "verification_results": verification_record.get("commands", []),
+            "risk_events": _dedupe(risk_events),
+            "blockers": _dedupe(blockers),
+            "exit_code": completed.returncode,
+            "prompt_hash": bundle.prompt_hash,
+            "state_hash": bundle.state_hash,
+            "codex_artifacts": {
+                "prompt": _relative_to(bundle.prompt_path, self.run_dir),
+                "state_summary": _relative_to(bundle.state_summary_path, self.run_dir),
+                "last_message": _relative_to(bundle.output_last_message_path, self.run_dir),
+                "stdout": _relative_to(bundle.stdout_path, self.run_dir),
+                "stderr": _relative_to(bundle.stderr_path, self.run_dir),
+                "command": _relative_to(bundle.command_path, self.run_dir),
+                "diff": _relative_to(diff_path, self.run_dir),
+                "verification": "codex/app_repair_verification.json",
+            },
+        }
+        result_path = self.codex_dir / "app_repair_result.json"
+        write_json(result_path, record)
+        output_paths.extend([
+            _relative_to(diff_path, self.run_dir),
+            _relative_to(result_path, self.run_dir),
+            "codex/app_repair_verification.json",
+        ])
+        return CodexStageResult(status, _dedupe(output_paths), record["risk_events"], record["summary"], record)
+
     def prepare_worktree(self) -> Path:
         if _is_git_worktree(self.worktree_dir):
             self._add_worktree_git_metadata_dirs(self.worktree_dir)
@@ -1603,9 +1713,40 @@ def _artifact_excerpt_lines(context: Any, max_chars: int = 1800) -> list[str]:
     return lines or ["- No upstream artifacts found yet"]
 
 
+def _app_repair_prompt_lines(context: Any) -> list[str]:
+    inputs = getattr(context, "inputs", {}) or {}
+    repair_request = inputs.get("repair_request") if isinstance(inputs.get("repair_request"), dict) else {}
+    app_slug = str(inputs.get("app_slug") or repair_request.get("app_slug") or "")
+    constraints = _string_list(repair_request.get("constraints") or inputs.get("constraints"))
+    expected = _string_list(repair_request.get("expected_behavior") or inputs.get("expected_behavior"))
+    problem = str(repair_request.get("problem") or getattr(context, "brief", "") or "")
+    lines = [
+        "",
+        "## App Repair Contract",
+        f"- Target published app slug: `{app_slug}`.",
+        f"- Problem: {problem}",
+        "- Repair only the current candidate copy under `generated_apps/<slug>/`.",
+        "- Do not modify run artifacts, `codex/`, `.env`, `app_publish.json`, `node_modules`, or repository source files.",
+        "- Preserve existing user workflow unless the repair request explicitly says otherwise.",
+        "- API keys and secrets must remain server-side environment variables only.",
+    ]
+    if constraints:
+        lines.extend(["", "### Constraints", *[f"- {item}" for item in constraints]])
+    if expected:
+        lines.extend(["", "### Expected Behavior", *[f"- {item}" for item in expected]])
+    return lines
+
+
 def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: list[str], verification_commands: list[str]) -> str:
-    role = "coding agent" if stage == "coder" else "code reviewer"
-    action = "Implement the requested vertical slice in the isolated worktree." if stage == "coder" else "Review the uncommitted diff in the isolated worktree."
+    if stage == "coder":
+        role = "coding agent"
+        action = "Implement the requested vertical slice in the isolated worktree."
+    elif stage == "app_repair":
+        role = "code repair agent"
+        action = "Repair the current published generated app snapshot in the isolated worktree."
+    else:
+        role = "code reviewer"
+        action = "Review the uncommitted diff in the isolated worktree."
     return "\n".join(
         [
             f"# Codex {stage.title()} Prompt",
@@ -1645,6 +1786,7 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             "- The requested change is represented by a git diff in the worktree.",
             "- The final response names changed files and verification commands actually run.",
             "- Risk events and blockers are explicit and not hidden in prose.",
+            *(_app_repair_prompt_lines(context) if stage == "app_repair" else []),
             *_app_generation_prompt_lines(context),
             "",
             "## Codex Slice-Loop",
@@ -1662,6 +1804,143 @@ def _build_prompt(stage: str, context: Any, state_summary: str, allowed_paths: l
             *[f"- `{command}`" for command in verification_commands],
         ]
     ).rstrip() + "\n"
+
+
+def _seed_app_repair_candidate(
+    *,
+    published_app_dir: Path,
+    worktree_dir: Path,
+    codex_dir: Path,
+    app_slug: str,
+) -> tuple[Path, Path]:
+    baseline_root = codex_dir / "app_repair_baseline"
+    baseline_dir = baseline_root / app_slug
+    candidate_dir = worktree_dir / "generated_apps" / app_slug
+    for path in (baseline_dir, candidate_dir):
+        if path.exists():
+            shutil.rmtree(path)
+    baseline_dir.parent.mkdir(parents=True, exist_ok=True)
+    candidate_dir.parent.mkdir(parents=True, exist_ok=True)
+    ignore = shutil.ignore_patterns("app_publish.json", "app_patches", "node_modules", ".env", ".env.*")
+    shutil.copytree(published_app_dir, baseline_dir, ignore=ignore)
+    shutil.copytree(baseline_dir, candidate_dir)
+    return candidate_dir, baseline_dir
+
+
+def _write_directory_diff(baseline_dir: Path, candidate_dir: Path, diff_path: Path, *, app_slug: str) -> list[str]:
+    changed: list[str] = []
+    diff_parts: list[str] = []
+    rel_paths = sorted(
+        {
+            path.relative_to(root).as_posix()
+            for root in (baseline_dir, candidate_dir)
+            if root.exists()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+    )
+    for rel_path in rel_paths:
+        before_path = baseline_dir / rel_path
+        after_path = candidate_dir / rel_path
+        before = before_path.read_text(encoding="utf-8", errors="replace") if before_path.exists() else ""
+        after = after_path.read_text(encoding="utf-8", errors="replace") if after_path.exists() else ""
+        if before == after:
+            continue
+        run_rel = f"generated_apps/{app_slug}/{rel_path}"
+        changed.append(run_rel)
+        diff_parts.extend(
+            difflib.unified_diff(
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=f"a/{run_rel}",
+                tofile=f"b/{run_rel}",
+            )
+        )
+        if diff_parts and not str(diff_parts[-1]).endswith("\n"):
+            diff_parts.append("\n")
+    diff_path.write_text("".join(diff_parts), encoding="utf-8")
+    return changed
+
+
+def _run_app_repair_verification(
+    *,
+    commands: list[str],
+    app_dir: Path,
+    codex_dir: Path,
+    run_dir: Path,
+    env: dict[str, str] | None,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    safe_commands = _app_repair_safe_commands(commands)
+    if not safe_commands:
+        safe_commands = ["node --check server.js"]
+        if (app_dir / "public" / "app.js").exists():
+            safe_commands.append("node --check public/app.js")
+        if (app_dir / "runtime_smoke.js").exists():
+            safe_commands.append("node runtime_smoke.js")
+    results: list[dict[str, Any]] = []
+    risk_events: list[str] = []
+    for index, command in enumerate(safe_commands, start=1):
+        stdout_path = codex_dir / f"app_repair_verify_{index}_stdout.log"
+        stderr_path = codex_dir / f"app_repair_verify_{index}_stderr.log"
+        started_at = now_iso()
+        try:
+            completed = subprocess.run(
+                shlex.split(command),
+                cwd=app_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                env=env,
+            )
+            stdout = completed.stdout
+            stderr = completed.stderr
+            exit_code = completed.returncode
+        except Exception as exc:  # noqa: BLE001 - persisted as verification evidence.
+            stdout = ""
+            stderr = f"{type(exc).__name__}: {exc}"
+            exit_code = 1
+        stdout_path.write_text(stdout, encoding="utf-8")
+        stderr_path.write_text(stderr, encoding="utf-8")
+        if exit_code != 0:
+            risk_events.append(f"app_repair_verification_failed:{command}:{exit_code}")
+        results.append(
+            {
+                "command": command,
+                "exit_code": exit_code,
+                "started_at": started_at,
+                "finished_at": now_iso(),
+                "stdout_path": _relative_to(stdout_path, run_dir),
+                "stderr_path": _relative_to(stderr_path, run_dir),
+            }
+        )
+    record = {
+        "schema_version": 1,
+        "status": "passed" if not risk_events else "failed",
+        "commands": results,
+        "risk_events": risk_events,
+        "app_dir": _relative_to(app_dir, run_dir),
+    }
+    write_json(codex_dir / "app_repair_verification.json", record)
+    return record
+
+
+def _app_repair_safe_commands(commands: list[str]) -> list[str]:
+    safe: list[str] = []
+    for command in commands:
+        command_text = str(command).strip()
+        try:
+            parts = shlex.split(command_text)
+        except ValueError:
+            continue
+        if len(parts) == 3 and parts[0] == "node" and parts[1] == "--check" and parts[2] in {"server.js", "public/app.js", "runtime_smoke.js"}:
+            safe.append(command_text)
+            continue
+        if len(parts) == 2 and parts[0] == "node" and parts[1] == "runtime_smoke.js":
+            safe.append(command_text)
+    return _dedupe(safe)
 
 
 def _app_generation_prompt_lines(context: Any) -> list[str]:

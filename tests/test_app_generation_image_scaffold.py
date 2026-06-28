@@ -73,6 +73,7 @@ class ImageAppScaffoldTests(unittest.TestCase):
             # .env.example 必须包含占位 key 和默认模型，不含真实 secret
             self.assertIn("OPENROUTER_API_KEY", env_example)
             self.assertIn("OPENROUTER_IMAGE_MODEL", env_example)
+            self.assertIn("OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2", env_example)
             self.assertNotIn("sk-or-v1-real", env_example)  # 无真实 key
             self.assertNotIn("your-real-key-here", env_example)
 
@@ -80,6 +81,7 @@ class ImageAppScaffoldTests(unittest.TestCase):
             server_js = (run_dir / "generated_apps/dingdang/server.js").read_text(encoding="utf-8")
             self.assertIn("/api/health", server_js)
             self.assertIn("/api/images/generate", server_js)
+            self.assertIn("openai/gpt-5.4-image-2", server_js)
             # 必须有 method 路由判断
             self.assertIn("GET", server_js)
             self.assertIn("POST", server_js)

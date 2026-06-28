@@ -88,7 +88,7 @@ class AppGenerationTests(unittest.TestCase):
         self.assertIn("image_download", {item["id"] for item in benchmark_context["required_capabilities"]})
         self.assertIn("https://openrouter.ai/api/v1/images", "\n".join(benchmark_context["instructions"]))
         self.assertIn("input_references", "\n".join(benchmark_context["instructions"]))
-        self.assertIn("openai/gpt-image-1", "\n".join(benchmark_context["instructions"]))
+        self.assertIn("openai/gpt-5.4-image-2", "\n".join(benchmark_context["instructions"]))
         self.assertIn("第 X 张第 Y 层", "\n".join(benchmark_context["instructions"]))
         self.assertIn("Benchmark Parity", benchmark_markdown)
         self.assertIn("https://openrouter.ai/api/v1/images", benchmark_markdown)
@@ -168,7 +168,7 @@ class AppGenerationTests(unittest.TestCase):
                 const openai = process.env.OPENAI_API_KEY;
                 const openrouter = process.env.OPENROUTER_API_KEY;
                 const openrouterBase = process.env.OPENROUTER_API_BASE_URL || "https://openrouter.ai/api/v1";
-                const body = { input_references: [], model: process.env.OPENROUTER_IMAGE_MODEL || "openai/gpt-image-1" };
+                const body = { input_references: [], model: process.env.OPENROUTER_IMAGE_MODEL || "openai/gpt-5.4-image-2" };
                 const path = "/api/v1/images";
                 function chooseProvider(provider) {
                   if (!openai && !openrouter) throw new Error("PROVIDER_NOT_CONFIGURED: provider is not configured");
@@ -279,7 +279,7 @@ class AppGenerationTests(unittest.TestCase):
                 // POST /api/images/generate via openrouter
                 const OPENROUTER_API_BASE_URL = process.env.OPENROUTER_API_BASE_URL || "https://openrouter.ai/api/v1";
                 const endpoint = OPENROUTER_API_BASE_URL + "/images";
-                const body = { input_references: [], model: process.env.OPENROUTER_IMAGE_MODEL || "openai/gpt-image-1" };
+                const body = { input_references: [], model: process.env.OPENROUTER_IMAGE_MODEL || "openai/gpt-5.4-image-2" };
                 function setupError(){ throw new Error("PROVIDER_NOT_CONFIGURED: provider is not configured"); }
                 """,
                 encoding="utf-8",

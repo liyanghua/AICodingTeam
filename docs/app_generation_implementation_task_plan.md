@@ -10,7 +10,7 @@
 
 当前仓库已完成 T1-T9 的 v1 实现：domain pack、PRD artifact、app contract、CLI、Codex prompt/verifier、Dashboard PRD 模式、端到端 fake Codex 验收和文档收口。后续迭代仍应沿用本文的输入/输出/验证格式拆分增量任务。
 
-本文档新增 T10-T24 作为后续 `PRD生成应用` 可观测工作台、PI-Agent 联动、节点流、评估体系、benchmark 和右侧 Agent 操作协议的 spec-first 实施计划。T10-T24 尚未完整实现，必须先完成文档评审，再进入前端、API、AgentBridge、Artifact Preview Rail、评估 runner、auto-research 或 Agent action bridge 实施。
+本文档新增 T10-T27 作为后续 `PRD生成应用` 可观测工作台、PI-Agent 联动、节点流、评估体系、benchmark、右侧 Agent 操作协议和 Agent 驱动修复闭环的 spec-first 实施计划。T10-T27 尚未完整实现，必须先完成文档评审，再进入前端、API、AgentBridge、Artifact Preview Rail、评估 runner、auto-research、Agent action bridge 或 CodeAgentExecutor 实施。
 
 ## 实施目标
 
@@ -49,6 +49,8 @@
 | AC-025 PI stream 终态归一 | T18, T19, T22, T23 |
 | AC-026 Provider prompt 包含业务上下文摘要 | T24 |
 | AC-027 intent=auto 可识别解释输入、解释输出和重跑节点 | T24 |
+| AC-065 短期 patch_app 单文件单 patch | T26 |
+| AC-066 复杂修复委托 Code Agent | T27 |
 
 ## T1: 定义 app_generation domain pack
 
@@ -1185,6 +1187,144 @@ python3 -m unittest tests.test_dashboard tests.test_team_cli -v
 - 生成应用必须保存真实 secret 才能通过测试。
 - 普通 PRD 被强制要求图片 provider。
 
+## T26: 短期 patch_app 稳定化
+
+### 输入
+
+- `docs/app_generation_agent_driven_repair_spec.md`
+- `docs/app_generation_agent_bridge_spec.md`
+- `docs/app_generation_node_context_contract.md`
+- 当前 Dashboard `patch_app` dry-run/apply API。
+- 当前 AgentBridge provider prompt 和 action fallback。
+
+### 中间过程
+
+1. 收紧 PI-Agent / LLM action protocol：`target_path` 必须使用 `generated_apps/<slug>/<file>`。
+2. 在 prompt 与 deterministic fallback 中明确：同一文件多处修改必须使用单个 `replace_block` 和已存在 `AGENT_EDIT` 区间。
+3. 在后端 action validation 中拒绝同一 PatchSet 内重复 `target_path`，并返回可行动错误，提示改用 `replace_block` 或 `delegate_code_repair`。
+4. 确保 `app_patch_targets` 在 `patch_app` intent 下始终注入，包括用户当前聚焦 `implementation` 或 `preview_delivery` 节点但诉求明显指向已发布应用时。
+5. 对 `process.env`、`.env`、API key 和日志脱敏做回归，避免 redaction 破坏 `old_content`。
+6. dry-run 失败时，右侧 Agent 展示失败原因、目标文件、建议下一步，而不是只显示底层错误。
+
+### 输出
+
+- 更新后的 AgentBridge action protocol。
+- `patch_app` validation 和错误映射。
+- 前端 dry-run 失败展示。
+- 单文件单 patch、重复 target、target path 越界、redaction 回归测试。
+
+### 评估与验证
+
+```bash
+python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v
+node --check dashboard/app_generation.js
+```
+
+验收信号：
+
+- `generated_apps/input-prd/server.js` 可通过 `patch_app` dry-run。
+- `<slug>/server.js`、`server.js`、`worktree/...` 和 `codex/...` 被拒绝。
+- 同一个 PatchSet 对同一文件输出多个 patch 时，被拒绝并提示“合并为单个 replace_block 或委托 Code Agent”。
+- `process.env.OPENROUTER_IMAGE_MODEL` 不会被 redaction 改坏。
+
+### 停止条件
+
+- 已发布应用没有任何 `AGENT_EDIT` 锚点，且目标修改不是唯一文本替换。
+- 需要跨文件或跨函数理解才能修复。
+- Agent 无法构造精确 `old_content` 或稳定 `replace_block`。
+
+## T27: 长期 delegate_code_repair 与 CodeAgentExecutor
+
+### 输入
+
+- T26 的 `patch_app` 稳定化结果。
+- `docs/app_generation_agent_driven_repair_spec.md` 的 `delegate_code_repair` 契约。
+- 当前 Codex executor、run artifacts、preview runner 和 app patch APIs。
+
+### 中间过程
+
+1. 新增 `delegate_code_repair` AgentAction，并在右侧 Agent 待确认动作区展示 repair request。
+2. 新增 `CodeAgentExecutor` 抽象，Codex 作为默认 provider；未来 PI-code 或通用 LLM-code 必须作为 provider 接入同一抽象。
+3. Code Agent 只读取当前已发布快照 `runs/<run_id>/generated_apps/<slug>/`、允许的 patch 历史、preview 状态、日志摘要和用户 repair request。
+4. Code Agent 输出 PatchSet 或 unified diff，不直接写文件。
+5. 框架复用现有 dry-run、用户确认、apply、验证、证据记录和预览重启流程。
+6. repair run 写入 `app_repairs/<repair_id>/`，包含 prompt、context summary、diff、verification 和 usage。
+7. 成功修复后写 `AdjustmentEvent`，并允许用户选择 `promote_patch_to_generation_rule`。
+
+### 输出
+
+- `delegate_code_repair` API / SSE 事件。
+- `CodeAgentExecutor` provider 抽象和 Codex provider。
+- repair artifacts：`app_repairs/<repair_id>/context.md`、`diff.patch`、`verification.json`。
+- 前端 repair action card、diff 预览、确认、验证和回滚入口。
+
+### 评估与验证
+
+```bash
+python3 -m unittest tests.test_agent_bridge tests.test_codex_executor tests.test_dashboard -v
+python3 -m unittest tests.test_app_preview_runner -v
+```
+
+验收信号：
+
+- 用户说“只修改当前已发布应用，不重跑 PRD”时，复杂修复生成 `delegate_code_repair`，不是 `rerun_from_node`。
+- Code Agent 修复目标限制在 `generated_apps/<slug>/`。
+- Code Agent 输出仍需用户确认后才 apply。
+- 修复后执行语法检查、runtime smoke、preview health，并写 `AdjustmentEvent`。
+- 失败时保留旧预览进程和旧文件，diff 和错误可见。
+
+### 停止条件
+
+- 无法把 Code Agent 的文件读取限制在当前已发布快照。
+- Code Agent 需要真实 API key 才能生成 patch。
+- repair 输出不能回到统一 PatchSet/diff/确认闭环。
+
+## T28: Codex 执行过程可观测
+
+### 输入
+
+- T27 的 `CodeAgentExecutor` 和 `delegate_code_repair` 两阶段执行模型。
+- `docs/app_generation_codex_observability_spec.md` 的 `CodexProgressEvent` 契约。
+- 现有 `CodexExecutor` stdout/stderr 落盘、run SSE 和 Dashboard 节点详情 UI。
+
+### 中间过程
+
+1. 为 Codex 执行阶段增加 progress recorder，把 stdout JSONL、阶段开始/完成、验证和 diff 生成转换为业务友好的 `CodexProgressEvent`。
+2. `implementation` 节点写 `codex/coder_progress.jsonl` 和 `codex/coder_progress_status.json`。
+3. `delegate_code_repair` prepare 写 `app_repairs/<repair_id>/progress.jsonl` 和 `progress_status.json`。
+4. 扩展 run SSE，新增 `node_progress` 事件，用于推送 implementation 节点的实时执行过程。
+5. 新增 `delegate-code-repair/status?repair_id=<repair_id>` 只读 API，供右侧 Agent 区在 prepare 长请求期间轮询。
+6. 前端节点详情「执行过程」卡片展示实时 timeline，右侧 Agent 区展示「Code Agent 修复进度」卡片。
+7. 增加 app repair 越界修改检测：候选修改超出 `worktree/generated_apps/<slug>/` 时 prepare failed，旧应用不变。
+
+### 输出
+
+- progress artifacts：`coder_progress.jsonl`、`coder_progress_status.json`、`app_repairs/<repair_id>/progress.jsonl`、`progress_status.json`。
+- API / SSE：`node_progress`、`delegate-code-repair/status`。
+- UI：implementation 实时执行 timeline、右侧 Code Agent 修复进度卡片。
+- 风险事件：`outside_repair_scope_changes`。
+
+### 评估与验证
+
+```bash
+python3 -m unittest tests.test_codex_executor tests.test_dashboard -v
+node --check dashboard/app_generation.js
+```
+
+验收信号：
+
+- 用户等待 implementation 节点时能看到 Codex 最近执行的命令、文件修改和验证状态。
+- 用户等待 `delegate_code_repair` prepare 时能看到 Code Agent 修复进度，而不是只看到“正在准备候选 diff”。
+- 30 秒无新事件时显示“Code Agent 仍在运行，暂无新输出”。
+- progress 事件脱敏、截断，不包含 API key、完整 `.env`、完整 prompt 或完整源码。
+- Codex 修改 repair 范围外文件时 prepare failed，旧应用不变。
+
+### 停止条件
+
+- 无法从 Codex stdout JSONL 稳定解析 progress 事件。
+- 进度事件可能泄露 secret 或完整源码。
+- `delegate_code_repair` 的 progress API 需要引入数据库或外部队列。
+
 ## 总体验证门
 
 所有任务完成后运行：
@@ -1206,7 +1346,7 @@ python3 -m unittest discover -s tests -v
 推荐顺序：
 
 ```text
-T1 -> T2 -> T3 -> T4 -> T5 -> T6 -> T7 -> T8 -> T9 -> T10 -> T11 -> T12 -> T13 -> T14 -> T15 -> T16 -> T17 -> T18 -> T19 -> T20 -> T21 -> T22 -> T23 -> T24 -> T25
+T1 -> T2 -> T3 -> T4 -> T5 -> T6 -> T7 -> T8 -> T9 -> T10 -> T11 -> T12 -> T13 -> T14 -> T15 -> T16 -> T17 -> T18 -> T19 -> T20 -> T21 -> T22 -> T23 -> T24 -> T25 -> T26 -> T27
 ```
 
-T1 到 T3 建立 artifact 和 gate 基础；T4 暴露 CLI；T5 和 T6 让 Codex 生成结果可控且可验证；T7 补 Dashboard 操作面；T8 做端到端验收；T9 用真实实现回写文档。T10 到 T13 建立工作台节点、对比、AgentBridge 和重跑基础；T14 建立三栏工作台；T15 打磨中间节点事实层的信息架构；T16 增加受控文件预览能力；T17 补列宽伸缩和预览插位规则。T18 把 PiAgentProvider 从占位升级为 `pi --mode rpc` 子进程真实接入；T19 让右侧对话走 SSE 通道并支持工具调用流；T20 提供 in-workbench PRD 上传与节点 SSE 实时观测，闭合 PRD → 节点流 → Agent 协作的完整链路；T21 建立 AGQS 评估体系、Dingdang benchmark 和 auto-research 优化闭环，为后续多 variant 对比提供可审计基准；T22 收口右侧 Agent 操作协议，让 PI-Agent 围绕当前卡片和中间产物协作，并通过可确认 AgentAction 改变生成链路；T23 对齐真实 PI RPC 事件协议，避免答案文本、thinking 和 tool call 被错误丢弃或误渲染；T24 补齐 Provider 上下文增强和 `intent=auto` 路由，让右侧 Agent 能回答节点、输入、输出和重跑类自然语言请求；T25 把 benchmark parity 变成可注入、可评分、可阻断的生成质量门禁。
+T1 到 T3 建立 artifact 和 gate 基础；T4 暴露 CLI；T5 和 T6 让 Codex 生成结果可控且可验证；T7 补 Dashboard 操作面；T8 做端到端验收；T9 用真实实现回写文档。T10 到 T13 建立工作台节点、对比、AgentBridge 和重跑基础；T14 建立三栏工作台；T15 打磨中间节点事实层的信息架构；T16 增加受控文件预览能力；T17 补列宽伸缩和预览插位规则。T18 把 PiAgentProvider 从占位升级为 `pi --mode rpc` 子进程真实接入；T19 让右侧对话走 SSE 通道并支持工具调用流；T20 提供 in-workbench PRD 上传与节点 SSE 实时观测，闭合 PRD → 节点流 → Agent 协作的完整链路；T21 建立 AGQS 评估体系、Dingdang benchmark 和 auto-research 优化闭环，为后续多 variant 对比提供可审计基准；T22 收口右侧 Agent 操作协议，让 PI-Agent 围绕当前卡片和中间产物协作，并通过可确认 AgentAction 改变生成链路；T23 对齐真实 PI RPC 事件协议，避免答案文本、thinking 和 tool call 被错误丢弃或误渲染；T24 补齐 Provider 上下文增强和 `intent=auto` 路由，让右侧 Agent 能回答节点、输入、输出和重跑类自然语言请求；T25 把 benchmark parity 变成可注入、可评分、可阻断的生成质量门禁；T26 先把短期 `patch_app` 做到可预测、可失败、可解释；T27 再把复杂应用修复收敛到唯一 `CodeAgentExecutor`，让右侧 PI-Agent 从“尝试写代码”变成“理解诉求并委托代码修复”。

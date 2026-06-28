@@ -79,6 +79,56 @@ sys.exit(2)
     return script
 
 
+def _write_fake_app_repair_codex(path: Path) -> Path:
+    script = path / "codex-app-repair"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    sys.stdin.read()
+    target = os.path.join(workspace, "generated_apps", "todo-prototype", "server.js")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write("console.log('fixed');\\n")
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {
+        "summary": "fake app repair updated the published app candidate",
+        "files_changed": ["generated_apps/todo-prototype/server.js"],
+        "tests_run": ["node --check server.js"],
+        "risk_events": [],
+        "blockers": [],
+        "next_action": "apply_candidate",
+    }
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({"event": "repair.completed", "target": target}))
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_note_risk_fake_codex(path: Path) -> Path:
     script = path / "codex-risk-notes"
     script.write_text(
@@ -453,6 +503,40 @@ class CodexExecutorTests(unittest.TestCase):
             ],
         )
         self.assertEqual(blocking, ["prohibited_implementation_pattern:proxy rotation", "codex_response_missing_field:summary"])
+
+    def test_code_agent_executor_prepares_app_repair_candidate_without_promoting(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig
+        from growth_dev.team.code_agent_executor import run_repair
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_fake_app_repair_codex(root)
+            run_dir = root / "runs" / "repair-run"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text("console.log('original');\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+
+            result = run_repair(
+                {
+                    "app_slug": "todo-prototype",
+                    "problem": "server still uses old behavior",
+                    "constraints": ["只修改当前已发布应用"],
+                    "expected_behavior": ["server.js is updated"],
+                    "verification": ["node --check server.js"],
+                },
+                run_dir=run_dir,
+                repo_root=root,
+                config=CodexExecutorConfig(binary=str(fake_codex), model="", reasoning_effort=""),
+            )
+            published_text = (published / "server.js").read_text(encoding="utf-8")
+            diff_text = (run_dir / result.diff_path).read_text(encoding="utf-8")
+
+        self.assertEqual(result.status, "prepared")
+        self.assertEqual(result.changed_files, ["generated_apps/todo-prototype/server.js"])
+        self.assertEqual(published_text, "console.log('original');\n")
+        self.assertIn("console.log('fixed')", diff_text)
 
     def test_codex_risk_classifier_treats_supporting_test_boundary_note_as_non_blocking(self) -> None:
         from growth_dev.team.codex import classify_codex_risk_events
@@ -1256,7 +1340,7 @@ diff --git a/scraper.py b/scraper.py
         self.assertIn("image_download", prompt_text)
         self.assertIn("https://openrouter.ai/api/v1/images", prompt_text)
         self.assertIn("input_references", prompt_text)
-        self.assertIn("openai/gpt-image-1", prompt_text)
+        self.assertIn("openai/gpt-5.4-image-2", prompt_text)
         self.assertIn("第 X 张第 Y 层", prompt_text)
         self.assertEqual(benchmark_context["quality_mode"], "benchmark_parity")
         self.assertIn(record.status, {"completed", "failed"})

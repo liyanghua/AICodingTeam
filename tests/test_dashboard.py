@@ -1164,6 +1164,31 @@ console.log(JSON.stringify(vm));
         self.assertIn("compare_variants", action_types)
         self.assertIn("rerun_from_node", action_types)
 
+    def test_app_generation_completed_record_overrides_stale_running_process_for_nodes(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_nodes
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir)
+            (run_dir / "process.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "app-generation-workbench",
+                        "pid": 999999,
+                        "status": "running",
+                        "last_seen_at": "2026-01-01T00:00:00Z",
+                        "finished_at": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = build_app_generation_nodes("app-generation-workbench", runs_dir=runs_dir, repo_root=root)
+
+        implementation = next(node for node in state["nodes"] if node["id"] == "implementation")
+        self.assertEqual(implementation["status"], "completed")
+
     def test_app_generation_run_exposes_publish_status(self) -> None:
         from growth_dev.team.dashboard import build_app_generation_nodes
 
@@ -1282,6 +1307,101 @@ console.log(JSON.stringify(vm));
         self.assertEqual(pi_response["provider"], "pi_agent")
         self.assertEqual(pi_response["status"], "not_configured")
         self.assertIn("PI-Agent", pi_response["message"])
+
+    def test_app_generation_agent_app_preview_context_generates_patch_app_from_published_app(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_node_context, handle_app_generation_agent_message
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir)
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text(
+                "const model = process.env.OPENROUTER_IMAGE_MODEL || 'gpt-image-1';\n",
+                encoding="utf-8",
+            )
+            (published / "app_publish.json").write_text(
+                json.dumps(
+                    {
+                        "app_slug": "todo-prototype",
+                        "published_at": "2026-01-01T00:00:00Z",
+                        "source_commit": "abc123",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "preview_delivery",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+            response = handle_app_generation_agent_message(
+                {
+                    "provider": "codex",
+                    "intent": "auto",
+                    "mode": "explain",
+                    "message": "生成单张图时报 gpt-image-1 not configured。我的 .env 里配置的是 OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2。请只修改当前已发布应用。",
+                    "node_context": context,
+                    "interaction_context": {
+                        "context_revision": context["context_revision"],
+                        "focus": {"card": "app_preview", "view_mode": "app_preview"},
+                        "allowed_operations": ["patch_app", "diagnose_app_bug"],
+                    },
+                },
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+        self.assertEqual(response["status"], "completed")
+        self.assertEqual(response["resolved_intent"], "patch_app")
+        patch_action = next(action for action in response["actions"] if action["type"] == "patch_app")
+        self.assertEqual(patch_action["patches"][0]["target_path"], "generated_apps/todo-prototype/server.js")
+        self.assertIn("openai/gpt-5.4-image-2", patch_action["patches"][0]["new_content"])
+
+    def test_app_generation_agent_complex_app_preview_repair_delegates_to_code_agent(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_node_context, handle_app_generation_agent_message
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir)
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text("console.log('server');\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+            context = build_app_generation_node_context(
+                "app-generation-workbench",
+                "preview_delivery",
+                selected_variant="codex",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+            response = handle_app_generation_agent_message(
+                {
+                    "provider": "codex",
+                    "intent": "auto",
+                    "mode": "explain",
+                    "message": "生图按钮没反应，请新增错误提示、重试逻辑，并保留现有工作流，不重跑完整 PRD。",
+                    "node_context": context,
+                    "interaction_context": {
+                        "context_revision": context["context_revision"],
+                        "focus": {"card": "app_preview", "view_mode": "app_preview"},
+                        "allowed_operations": ["patch_app", "delegate_code_repair", "diagnose_app_bug"],
+                    },
+                },
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+        self.assertEqual(response["resolved_intent"], "delegate_code_repair")
+        action = next(action for action in response["actions"] if action["type"] == "delegate_code_repair")
+        self.assertEqual(action["repair_request"]["app_slug"], "todo-prototype")
+        self.assertIn("不重跑 PRD", action["repair_request"]["constraints"])
 
     def test_app_generation_agent_stream_yields_codex_agent_end_event(self) -> None:
         from growth_dev.team.dashboard import (
@@ -2146,6 +2266,19 @@ console.log(JSON.stringify(vm));
         self.assertIn("function renderPreviewControls", script)
         self.assertIn('previewBtn.disabled = !state.selectedRunId || !isPublished', script)
         self.assertIn('publishStatus.status !== "published"', start_fn)
+
+    def test_app_generation_frontend_patch_app_supports_patchsets(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "dashboard" / "app_generation.js").read_text(encoding="utf-8")
+        patch_fn = script[
+            script.index("async function handlePatchAppAction") : script.index("function appendAgentLog")
+        ]
+
+        self.assertIn("Array.isArray(action.patches)", patch_fn)
+        self.assertIn("patchPayload.patches", patch_fn)
+        self.assertIn("patch_set_id", patch_fn)
+        self.assertIn("{ ...patchPayload, dry_run: true }", patch_fn)
+        self.assertIn("PatchSet", patch_fn)
 
     def test_dashboard_flow_detail_uses_compact_artifact_and_evidence_layout(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -3149,6 +3282,127 @@ console.log(JSON.stringify(vm));
             self.assertEqual(len(diff_files), 1)
             self.assertIn("appended line", diff_files[0].read_text(encoding="utf-8"))
 
+    def test_delegate_code_repair_prepare_uses_code_agent_without_promote(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, start_app_generation_delegate_repair
+
+        class FakeRepairResult:
+            status = "prepared"
+            app_slug = "todo-prototype"
+            candidate_dir = "worktree/generated_apps/todo-prototype"
+            diff_path = "codex/app_repair_diff.patch"
+            changed_files = ["generated_apps/todo-prototype/server.js"]
+            verification_results = []
+            risk_events = []
+            blockers = []
+            codex_artifacts = {"diff": "codex/app_repair_diff.patch"}
+            message = "prepared"
+
+            def to_dict(self):
+                return {
+                    "status": self.status,
+                    "app_slug": self.app_slug,
+                    "candidate_dir": self.candidate_dir,
+                    "diff_path": self.diff_path,
+                    "changed_files": self.changed_files,
+                    "verification_results": self.verification_results,
+                    "risk_events": self.risk_events,
+                    "blockers": self.blockers,
+                    "codex_artifacts": self.codex_artifacts,
+                    "message": self.message,
+                }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "delegate-prepare"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text("original\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+            (run_dir / "codex").mkdir(parents=True)
+            (run_dir / "codex" / "app_repair_diff.patch").write_text("-original\n+fixed\n", encoding="utf-8")
+
+            with mock.patch("growth_dev.team.code_agent_executor.run_repair", return_value=FakeRepairResult()) as runner:
+                result = start_app_generation_delegate_repair(
+                    DashboardConfig(
+                        runs_dir=runs_dir,
+                        domains_dir=root / "domains",
+                        repo_root=root,
+                        dashboard_dir=root / "dashboard",
+                        executor="codex",
+                    ),
+                    {
+                        "run_id": "delegate-prepare",
+                        "repair_id": "repair-1",
+                        "repair_request": {
+                            "app_slug": "todo-prototype",
+                            "problem": "fix server",
+                            "verification": ["node --check server.js"],
+                        },
+                    },
+                )
+                published_text = (published / "server.js").read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "prepared")
+        self.assertEqual(result["repair_id"], "repair-1")
+        self.assertIn("fixed", result["diff"])
+        self.assertEqual(published_text, "original\n")
+        runner.assert_called_once()
+
+    def test_delegate_code_repair_apply_promotes_candidate_and_writes_adjustment_event(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, apply_app_generation_delegate_repair
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "delegate-apply"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text("original\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+            candidate = run_dir / "worktree" / "generated_apps" / "todo-prototype"
+            candidate.mkdir(parents=True)
+            (candidate / "server.js").write_text("fixed\n", encoding="utf-8")
+            repairs_dir = run_dir / "app_repairs" / "repair-1"
+            repairs_dir.mkdir(parents=True)
+            (repairs_dir / "candidate.diff").write_text("-original\n+fixed\n", encoding="utf-8")
+            (repairs_dir / "repair_request.json").write_text(
+                json.dumps({"app_slug": "todo-prototype", "problem": "fix server", "verification": ["node --check server.js"]}),
+                encoding="utf-8",
+            )
+            (repairs_dir / "repair_result.json").write_text(
+                json.dumps({"status": "prepared", "candidate_dir": "worktree/generated_apps/todo-prototype"}),
+                encoding="utf-8",
+            )
+            active = {
+                "repair_id": "repair-1",
+                "app_slug": "todo-prototype",
+                "status": "prepared",
+                "candidate_dir": "worktree/generated_apps/todo-prototype",
+                "diff_path": "app_repairs/repair-1/candidate.diff",
+            }
+            (run_dir / "app_repairs" / "active.json").write_text(json.dumps(active), encoding="utf-8")
+
+            result = apply_app_generation_delegate_repair(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {"run_id": "delegate-apply", "repair_id": "repair-1", "agent_provider": "pi_agent"},
+            )
+            published_text = (published / "server.js").read_text(encoding="utf-8")
+            patches_index = json.loads((run_dir / "app_patches" / "index.json").read_text(encoding="utf-8"))
+            events = (run_dir / "adjustment_events.jsonl").read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(published_text, "fixed\n")
+        self.assertEqual(patches_index["patches"][0]["edit_kind"], "delegate_code_repair")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(json.loads(events[0])["resolved_intent"], "delegate_code_repair")
+
     def test_patch_app_replace_block_uses_anchor(self) -> None:
         from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
 
@@ -3190,6 +3444,172 @@ console.log(JSON.stringify(vm));
             self.assertNotIn("OLD BTN", updated)
             self.assertIn("before", updated)
             self.assertIn("after", updated)
+
+    def test_apply_edit_replace_text_success_not_found_and_ambiguous(self) -> None:
+        from growth_dev.team.dashboard import _apply_edit
+
+        self.assertEqual(
+            _apply_edit("const model = 'gpt-image-1';\n", "replace_text", "const model = 'gpt-5.4-image-2';", old_content="const model = 'gpt-image-1';"),
+            "const model = 'gpt-5.4-image-2';\n",
+        )
+        with self.assertRaises(ValueError) as not_found:
+            _apply_edit("abc\n", "replace_text", "x", old_content="missing")
+        self.assertIn("old_content_not_found", str(not_found.exception))
+        with self.assertRaises(ValueError) as ambiguous:
+            _apply_edit("same\nsame\n", "replace_text", "x", old_content="same")
+        self.assertIn("ambiguous_match", str(ambiguous.exception))
+
+    def test_redaction_preserves_process_env_inside_patch_content(self) -> None:
+        from growth_dev.team.dashboard import _redact
+
+        payload = {
+            "message": "checked .env with sk-secret123",
+            "actions": [
+                {
+                    "type": "patch_app",
+                    "patches": [
+                        {
+                            "old_content": "const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';",
+                            "new_content": "const model = process.env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-5.4-image-2';",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        redacted = _redact(payload)
+
+        self.assertEqual(redacted["message"], "checked <env-file> with <redacted>")
+        patch = redacted["actions"][0]["patches"][0]
+        self.assertIn("process.env.OPENAI_IMAGE_MODEL", patch["old_content"])
+        self.assertIn("process.env.OPENROUTER_IMAGE_MODEL", patch["new_content"])
+        self.assertNotIn("process<env-file>", json.dumps(redacted))
+
+    def test_patch_app_patchset_dry_run_returns_merged_diff_without_writing(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-set-dry"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "server.js").write_text("const model = 'gpt-image-1';\n", encoding="utf-8")
+            (published / "public" / "app.js").write_text("button.textContent = '生成';\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+
+            result = patch_app_generation_run(
+                DashboardConfig(runs_dir=runs_dir, domains_dir=root / "domains", repo_root=root, dashboard_dir=root / "dashboard", executor="codex"),
+                {
+                    "run_id": "app-patch-set-dry",
+                    "dry_run": True,
+                    "patches": [
+                        {
+                            "target_path": "generated_apps/todo-prototype/server.js",
+                            "edit_kind": "replace_text",
+                            "old_content": "const model = 'gpt-image-1';",
+                            "new_content": "const model = 'openai/gpt-5.4-image-2';",
+                        },
+                        {
+                            "target_path": "generated_apps/todo-prototype/public/app.js",
+                            "edit_kind": "append",
+                            "new_content": "console.log('patched');\n",
+                        },
+                    ],
+                    "problem_source": "app_preview",
+                    "verification": ["node --check server.js"],
+                },
+            )
+
+            self.assertEqual(result["status"], "dry_run")
+            self.assertIn("openai/gpt-5.4-image-2", result["diff"])
+            self.assertIn("console.log", result["diff"])
+            self.assertNotIn("openai/gpt-5.4-image-2", (published / "server.js").read_text(encoding="utf-8"))
+            self.assertFalse((run_dir / "app_patches").exists())
+
+    def test_patch_app_patchset_apply_transaction_and_verification(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-set-apply"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "server.js").write_text("const model = 'gpt-image-1';\n", encoding="utf-8")
+            (published / "public" / "app.js").write_text("const ready = true;\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+
+            result = patch_app_generation_run(
+                DashboardConfig(runs_dir=runs_dir, domains_dir=root / "domains", repo_root=root, dashboard_dir=root / "dashboard", executor="codex"),
+                {
+                    "run_id": "app-patch-set-apply",
+                    "patches": [
+                        {
+                            "target_path": "generated_apps/todo-prototype/server.js",
+                            "edit_kind": "replace_text",
+                            "old_content": "const model = 'gpt-image-1';",
+                            "new_content": "const model = 'openai/gpt-5.4-image-2';",
+                        },
+                        {
+                            "target_path": "generated_apps/todo-prototype/public/app.js",
+                            "edit_kind": "append",
+                            "new_content": "console.log('patched');\n",
+                        },
+                    ],
+                    "patch_set_id": "patch-set-001",
+                    "problem_source": "app_preview",
+                    "preserve_capabilities": ["existing workflow"],
+                    "verification": ["node --check server.js", "node --check public/app.js", "echo unsafe"],
+                },
+            )
+
+            self.assertEqual(result["status"], "applied")
+            self.assertEqual(result["patch_set_id"], "patch-set-001")
+            self.assertIn("openai/gpt-5.4-image-2", (published / "server.js").read_text(encoding="utf-8"))
+            index = json.loads((run_dir / "app_patches" / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(index["patches"]), 2)
+            self.assertTrue(all(item["patch_set_id"] == "patch-set-001" for item in index["patches"]))
+            self.assertEqual(result["verification"]["status"], "failed")
+            self.assertTrue(any(item["status"] == "rejected" for item in result["verification"]["commands"]))
+
+    def test_patch_app_patchset_validation_failure_writes_nothing(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app-patch-set-fail"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            (published / "public").mkdir(parents=True)
+            (published / "server.js").write_text("const model = 'gpt-image-1';\n", encoding="utf-8")
+            (published / "public" / "app.js").write_text("orig\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+
+            with self.assertRaises(ValueError) as ctx:
+                patch_app_generation_run(
+                    DashboardConfig(runs_dir=runs_dir, domains_dir=root / "domains", repo_root=root, dashboard_dir=root / "dashboard", executor="codex"),
+                    {
+                        "run_id": "app-patch-set-fail",
+                        "patches": [
+                            {
+                                "target_path": "generated_apps/todo-prototype/server.js",
+                                "edit_kind": "replace_text",
+                                "old_content": "missing",
+                                "new_content": "x",
+                            },
+                            {
+                                "target_path": "generated_apps/todo-prototype/public/app.js",
+                                "edit_kind": "append",
+                                "new_content": "should-not-write\n",
+                            },
+                        ],
+                    },
+                )
+
+            self.assertIn("old_content_not_found", str(ctx.exception))
+            self.assertEqual((published / "public" / "app.js").read_text(encoding="utf-8"), "orig\n")
+            self.assertFalse((run_dir / "app_patches").exists())
 
     def test_patch_app_no_active_preview_skips_restart(self) -> None:
         from growth_dev.team.dashboard import DashboardConfig, patch_app_generation_run
