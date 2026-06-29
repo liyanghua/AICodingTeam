@@ -543,6 +543,31 @@ POST /api/app-generation/agent/stream
 
 v1 重跑语义是“从指定节点的调整说明开始，生成一个完整新 run”。旧 run 作为对照和审计来源保留。
 
+## V2 生成画布关系
+
+V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_generation_canvas_experience_spec.md)。V2 不废弃本文档定义的 V1 工作台，而是在 V1 的节点事实层、Artifact Preview Rail、应用预览、AgentBridge 和 `NodeContext` 之上增加业务对象投影。
+
+V1 与 V2 的关系：
+
+- V1 节点流仍是运行事实的直接呈现。
+- V2 业务节点轨道是 V1 节点流的业务语言投影。
+- V1 详情卡片仍提供输入、输出、工具、usage、风险和 evidence。
+- V2 对象画布把这些 evidence 投影为 `CanvasObject`，例如业务目标、场景、能力、页面流程、数据对象、provider 配置、能力缺口、预览会话和修复候选。
+- V2 右侧 Agent 默认围绕当前 `CanvasObject` 协作，而不是只围绕当前 `node_id`。
+
+V2 默认业务节点必须固定为：
+
+1. 理解业务目标
+2. 编译业务规格
+3. 规划应用结构
+4. 生成应用原型
+5. 验证业务能力
+6. 输出可交付版本
+
+V2 生成画布不得引入新的事实源。`CanvasProjection` 必须能从 run artifacts、`NodeContext`、preview status、evaluation artifacts 和 `adjustment_events` 重建。浏览器本地状态只能保存 UI 偏好，例如选中对象、折叠状态和画布缩放，不得作为业务事实。
+
+V2 实施初期允许在现有中间区增加“业务对象”tab；完整画布化应作为后续阶段实现，避免一次性推翻 V1 已有可观测链路。
+
 ## 安全边界
 
 - Agent 不直接写旧 artifact。

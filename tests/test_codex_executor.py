@@ -129,6 +129,60 @@ sys.exit(2)
     return script
 
 
+def _write_fake_app_repair_outside_codex(path: Path) -> Path:
+    script = path / "codex-app-repair-outside"
+    script.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+
+def _value_after(args, *flags):
+    for index, value in enumerate(args):
+        if value in flags and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
+
+args = sys.argv[1:]
+workspace = _value_after(args, "--cd", "-C") or os.getcwd()
+if "exec" in args:
+    sys.stdin.read()
+    target = os.path.join(workspace, "generated_apps", "todo-prototype", "server.js")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write("console.log('fixed');\\n")
+    outside = os.path.join(workspace, "tests", "outside_repair_scope.py")
+    os.makedirs(os.path.dirname(outside), exist_ok=True)
+    with open(outside, "w", encoding="utf-8") as handle:
+        handle.write("VALUE = 'outside'\\n")
+    output_path = _value_after(args, "--output-last-message", "-o")
+    payload = {
+        "summary": "fake app repair changed outside scope",
+        "files_changed": ["generated_apps/todo-prototype/server.js", "tests/outside_repair_scope.py"],
+        "tests_run": [],
+        "risk_events": [],
+        "blockers": [],
+        "next_action": "apply_candidate",
+    }
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    print(json.dumps({"type": "item.completed", "item": {"type": "file_change", "changes": [{"path": outside, "kind": "create"}], "status": "completed"}}))
+    sys.exit(0)
+
+print("unsupported fake codex invocation", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 def _write_note_risk_fake_codex(path: Path) -> Path:
     script = path / "codex-risk-notes"
     script.write_text(
@@ -538,6 +592,76 @@ class CodexExecutorTests(unittest.TestCase):
         self.assertEqual(published_text, "console.log('original');\n")
         self.assertIn("console.log('fixed')", diff_text)
 
+    def test_app_repair_writes_progress_artifacts(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig
+        from growth_dev.team.code_agent_executor import run_repair
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_fake_app_repair_codex(root)
+            run_dir = root / "runs" / "repair-progress"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text("console.log('original');\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+
+            result = run_repair(
+                {
+                    "app_slug": "todo-prototype",
+                    "repair_id": "repair-progress-1",
+                    "problem": "server still uses old behavior",
+                    "verification": ["node --check server.js"],
+                },
+                run_dir=run_dir,
+                repo_root=root,
+                config=CodexExecutorConfig(binary=str(fake_codex), model="", reasoning_effort=""),
+            )
+            progress_path = run_dir / "app_repairs" / "repair-progress-1" / "progress.jsonl"
+            status_path = run_dir / "app_repairs" / "repair-progress-1" / "progress_status.json"
+            events = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "prepared")
+        self.assertTrue(any(event["event_type"] == "process_started" for event in events))
+        self.assertTrue(any(event["event_type"] == "stage_completed" for event in events))
+        self.assertEqual(status["status"], "prepared")
+        self.assertTrue(status["diff_ready"])
+        self.assertNotIn("API_KEY", json.dumps(events))
+
+    def test_app_repair_fails_when_codex_changes_outside_generated_app(self) -> None:
+        from growth_dev.team.codex import CodexExecutorConfig
+        from growth_dev.team.code_agent_executor import run_repair
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            fake_codex = _write_fake_app_repair_outside_codex(root)
+            run_dir = root / "runs" / "repair-outside"
+            published = run_dir / "generated_apps" / "todo-prototype"
+            published.mkdir(parents=True)
+            (published / "server.js").write_text("console.log('original');\n", encoding="utf-8")
+            (published / "app_publish.json").write_text(json.dumps({"app_slug": "todo-prototype"}), encoding="utf-8")
+
+            result = run_repair(
+                {
+                    "app_slug": "todo-prototype",
+                    "repair_id": "repair-outside-1",
+                    "problem": "server still uses old behavior",
+                    "verification": ["node --check server.js"],
+                },
+                run_dir=run_dir,
+                repo_root=root,
+                config=CodexExecutorConfig(binary=str(fake_codex), model="", reasoning_effort=""),
+            )
+            published_text = (published / "server.js").read_text(encoding="utf-8")
+            status = json.loads((run_dir / "app_repairs" / "repair-outside-1" / "progress_status.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("outside_repair_scope_changes", result.risk_events)
+        self.assertEqual(published_text, "console.log('original');\n")
+        self.assertEqual(status["status"], "failed")
+
     def test_codex_risk_classifier_treats_supporting_test_boundary_note_as_non_blocking(self) -> None:
         from growth_dev.team.codex import classify_codex_risk_events
 
@@ -578,6 +702,75 @@ class CodexExecutorTests(unittest.TestCase):
 
         self.assertEqual(blocking, [])
         self.assertEqual(non_blocking, [event])
+
+    def test_codex_blocker_classifier_downgrades_unrelated_standalone_test_failure(self) -> None:
+        from growth_dev.team.codex import _classify_codex_blockers
+
+        blocker = (
+            "`python3 -m unittest discover -s tests -v` remains red because unrelated "
+            "`test_taobao_collector.TaobaoCollectorTests.test_keyword_top_n_scrolls_result_pages_after_visible_slots` "
+            "fails standalone; expected cards `1,2,3,1`, actual all `result_card_1`."
+        )
+
+        blocking, warnings = _classify_codex_blockers(
+            [blocker],
+            changed_files=[
+                "generated_apps/input-prd/server.js",
+                "tests/test_generated_input_prd_app.py",
+            ],
+            app_runtime_verification={"status": "passed"},
+        )
+
+        self.assertEqual(blocking, [])
+        self.assertEqual(warnings, [f"codex_unrelated_test_blocker:{blocker}"])
+
+    def test_codex_blocker_classifier_downgrades_unrelated_isolated_rerun_phrase(self) -> None:
+        from growth_dev.team.codex import _classify_codex_blockers
+
+        blocker = (
+            "Declared full suite `python3 -m unittest discover -s tests -v` fails in unrelated "
+            "`tests/test_taobao_collector.py::TaobaoCollectorTests.test_keyword_top_n_scrolls_result_pages_after_visible_slots`; "
+            "isolated rerun fails the same way. App-specific verification passes."
+        )
+
+        blocking, warnings = _classify_codex_blockers(
+            [blocker],
+            changed_files=[
+                "generated_apps/input-prd/.env.example",
+                "generated_apps/input-prd/README.md",
+                "generated_apps/input-prd/public/app.js",
+                "generated_apps/input-prd/public/index.html",
+                "generated_apps/input-prd/public/styles.css",
+                "generated_apps/input-prd/runtime_smoke.js",
+                "generated_apps/input-prd/server.js",
+                "tests/test_generated_input_prd_app.py",
+            ],
+            app_runtime_verification={"status": "passed"},
+        )
+
+        self.assertEqual(blocking, [])
+        self.assertEqual(warnings, [f"codex_unrelated_test_blocker:{blocker}"])
+
+    def test_codex_blocker_classifier_keeps_touched_or_unverified_test_failure_blocking(self) -> None:
+        from growth_dev.team.codex import _classify_codex_blockers
+
+        blocker = "unrelated `test_taobao_collector.TaobaoCollectorTests.test_keyword_top_n_scrolls_result_pages_after_visible_slots` fails standalone"
+
+        touched_blocking, touched_warnings = _classify_codex_blockers(
+            [blocker],
+            changed_files=["tests/test_taobao_collector.py"],
+            app_runtime_verification={"status": "passed"},
+        )
+        unverified_blocking, unverified_warnings = _classify_codex_blockers(
+            [blocker],
+            changed_files=["generated_apps/input-prd/server.js"],
+            app_runtime_verification={"status": "failed"},
+        )
+
+        self.assertEqual(touched_blocking, [blocker])
+        self.assertEqual(touched_warnings, [])
+        self.assertEqual(unverified_blocking, [blocker])
+        self.assertEqual(unverified_warnings, [])
 
     def test_codex_risk_classifier_keeps_unrelated_no_prefix_events_blocking(self) -> None:
         from growth_dev.team.codex import classify_codex_risk_events

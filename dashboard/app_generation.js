@@ -47,10 +47,22 @@ const STATUS_LABELS = {
   missing: "未生成",
   not_started: "未开始",
   not_configured: "未配置",
+  not_published: "未发布",
+  published: "已发布",
   unknown: "未记录",
   success: "已就绪",
   error: "失败",
   pending: "未开始",
+  drafted: "已形成草案",
+  planned: "已纳入规划",
+  generating: "正在生成",
+  generated: "已生成",
+  verifying: "正在验证",
+  verified: "已验证",
+  needs_attention: "需关注",
+  patched: "已修复",
+  delivered: "已交付",
+  context: "上下文",
 };
 
 const VALIDATION_ICONS = {
@@ -85,6 +97,7 @@ const VARIANT_LABELS = {
 
 const state = {
   runs: [],
+  isNewTask: false,
   selectedRun: null,
   selectedRunId: "",
   nodes: [],
@@ -102,6 +115,20 @@ const state = {
   previewRequestSeq: 0,
   appPreview: null,
   appPreviewPollInterval: null,
+  delegateRepairPollInterval: null,
+  canvas: {
+    projection: null,
+    selectedBusinessNodeId: "",
+    selectedObjectId: "",
+    selectedObjectDetail: null,
+    filters: {
+      objectType: "all",
+      status: "all",
+    },
+    coderLive: null,
+    loading: false,
+    error: "",
+  },
   interactionContext: {
     focus: {
       card: "node_summary",
@@ -117,6 +144,12 @@ const state = {
       "suggest_artifact_patch",
       "read_artifact",
       "suggest_artifact_regeneration",
+      "explain_object",
+      "repair_generated_app",
+      "verify_capability",
+      "patch_app",
+      "delegate_code_repair",
+      "diagnose_app_bug",
       "rerun_from_node",
       "select_variant",
       "ask_clarification",
@@ -137,6 +170,16 @@ function loadPersistedState() {
       state.uploadProvider = parsed.uploadProvider || "default";
       state.uploadModel = parsed.uploadModel || COMMON_CODEX_MODELS[0];
       state.agentMode = parsed.agentMode || "explain";
+      if (parsed.canvas && typeof parsed.canvas === "object") {
+        state.canvas.selectedBusinessNodeId = parsed.canvas.selectedBusinessNodeId || "";
+        state.canvas.selectedObjectId = parsed.canvas.selectedObjectId || "";
+        if (parsed.canvas.filters && typeof parsed.canvas.filters === "object") {
+          state.canvas.filters = {
+            objectType: parsed.canvas.filters.objectType || "all",
+            status: parsed.canvas.filters.status || "all",
+          };
+        }
+      }
     }
   } catch (err) {
     // localStorage 可能不可用或包含损坏的 JSON，静默回退到默认状态。
@@ -155,6 +198,11 @@ function persistState() {
         uploadProvider: state.uploadProvider,
         uploadModel: state.uploadModel,
         agentMode: state.agentMode,
+        canvas: {
+          selectedBusinessNodeId: state.canvas.selectedBusinessNodeId || "",
+          selectedObjectId: state.canvas.selectedObjectId || "",
+          filters: state.canvas.filters || { objectType: "all", status: "all" },
+        },
       })
     );
   } catch (err) {
@@ -216,10 +264,22 @@ function statusBadge(status) {
     failed: "status-attention",
     not_started: "status-muted",
     not_configured: "status-attention",
+    not_published: "status-muted",
+    published: "status-completed",
     unknown: "status-muted",
     success: "status-completed",
     error: "status-attention",
     pending: "status-muted",
+    drafted: "status-processing",
+    planned: "status-processing",
+    generating: "status-processing",
+    generated: "status-completed",
+    verifying: "status-processing",
+    verified: "status-completed",
+    needs_attention: "status-attention",
+    patched: "status-completed",
+    delivered: "status-completed",
+    context: "status-muted",
   };
   return map[status] || "status-muted";
 }
@@ -292,6 +352,7 @@ function getSelectedText() {
 
 function buildAgentInteractionContext() {
   const focus = (state.interactionContext && state.interactionContext.focus) || {};
+  const canvasSelection = focus.card === "canvas_object" || focus.card === "flow_step" ? buildCanvasSelectionContext() : null;
   return {
     schema_version: 1,
     run_id: state.selectedRunId,
@@ -305,7 +366,118 @@ function buildAgentInteractionContext() {
       selected_text: getSelectedText() || focus.selected_text || "",
       view_mode: focus.view_mode || "node_detail",
     },
+    canvas_selection: canvasSelection,
     allowed_operations: (state.interactionContext && state.interactionContext.allowed_operations) || [],
+  };
+}
+
+function buildCanvasSelectionContext() {
+  const projection = state.canvas && state.canvas.projection;
+  const focus = (state.interactionContext && state.interactionContext.focus) || {};
+  if (projection && focus.card === "flow_step") {
+    const step = currentCanvasBusinessNode();
+    if (!step) return null;
+    return {
+      schema_version: 1,
+      run_id: state.selectedRunId,
+      selection_type: "flow_step",
+      step_id: step.id,
+      step_type: step.step_type || "business",
+      title: step.title || step.id,
+      status: step.status || "unknown",
+      runtime_nodes: Array.isArray(step.runtime_nodes) ? step.runtime_nodes : [],
+      input_summary: Array.isArray(step.input_summary) ? step.input_summary : [],
+      process_summary: Array.isArray(step.process_summary) ? step.process_summary : [],
+      output_summary: Array.isArray(step.output_summary) ? step.output_summary : [],
+      evidence_refs: Array.isArray(step.evidence_refs) ? step.evidence_refs : [],
+      allowed_actions: Array.isArray(step.available_actions) ? step.available_actions : [],
+    };
+  }
+  const objectId = state.canvas && state.canvas.selectedObjectId;
+  if (!projection || !objectId) return null;
+  const objects = allCanvasObjects(projection);
+  const object = objects.find((item) => item.object_id === objectId);
+  if (!object) return null;
+  const related = (projection.edges || [])
+    .filter((edge) => edge && (edge.from === objectId || edge.to === objectId))
+    .map((edge) => (edge.from === objectId ? edge.to : edge.from))
+    .filter(Boolean)
+    .slice(0, 12);
+  return {
+    schema_version: 1,
+    run_id: state.selectedRunId,
+    selection_type: "canvas_object",
+    selection_id: object.object_id,
+    object_type: object.object_type,
+    title: object.title || object.object_id,
+    status: object.status || "unknown",
+    business_node: object.owner_node || object.owner_node_id || "",
+    business_node_id: object.owner_node_id || "",
+    focus_surface: "canvas_object_detail",
+    visible_related_objects: related,
+    allowed_actions: object.actions || [],
+  };
+}
+
+function canvasFlowSteps(projection) {
+  const proj = projection || (state.canvas && state.canvas.projection);
+  if (!proj) return [];
+  if (Array.isArray(proj.flow_steps) && proj.flow_steps.length) return proj.flow_steps;
+  return Array.isArray(proj.business_nodes) ? proj.business_nodes : [];
+}
+
+function initialCanvasProjection() {
+  const stepDefs = [
+    ["prd_entry", "PRD 输入", "entry", "ready", ["粘贴 PRD 文本或选择 PRD 文件"], ["选择生成配置并点击启动生成"], ["新的应用生成任务"]],
+    ["business_goal_understanding", "理解业务目标", "business", "not_started", ["PRD 输入"], ["等待生成任务启动"], ["业务目标摘要"]],
+    ["business_spec_compilation", "编译业务规格", "business", "not_started", ["业务目标"], ["等待上一步完成"], ["标准化 PRD 与应用契约"]],
+    ["app_structure_planning", "规划应用结构", "business", "not_started", ["应用契约"], ["等待规格编译完成"], ["TDD 计划与验收覆盖"]],
+    ["prototype_generation", "生成应用原型", "business", "not_started", ["应用结构规划"], ["等待 Code Agent 执行"], ["本地应用原型"]],
+    ["capability_verification", "验证业务能力", "business", "not_started", ["生成应用"], ["等待应用生成完成"], ["验证记录与能力缺口"]],
+    ["delivery_version", "输出可交付版本", "business", "not_started", ["验证结果"], ["等待验证完成"], ["交付报告"]],
+    ["app_preview", "可预览应用", "terminal", "not_started", ["可交付版本"], ["等待应用生成并发布快照"], ["本地预览 URL"]],
+  ];
+  const flowSteps = stepDefs.map(([id, title, stepType, status, inputSummary, processSummary, outputSummary], index) => ({
+    id,
+    title,
+    step_type: stepType,
+    status,
+    summary: id === "prd_entry" ? "上传 PRD 后开始生成应用。" : "等待 PRD 输入并启动生成。",
+    input_summary: inputSummary,
+    process_summary: processSummary,
+    output_summary: outputSummary,
+    available_actions: id === "prd_entry" ? ["start_generation"] : [],
+    runtime_nodes: [],
+    evidence_refs: [],
+    artifact_refs: [],
+    object_count: 0,
+    object_counts: {},
+    progress: { ready_artifacts: id === "prd_entry" ? 0 : 0, required_artifacts: 1, ratio: 0 },
+    coder_progress: {},
+    latest_event: id === "prd_entry" ? "请上传或粘贴 PRD。" : "",
+    stage_index: index + 1,
+    stage_total: stepDefs.length,
+    is_entry: index === 0,
+    is_terminal: index === stepDefs.length - 1,
+  }));
+  return {
+    schema_version: 1,
+    run: {
+      run_id: "",
+      domain_id: "app_generation",
+      app_slug: "新应用",
+      brief: "上传 PRD 后开始生成应用。",
+      status: "draft",
+      quality_mode: "prototype",
+    },
+    flow_steps: flowSteps,
+    business_nodes: flowSteps.filter((step) => step.step_type === "business"),
+    objects: [],
+    edges: [],
+    versions: [],
+    context_objects: [],
+    warnings: [],
+    updated_at: "",
   };
 }
 
@@ -335,6 +507,14 @@ function agentActionTitle(action) {
     suggest_input_patch: "调整输入",
     suggest_artifact_patch: "调整产物建议",
     suggest_artifact_regeneration: "重跑当前产物",
+    explain_step: "解释业务步骤",
+    explain_step_io: "说明步骤输入输出",
+    inspect_evidence: "查看步骤证据",
+    rerun_step: "重新执行步骤",
+    explain_object: "解释业务对象",
+    verify_capability: "验证业务能力",
+    repair_generated_app: "修复当前应用",
+    diagnose_app_bug: "诊断应用问题",
     patch_artifact: "修改产物",
     patch_app: "修改已发布应用",
     delegate_code_repair: "委托 Code Agent 修复",
@@ -349,12 +529,31 @@ function agentActionSummary(action) {
   return (
     action.summary ||
     action.patch_summary ||
+    (action.repair_request && action.repair_request.problem) ||
     action.reason ||
     action.question ||
     action.target_artifact ||
     action.override_instructions ||
     ""
   );
+}
+
+function agentActionSourceLine(action) {
+  if (!action) return "";
+  if (action.source_step_id) {
+    const parts = [];
+    if (action.source_step_title) parts.push(`业务步骤：${action.source_step_title}`);
+    if (Array.isArray(action.source_runtime_nodes) && action.source_runtime_nodes.length) {
+      parts.push(`工程证据：${action.source_runtime_nodes.join("，")}`);
+    }
+    return parts.join(" · ");
+  }
+  if (!action.source_object_id) return "";
+  const parts = [];
+  if (action.source_object_title) parts.push(`对象：${action.source_object_title}`);
+  if (action.source_business_node) parts.push(`节点：${action.source_business_node}`);
+  if (action.source_object_type) parts.push(`类型：${objectTypeLabel(action.source_object_type)}`);
+  return parts.join(" · ");
 }
 
 function currentPublishStatus() {
@@ -378,17 +577,42 @@ function renderPreviewControls() {
 
   if (publishBtn) {
     publishBtn.disabled = !state.selectedRunId || !isTerminal;
-    publishBtn.title = publishBtn.disabled ? "任务完成后才能发布应用快照。" : "把生成应用发布为可预览快照。";
+    publishBtn.title = state.isNewTask ? "请先上传 PRD 并启动生成。" : (publishBtn.disabled ? "任务完成后才能发布应用快照。" : "把生成应用发布为可预览快照。");
   }
   if (previewBtn) {
     previewBtn.disabled = !state.selectedRunId || !isPublished;
-    previewBtn.title = isPublished ? "启动已发布快照的本地预览。" : "请先发布应用快照。";
+    previewBtn.title = state.isNewTask ? "生成完成并发布后才能启动预览。" : (isPublished ? "启动已发布快照的本地预览。" : "请先发布应用快照。");
   }
   if (status && !state.appPreview) {
-    if (!state.selectedRunId) status.textContent = "请选择一个任务。";
+    if (state.isNewTask) status.textContent = "上传 PRD 并生成完成后，可以发布快照并启动本地预览。";
+    else if (!state.selectedRunId) status.textContent = "请选择一个任务。";
     else if (isPublished) status.textContent = publishStatus.published_at ? `已发布：${publishStatus.app_slug || "-"} · ${publishStatus.published_at}` : "已发布，可以启动预览。";
     else status.textContent = publishStatus.message || "未发布，请先点击「发布应用快照」。";
   }
+}
+
+function enterNewTaskMode() {
+  state.isNewTask = true;
+  state.selectedRun = null;
+  state.selectedRunId = "";
+  state.nodes = [];
+  state.selectedNodeId = "";
+  state.nodeContext = null;
+  state.preview = null;
+  state.appPreview = null;
+  state.canvas.projection = initialCanvasProjection();
+  state.canvas.selectedBusinessNodeId = "prd_entry";
+  state.canvas.selectedObjectId = "";
+  state.canvas.selectedObjectDetail = null;
+  state.canvas.error = "";
+  setAgentFocus("flow_step", { view_mode: "business_step_detail", selected_text: "" });
+  persistState();
+  renderRuns();
+  renderProviders();
+  renderPreviewControls();
+  renderNodes();
+  renderCanvasPanel();
+  renderAgentContextRefs();
 }
 
 async function loadRuns() {
@@ -396,7 +620,12 @@ async function loadRuns() {
     const data = await fetchJSON("/api/app-generation/runs");
     state.runs = (data && data.runs) || [];
     renderRuns();
-    if (!state.selectedRunId && state.runs.length) {
+    if (!state.runs.length) {
+      enterNewTaskMode();
+    } else if (state.isNewTask) {
+      renderRuns();
+      renderCanvasPanel();
+    } else if (!state.selectedRunId && state.runs.length) {
       await selectRun(state.runs[0].run_id);
     } else if (state.selectedRunId) {
       await selectRun(state.selectedRunId);
@@ -420,7 +649,7 @@ function renderRuns() {
   if (!container) return;
   clear(container);
   if (!state.runs.length) {
-    container.appendChild(el("p", { className: "meta" }, ["暂无 app_generation 任务。先在主工作台创建一个。"]));
+    container.appendChild(el("p", { className: "meta" }, ["暂无历史任务。请在右侧 PRD 输入步骤上传 PRD 并启动生成。"]));
     return;
   }
   // 按 comparison_group_id 分组展示，便于对比。
@@ -463,6 +692,7 @@ function renderRuns() {
 
 async function selectRun(runId) {
   if (!runId) return;
+  state.isNewTask = false;
   state.selectedRunId = runId;
   persistState();
   renderRuns();
@@ -471,6 +701,7 @@ async function selectRun(runId) {
     state.selectedRun = (data && data.run) || null;
     state.nodes = (data && data.nodes) || [];
     state.providerStatuses = (data && data.provider_statuses) || [];
+    await refreshCanvasProjection(runId);
     const meta = document.getElementById("app-generation-pipeline-meta");
     if (meta) {
       const run = (data && data.run) || {};
@@ -480,11 +711,14 @@ async function selectRun(runId) {
     renderProviders();
     renderPreviewControls();
     renderNodes();
+    renderCanvasPanel();
     if (!state.selectedNodeId || !state.nodes.find((n) => n.id === state.selectedNodeId)) {
       state.selectedNodeId = state.nodes[0] ? state.nodes[0].id : "";
     }
     if (state.selectedNodeId) {
       await selectNode(state.selectedNodeId);
+      setAgentFocus("flow_step", { view_mode: "business_step_detail", selected_text: "" });
+      renderAgentContextRefs();
     }
     const runStatus = (data && data.run && data.run.status) || "";
     if (runStatus && !["completed", "failed", "blocked"].includes(runStatus)) {
@@ -493,21 +727,63 @@ async function selectRun(runId) {
   } catch (err) {
     state.selectedRun = null;
     state.nodes = [];
+    state.canvas.projection = null;
+    state.canvas.selectedObjectDetail = null;
+    state.canvas.error = err.message;
     renderPreviewControls();
     renderNodes();
+    renderCanvasPanel();
     appendAgentLog("system", `加载节点失败：${err.message}`);
   }
+}
+
+async function refreshCanvasProjection(runId) {
+  state.canvas.error = "";
+  state.canvas.loading = true;
+  state.canvas.selectedObjectDetail = null;
+  try {
+    const projection = await fetchJSON(`/api/app-generation/runs/${encodeURIComponent(runId)}/canvas`);
+    state.canvas.projection = projection;
+    const steps = canvasFlowSteps(projection);
+    if (!steps.find((item) => item.id === state.canvas.selectedBusinessNodeId)) {
+      state.canvas.selectedBusinessNodeId = steps[0] ? steps[0].id : "";
+    }
+    const objects = allCanvasObjects(projection);
+    const visibleObjects = filteredCanvasObjects(objects);
+    if (!visibleObjects.find((item) => item.object_id === state.canvas.selectedObjectId)) {
+      state.canvas.selectedObjectId = visibleObjects[0] ? visibleObjects[0].object_id : "";
+    }
+    if (state.canvas.selectedObjectId) {
+      await refreshCanvasObjectDetail(state.canvas.selectedObjectId);
+    }
+  } catch (err) {
+    state.canvas.projection = null;
+    state.canvas.selectedObjectId = "";
+    state.canvas.selectedObjectDetail = null;
+    state.canvas.error = err.message;
+  } finally {
+    state.canvas.loading = false;
+  }
+}
+
+async function refreshCanvasObjectDetail(objectId) {
+  if (!state.selectedRunId || !objectId) return;
+  const detail = await fetchJSON(
+    `/api/app-generation/runs/${encodeURIComponent(state.selectedRunId)}/canvas/objects/${encodeURIComponent(objectId)}`
+  );
+  state.canvas.selectedObjectDetail = detail;
 }
 
 function renderNodes() {
   const container = document.getElementById("app-generation-node-list");
   if (!container) return;
   clear(container);
-  if (!state.nodes.length) {
+  const visibleNodes = visibleEngineeringNodes();
+  if (!visibleNodes.length) {
     container.appendChild(el("p", { className: "meta" }, ["所选任务暂无节点数据。"]));
     return;
   }
-  for (const node of state.nodes) {
+  for (const node of visibleNodes) {
     const summaryLine = summarizeOutputs(node.output_summary) || `产物 ${(node.outputs || []).length} · 风险 ${(node.risks || []).length}`;
     const card = el(
       "button",
@@ -528,6 +804,24 @@ function renderNodes() {
     );
     container.appendChild(card);
   }
+}
+
+function visibleEngineeringNodes() {
+  const showAll = Boolean(document.getElementById("app-generation-show-all-engineering-nodes")?.checked);
+  if (showAll) return state.nodes || [];
+  const step = currentCanvasBusinessNode();
+  const mappedNodes = stepRuntimeEvidenceNodes(step);
+  const runtimeNodes = new Set(mappedNodes);
+  if (!runtimeNodes.size) return [];
+  return (state.nodes || []).filter((node) => runtimeNodes.has(node.id));
+}
+
+function stepRuntimeEvidenceNodes(step) {
+  if (!step) return [];
+  if (Array.isArray(step.runtime_nodes) && step.runtime_nodes.length) return step.runtime_nodes;
+  if (step.id === "prd_entry") return ["skill_routing", "prd_input"];
+  if (step.id === "app_preview") return ["preview_delivery"];
+  return [];
 }
 
 async function selectNode(nodeId) {
@@ -604,6 +898,783 @@ function renderNodeDetail() {
   renderUsage(ctx ? ctx.usage : node.usage);
   renderScores(node.scores || {});
   renderRisks(node.risks || []);
+  renderCanvasPanel();
+}
+
+function renderCanvasPanel() {
+  const meta = document.getElementById("app-generation-canvas-meta");
+  const track = document.getElementById("app-generation-business-node-track");
+  const objectsEl = document.getElementById("app-generation-canvas-objects");
+  const detailEl = document.getElementById("app-generation-canvas-object-detail");
+  if (!track || !objectsEl || !detailEl) return;
+  clear(track);
+  clear(objectsEl);
+  clear(detailEl);
+  const projection = state.canvas && state.canvas.projection;
+  if (!projection) {
+    if (state.canvas.loading) {
+      if (meta) meta.textContent = "正在加载生成画布…";
+      track.appendChild(renderCanvasSkeleton(4));
+      objectsEl.appendChild(renderCanvasSkeleton(3));
+      detailEl.appendChild(el("p", { className: "meta" }, ["加载中…"]));
+      return;
+    }
+    if (state.canvas.error) {
+      if (meta) meta.textContent = `生成画布暂不可用：${state.canvas.error}`;
+      track.appendChild(el("p", { className: "meta app-generation-state-error" }, [`加载失败：${state.canvas.error}`]));
+      objectsEl.appendChild(el("p", { className: "meta" }, ["暂无业务对象。"]));
+      detailEl.appendChild(el("p", { className: "meta" }, ["请选择一个业务对象。"]));
+      return;
+    }
+    if (meta) meta.textContent = "选择任务后查看业务节点和对象。";
+    track.appendChild(el("p", { className: "meta" }, ["选择任务后查看业务节点。"]));
+    objectsEl.appendChild(el("p", { className: "meta" }, ["暂无业务对象。"]));
+    detailEl.appendChild(el("p", { className: "meta" }, ["请选择一个业务对象。"]));
+    return;
+  }
+  const nodes = canvasFlowSteps(projection);
+  const objects = allCanvasObjects(projection);
+  const visibleObjects = filteredCanvasObjects(objects);
+  const selectedBusinessNode = currentCanvasBusinessNode();
+  if (meta) {
+    const filterText = visibleObjects.length === objects.length ? "" : ` · 当前显示 ${visibleObjects.length} 个`;
+    const selectedText = selectedBusinessNode ? ` · 当前步骤：${selectedBusinessNode.title}` : "";
+    meta.textContent = `${safeText(projection.run && projection.run.app_slug, state.selectedRunId)} · ${nodes.length} 个业务步骤 · ${objects.length} 个对象${selectedText}${filterText}`;
+  }
+  const objectsTitle = document.getElementById("app-generation-canvas-objects-title");
+  if (objectsTitle) objectsTitle.textContent = selectedBusinessNode ? `${selectedBusinessNode.title} · 对象` : "当前步骤对象";
+  syncCanvasFilterControls(objects);
+  renderPipelineOverview(nodes);
+  renderBusinessNodeTrack(track, nodes);
+  renderStepDetail(selectedBusinessNode);
+  renderCanvasObjects(objectsEl, visibleObjects);
+  renderCanvasObjectDetail(detailEl, state.canvas.selectedObjectDetail || objects.find((item) => item.object_id === state.canvas.selectedObjectId));
+}
+
+function filteredCanvasObjects(objects) {
+  const filters = (state.canvas && state.canvas.filters) || { objectType: "all", status: "all" };
+  const selectedId = state.canvas.selectedBusinessNodeId;
+  return (objects || []).filter((object) => {
+    let nodeOk = !selectedId || object.owner_node_id === selectedId;
+    if (selectedId === "prd_entry") {
+      nodeOk = object.owner_node_id === "business_goal_understanding" && object.object_type === "business_goal";
+    } else if (selectedId === "app_preview") {
+      nodeOk =
+        object.owner_node_id === "delivery_version" ||
+        ["preview_session", "repair_candidate", "delivery_version"].includes(object.object_type);
+    }
+    const typeOk = !filters.objectType || filters.objectType === "all" || object.object_type === filters.objectType;
+    const statusOk = !filters.status || filters.status === "all" || object.status === filters.status;
+    return nodeOk && typeOk && statusOk;
+  });
+}
+
+function currentCanvasBusinessNode() {
+  const projection = state.canvas && state.canvas.projection;
+  const nodes = canvasFlowSteps(projection);
+  return nodes.find((node) => node.id === state.canvas.selectedBusinessNodeId) || null;
+}
+
+function syncCanvasFilterControls(objects) {
+  const typeSelect = document.getElementById("app-generation-canvas-type-filter");
+  const statusSelect = document.getElementById("app-generation-canvas-status-filter");
+  if (!typeSelect || !statusSelect) return;
+  syncCanvasFilterSelect(
+    typeSelect,
+    "objectType",
+    [...new Set((objects || []).map((object) => object.object_type).filter(Boolean))].sort(),
+    objectTypeLabel
+  );
+  syncCanvasFilterSelect(
+    statusSelect,
+    "status",
+    [...new Set((objects || []).map((object) => object.status).filter(Boolean))].sort(),
+    statusLabel
+  );
+}
+
+function syncCanvasFilterSelect(select, key, values, labeler) {
+  const current = (state.canvas.filters && state.canvas.filters[key]) || "all";
+  const options = new Map([["all", "全部"]]);
+  for (const value of values) options.set(value, labeler(value));
+  clear(select);
+  for (const [value, label] of options.entries()) {
+    select.appendChild(el("option", { value, text: label }));
+  }
+  select.value = options.has(current) ? current : "all";
+  if (select.value !== current) {
+    state.canvas.filters[key] = "all";
+  }
+}
+
+function allCanvasObjects(projection) {
+  const proj = projection || (state.canvas && state.canvas.projection);
+  if (!proj) return [];
+  const base = Array.isArray(proj.objects) ? proj.objects : [];
+  const ctx = Array.isArray(proj.context_objects) ? proj.context_objects : [];
+  return [...base, ...ctx];
+}
+
+const PIPELINE_DONE_STATUSES = new Set([
+  "drafted",
+  "planned",
+  "generated",
+  "verified",
+  "delivered",
+  "completed",
+]);
+
+function coderLiveText() {
+  const live = state.canvas && state.canvas.coderLive;
+  if (!live || live.run_id !== state.selectedRunId) return "";
+  const now = Date.now();
+  const beatAge = live.heartbeat_ts ? now - live.heartbeat_ts : null;
+  const progressAge = live.ts ? now - live.ts : null;
+  if (beatAge !== null && beatAge > 8000) return "心跳中断";
+  if (progressAge !== null && progressAge <= 6000) return "执行中 · 持续产出";
+  if (live.alive) return "执行中 · 在算（暂无新动作）";
+  return "";
+}
+
+function renderCoderLiveBadge() {
+  const badge = document.getElementById("app-generation-coder-heartbeat");
+  if (!badge) return;
+  const text = coderLiveText();
+  badge.textContent = text;
+  badge.className =
+    "app-generation-coder-heartbeat" +
+    (text ? " active" : "") +
+    (text === "心跳中断" ? " stalled" : "");
+}
+
+function renderCanvasSkeleton(count) {
+  const wrap = el("div", { className: "app-generation-skeleton-group" }, []);
+  for (let i = 0; i < (count || 3); i += 1) {
+    wrap.appendChild(el("div", { className: "app-generation-skeleton-line" }, []));
+  }
+  return wrap;
+}
+
+function classificationBannerView(summary) {
+  const decision = String((summary && summary.decision) || "");
+  const warnings = Number((summary && summary.warnings_count) || 0);
+  const preview = String((summary && summary.blocker_preview) || "");
+  if (decision === "failed") {
+    return {
+      tone: "error",
+      label: "生成失败",
+      text: preview || String((summary && summary.primary_reason) || "存在阻塞性失败"),
+      openable: true,
+    };
+  }
+  if (decision === "passed_with_warnings" || decision === "completed_with_warnings") {
+    return {
+      tone: "warning",
+      label: "通过 · 有告警",
+      text: warnings ? `${warnings} 条无关告警` + (preview ? ` · ${preview}` : "") : (preview || "存在无关告警"),
+      openable: true,
+    };
+  }
+  if (decision === "passed" || decision === "completed") {
+    return { tone: "success", label: "已完成", text: "生成通过，无阻塞失败", openable: false };
+  }
+  return null;
+}
+
+function renderClassificationBanner(container) {
+  const projection = state.canvas && state.canvas.projection;
+  const summary = projection && projection.run && projection.run.classification_summary;
+  const view = classificationBannerView(summary);
+  if (!view) return;
+  const artifactPath = String((summary && summary.artifact_path) || "codex/failure_classification.md");
+  const children = [
+    el("span", { className: "app-generation-classification-banner-label" }, [view.label]),
+    el("span", { className: "app-generation-classification-banner-text", title: view.text }, [view.text]),
+  ];
+  if (view.openable) {
+    children.push(
+      el(
+        "button",
+        {
+          type: "button",
+          className: "app-generation-classification-banner-action",
+          onclick: () => openClassificationArtifact(artifactPath),
+        },
+        ["查看诊断"]
+      )
+    );
+  }
+  container.appendChild(
+    el("div", { className: `app-generation-classification-banner ${view.tone}` }, children)
+  );
+}
+
+function openClassificationArtifact(artifactPath) {
+  const runId = state.selectedRunId;
+  if (!runId) return;
+  const path = artifactPath || "codex/failure_classification.md";
+  openArtifactPreview(
+    {
+      path,
+      title: "失败诊断",
+      read_url: `/api/app-generation/runs/${encodeURIComponent(runId)}/artifacts/preview?path=${encodeURIComponent(path)}`,
+    },
+    "classification_banner"
+  );
+}
+
+function renderPipelineOverview(nodes) {
+  const container = document.getElementById("app-generation-pipeline-overview");
+  if (!container) return;
+  clear(container);
+  if (!nodes.length) return;
+  const projection = state.canvas && state.canvas.projection;
+  renderClassificationBanner(container);
+  const currentId = (projection && projection.current_business_node_id) || "";
+  const doneCount = nodes.filter((node) => PIPELINE_DONE_STATUSES.has(node.status)).length;
+  const runningNode = currentId ? nodes.find((node) => node.id === currentId) : null;
+  const current = runningNode || nodes.find((node) => node.id === state.canvas.selectedBusinessNodeId) || nodes[0];
+  const ratio = nodes.length ? Math.round((doneCount / nodes.length) * 100) : 0;
+  const titleText = runningNode
+    ? `正在执行：第 ${runningNode.stage_index || "-"}/${nodes.length} 步 · ${safeText(runningNode.title, "")}`
+    : `第 ${current ? current.stage_index || "-" : "-"}/${nodes.length} 步 · ${current ? safeText(current.title, "") : ""}`;
+  container.appendChild(
+    el("div", { className: "app-generation-pipeline-overview-head" }, [
+      el("span", { className: "app-generation-pipeline-overview-title" + (runningNode ? " running" : "") }, [
+        titleText,
+      ]),
+      el("span", { className: "app-generation-coder-heartbeat", id: "app-generation-coder-heartbeat" }, [
+        coderLiveText(),
+      ]),
+      el("span", { className: "meta" }, [`整体完成度 ${ratio}% · ${doneCount}/${nodes.length} 步就绪`]),
+    ])
+  );
+  const fill = el("div", { className: "app-generation-pipeline-bar-fill" }, []);
+  fill.style.width = `${ratio}%`;
+  container.appendChild(el("div", { className: "app-generation-pipeline-bar" + (runningNode ? " running" : "") }, [fill]));
+}
+
+function pipelineArrow() {
+  return el("span", { className: "app-generation-pipeline-arrow" }, ["→"]);
+}
+
+function pipelineAnchor(title, role, isEntry) {
+  return el("div", { className: "app-generation-pipeline-anchor" + (isEntry ? " entry" : " terminal") }, [
+    el("span", { className: "app-generation-pipeline-anchor-role" }, [role]),
+    el("span", { className: "app-generation-pipeline-anchor-name" }, [title]),
+  ]);
+}
+
+function renderBusinessNodeTrack(container, nodes) {
+  if (!nodes.length) {
+    container.appendChild(el("p", { className: "meta" }, ["暂无业务节点。"]));
+    return;
+  }
+  const projection = state.canvas && state.canvas.projection;
+  const currentId = (projection && projection.current_business_node_id) || "";
+  const live = state.canvas && state.canvas.coderLive;
+  nodes.forEach((node, index) => {
+    if (index > 0) container.appendChild(pipelineArrow());
+    const selected = node.id === state.canvas.selectedBusinessNodeId;
+    const isRunning = node.status === "running" || node.is_current === true || node.id === currentId;
+    const progress = node.progress || {};
+    const ready = Number(progress.ready_artifacts || 0);
+    const required = Number(progress.required_artifacts || 0);
+    const oneLiner = Array.isArray(node.process_summary) && node.process_summary.length
+      ? node.process_summary[0]
+      : "";
+    let metaText = required
+      ? `产物 ${ready}/${required} · ${node.object_count || 0} 对象`
+      : `${node.object_count || 0} 对象`;
+    if (isRunning && node.id === "prototype_generation" && live && live.run_id === state.selectedRunId) {
+      metaText = `已改 ${live.files_changed || 0} 文件 · 工具 ${live.tool_calls || 0} 次 · 第 ${live.event_seq || 0} 事件`;
+    }
+    const card = el(
+      "button",
+      {
+        type: "button",
+        className:
+          "app-generation-business-node-card" +
+          (selected ? " selected" : "") +
+          (isRunning ? " running" : "") +
+          (node.id === currentId ? " current" : "") +
+          (node.step_type === "entry" ? " entry" : "") +
+          (node.step_type === "terminal" ? " terminal" : ""),
+        onclick: () => selectCanvasBusinessNode(node.id),
+      },
+      [
+        el("span", { className: "app-generation-business-node-index" }, [String(node.stage_index || "")]),
+        el("span", { className: "app-generation-business-node-name" }, [safeText(node.title, "业务节点")]),
+        oneLiner ? el("span", { className: "app-generation-business-node-oneliner" }, [oneLiner]) : null,
+        el("span", { className: `mini-status ${statusBadge(node.status)}` }, [statusLabel(node.status)]),
+        el("span", { className: "meta" }, [metaText]),
+      ].filter(Boolean)
+    );
+    container.appendChild(card);
+  });
+}
+
+function renderStepDetail(step) {
+  const titleEl = document.getElementById("app-generation-step-title");
+  const summaryEl = document.getElementById("app-generation-step-summary");
+  const statusEl = document.getElementById("app-generation-step-status");
+  const cardsEl = document.getElementById("app-generation-step-summary-cards");
+  const prdDetail = document.getElementById("app-generation-prd-entry-detail");
+  const previewDetail = document.getElementById("app-generation-app-preview-detail");
+  if (!step) return;
+  if (titleEl) titleEl.textContent = safeText(step.title, "BusinessStep");
+  if (summaryEl) summaryEl.textContent = safeText(step.summary || step.latest_event, "选择流程节点查看输入、执行过程、输出和证据。");
+  if (statusEl) {
+    statusEl.textContent = statusLabel(step.status);
+    statusEl.className = `mini-status ${statusBadge(step.status)}`;
+  }
+  if (prdDetail) prdDetail.hidden = step.id !== "prd_entry";
+  if (previewDetail) previewDetail.hidden = step.id !== "app_preview";
+  if (!cardsEl) return;
+  clear(cardsEl);
+  cardsEl.appendChild(renderStepSummaryCard("输入", step.input_summary || []));
+  cardsEl.appendChild(renderStepSummaryCard("执行过程", step.process_summary || []));
+  cardsEl.appendChild(renderStepSummaryCard("输出", step.output_summary || []));
+  cardsEl.appendChild(renderStepActionsCard(step));
+  cardsEl.appendChild(renderStepSummaryCard("工程证据", step.evidence_refs || []));
+}
+
+function renderStepSummaryCard(title, items) {
+  const list = Array.isArray(items) ? items : [];
+  return el("section", { className: "app-generation-step-card" }, [
+    el("h5", null, [title]),
+    list.length
+      ? el("ul", null, list.map((item) => el("li", null, [safeText(item, "未记录")])))
+      : el("p", { className: "meta" }, ["未记录"]),
+  ]);
+}
+
+function renderStepActionsCard(step) {
+  const actions = Array.isArray(step.available_actions) ? step.available_actions : [];
+  const isBusinessStep = (step.step_type || "business") === "business" && Array.isArray(step.runtime_nodes) && step.runtime_nodes.length > 0;
+  const children = [el("h5", null, ["你可以让 Agent 做什么"])];
+  if (isBusinessStep) {
+    children.push(
+      el("div", { className: "app-generation-step-action-row triple" }, [
+        el("button", { type: "button", className: "ghost small", onclick: () => triggerStepAction(step, "rerun_step") }, ["重跑这一步"]),
+        el("button", { type: "button", className: "ghost small", onclick: () => openStepArtifact(step) }, ["看中间产物"]),
+        el("button", { type: "button", className: "ghost small", onclick: () => requestStepRevision(step) }, ["让 Agent 改"]),
+      ])
+    );
+  }
+  const extraActions = actions.filter((action) => action !== "rerun_step");
+  if (extraActions.length) {
+    children.push(
+      el("div", { className: "app-generation-step-action-row" }, extraActions.map((action) =>
+        el("button", { type: "button", className: "ghost small", onclick: () => triggerStepAction(step, action) }, [stepActionLabel(action)])
+      ))
+    );
+  } else if (!isBusinessStep) {
+    children.push(el("p", { className: "meta" }, ["未记录"]));
+  }
+  return el("section", { className: "app-generation-step-card" }, children);
+}
+
+function openStepArtifact(step) {
+  if (!step) return;
+  const nodeId = firstRuntimeNodeForStep(step);
+  const node = (state.nodes || []).find((n) => n.id === nodeId);
+  const outputs = node && Array.isArray(node.outputs) ? node.outputs : [];
+  const item = outputs.find((o) => (o.preview && o.preview.read_url) || o.read_url) || outputs[0];
+  if (item) {
+    openArtifactPreview(item, "business_step_artifact");
+  } else {
+    appendAgentLog("system", `「${safeText(step.title, step.id)}」暂无可预览的中间产物。`);
+  }
+}
+
+function requestStepRevision(step) {
+  if (!step) return;
+  setAgentFocus("flow_step", { view_mode: "business_step_detail", selected_text: "" });
+  const input = document.getElementById("app-generation-agent-input");
+  if (input) {
+    input.value = `请基于业务步骤「${safeText(step.title, step.id)}」对生成结果做修改，复杂代码改动请委托 Code Agent。`;
+    input.focus();
+  }
+  state.agentMode = "auto";
+  const modeSelect = document.getElementById("app-generation-agent-mode");
+  if (modeSelect) modeSelect.value = "auto";
+}
+
+function stepActionLabel(action) {
+  const labels = {
+    start_generation: "启动生成",
+    explain_prd_requirements: "检查 PRD",
+    suggest_input_patch: "补充生成约束",
+    explain_step: "解释这一步",
+    explain_step_io: "说明输入输出",
+    inspect_evidence: "查看证据",
+    rerun_step: "重新执行这一步",
+    verify_capability: "验证能力",
+    publish_app: "发布应用",
+    start_preview: "启动预览",
+    stop_preview: "停止预览",
+    delegate_code_repair: "修复预览问题",
+  };
+  return labels[action] || action || "Agent 动作";
+}
+
+async function triggerStepAction(step, action) {
+  if (!step || !action) return;
+  setAgentFocus("flow_step", { view_mode: "business_step_detail", selected_text: "" });
+  persistState();
+  if (action === "start_generation") {
+    const input = document.getElementById("app-generation-upload-prd");
+    if (input) input.focus();
+    appendAgentLog("system", "请在 PRD 输入节点补充 PRD，然后点击「启动生成」。");
+    return;
+  }
+  if (action === "publish_app") {
+    if (state.selectedRunId) await publishAppFromUI(state.selectedRunId);
+    return;
+  }
+  if (action === "start_preview") {
+    if (state.selectedRunId) await startAppPreviewFromUI(state.selectedRunId);
+    return;
+  }
+  if (action === "stop_preview") {
+    if (state.selectedRunId) await stopAppPreviewFromUI(state.selectedRunId);
+    return;
+  }
+  if (action === "inspect_evidence") {
+    const evidence = document.getElementById("app-generation-engineering-evidence");
+    if (evidence) evidence.open = true;
+    appendAgentLog("system", `已展开「${safeText(step.title, "当前步骤")}」的工程证据层。`);
+    return;
+  }
+  if (action === "rerun_step") {
+    const nodeId = firstRuntimeNodeForStep(step);
+    await triggerRerun(`从业务步骤「${safeText(step.title, step.id)}」重新执行。`, nodeId || state.selectedNodeId);
+    return;
+  }
+  const input = document.getElementById("app-generation-agent-input");
+  if (input) {
+    input.value = stepActionPrompt(step, action);
+    input.focus();
+  }
+  state.agentMode = "auto";
+  const modeSelect = document.getElementById("app-generation-agent-mode");
+  if (modeSelect) modeSelect.value = "auto";
+  await sendAgentMessage(new Event("submit"));
+}
+
+function firstRuntimeNodeForStep(step) {
+  const runtimeNodes = Array.isArray(step.runtime_nodes) ? step.runtime_nodes : [];
+  const known = new Set((state.nodes || []).map((node) => node.id));
+  return runtimeNodes.find((nodeId) => known.has(nodeId)) || "";
+}
+
+function stepActionPrompt(step, action) {
+  const title = safeText(step.title, step.id || "当前步骤");
+  const prompts = {
+    explain_prd_requirements: `请检查「${title}」里的 PRD 是否足够生成应用，并指出缺少的业务约束。`,
+    suggest_input_patch: `请基于「${title}」补充生成约束，说明会影响后续哪些步骤。`,
+    explain_step: `请解释「${title}」这一步在 PRD 生成应用流程中做什么。`,
+    explain_step_io: `请说明「${title}」这一步的输入、执行过程和输出。`,
+    delegate_code_repair: `请基于「${title}」修复当前预览应用的问题，复杂代码修改请委托 Code Agent。`,
+    verify_capability: `请验证「${title}」相关业务能力是否已经在生成应用中实现。`,
+  };
+  return prompts[action] || `请处理业务步骤「${title}」：${stepActionLabel(action)}。`;
+}
+
+function renderCanvasObjects(container, objects) {
+  if (!objects.length) {
+    container.appendChild(el("p", { className: "meta" }, ["暂无业务对象。"]));
+    return;
+  }
+  for (const object of objects) {
+    const selected = object.object_id === state.canvas.selectedObjectId;
+    const card = el(
+      "button",
+      {
+        type: "button",
+        className: "app-generation-canvas-object" + (selected ? " selected" : ""),
+        onclick: () => selectCanvasObject(object.object_id),
+      },
+      [
+        el("div", { className: "app-generation-canvas-object-head" }, [
+          el("span", { className: "app-generation-canvas-object-title" }, [safeText(object.title, object.object_id)]),
+          el("span", { className: `mini-status ${statusBadge(object.status)}` }, [statusLabel(object.status)]),
+        ]),
+        el("p", { className: "meta" }, [objectTypeLabel(object.object_type) + " · " + safeText(object.owner_node, "未绑定节点")]),
+        el("p", { className: "summary-text" }, [safeText(object.summary, "未记录")]),
+      ]
+    );
+    container.appendChild(card);
+  }
+}
+
+const OBJECT_ACTION_LABELS = {
+  explain_object: "解释对象",
+  suggest_object_patch: "建议修改",
+  rerun_business_node: "重跑该步骤",
+  verify_capability: "验证能力",
+  repair_generated_app: "修复应用",
+};
+
+const OBJECT_ACTION_MODE = {
+  explain_object: "explain",
+  suggest_object_patch: "edit",
+  rerun_business_node: "rerun",
+  verify_capability: "auto",
+  repair_generated_app: "explain",
+};
+
+const OBJECT_ACTION_PROMPT = {
+  explain_object: (o) => `请解释业务对象「${o.title || o.object_id}」的作用、来源，以及它对最终可预览应用的影响。`,
+  suggest_object_patch: (o) => `请针对业务对象「${o.title || o.object_id}」给出可执行的修改建议，并说明改动会回流到哪个步骤。`,
+  rerun_business_node: (o) => `请准备重跑「${o.owner_node || "该步骤"}」，说明改动点与预期影响。`,
+  verify_capability: (o) => `请验证业务能力「${o.title || o.object_id}」是否在生成应用中被正确实现。`,
+  repair_generated_app: (o) => `请基于业务对象「${o.title || o.object_id}」诊断并修复生成应用中的问题。`,
+};
+
+const EDGE_RELATION_LABELS = {
+  requires: "需要",
+  produces: "产出",
+  evidenced_by: "佐证",
+};
+
+function businessActionLabel(action) {
+  const key = typeof action === "string" ? action : action && action.type;
+  return OBJECT_ACTION_LABELS[key] || key || "Agent 动作";
+}
+
+function renderCanvasObjectDetail(container, object) {
+  if (!object) {
+    container.appendChild(el("p", { className: "meta" }, ["请选择一个业务对象。"]));
+    return;
+  }
+  const sourceRefs = Array.isArray(object.source_refs) ? object.source_refs : [];
+  const artifactRefs = Array.isArray(object.artifact_refs) ? object.artifact_refs : [];
+  const evidenceRefs = Array.isArray(object.evidence_refs) ? object.evidence_refs : [];
+  const actions = Array.isArray(object.actions) ? object.actions : [];
+  const upstream = Array.isArray(object.upstream_objects) ? object.upstream_objects : [];
+  const downstream = Array.isArray(object.downstream_objects) ? object.downstream_objects : [];
+  container.appendChild(
+    el("div", { className: "app-generation-canvas-detail-card" }, [
+      el("div", { className: "app-generation-canvas-object-head" }, [
+        el("strong", null, [safeText(object.title, object.object_id)]),
+        el("span", { className: `mini-status ${statusBadge(object.status)}` }, [statusLabel(object.status)]),
+      ]),
+      el("p", { className: "summary-text" }, [safeText(object.summary, "未记录")]),
+      el("dl", { className: "app-generation-dl" }, [
+        el("dt", null, ["类型"]),
+        el("dd", null, [objectTypeLabel(object.object_type)]),
+        el("dt", null, ["所属节点"]),
+        el("dd", null, [safeText(object.owner_node, "-")]),
+      ]),
+      renderObjectRelations("上游对象", upstream),
+      renderObjectRelations("下游对象", downstream),
+      renderObjectActions(object, actions),
+      renderRefGroup("来源", sourceRefs),
+      renderRefGroup("产物", artifactRefs),
+      renderRefGroup("证据", evidenceRefs),
+    ])
+  );
+}
+
+function renderObjectRelations(title, relations) {
+  if (!relations.length) return el("p", { className: "meta" }, [`${title} 未记录`]);
+  const chips = relations.map((rel) =>
+    el(
+      "button",
+      {
+        type: "button",
+        className: "app-generation-relation-chip",
+        onclick: () => selectCanvasObject(rel.object_id),
+      },
+      [
+        el("span", { className: "app-generation-relation-name" }, [safeText(rel.title, rel.object_id)]),
+        el("span", { className: "meta" }, [
+          `${objectTypeLabel(rel.object_type)}${rel.relation ? " · " + (EDGE_RELATION_LABELS[rel.relation] || rel.relation) : ""}`,
+        ]),
+      ]
+    )
+  );
+  return el("div", { className: "app-generation-relation-group" }, [
+    el("span", { className: "app-generation-relation-title" }, [title]),
+    el("div", { className: "app-generation-relation-chips" }, chips),
+  ]);
+}
+
+function renderObjectActions(object, actions) {
+  const list = actions.length ? actions : ["explain_object"];
+  const buttons = list.map((action) => {
+    const key = typeof action === "string" ? action : action && action.type;
+    return el(
+      "button",
+      {
+        type: "button",
+        className: "app-generation-object-action",
+        onclick: () => triggerObjectAction(object, key),
+      },
+      [businessActionLabel(action)]
+    );
+  });
+  return el("div", { className: "app-generation-object-actions" }, [
+    el("span", { className: "app-generation-relation-title" }, ["用 Agent 处理"]),
+    el("div", { className: "app-generation-object-action-row" }, buttons),
+  ]);
+}
+
+function resolveEngineeringNodeIdForStep(step) {
+  const runtimeNodes = step && Array.isArray(step.runtime_nodes) ? step.runtime_nodes : [];
+  const known = new Set((state.nodes || []).map((node) => node.id));
+  for (const nodeId of runtimeNodes) {
+    if (known.has(nodeId)) return nodeId;
+  }
+  return "";
+}
+
+function resolveEngineeringNodeId(object) {
+  const projection = state.canvas && state.canvas.projection;
+  const businessNodes = projection && Array.isArray(projection.business_nodes) ? projection.business_nodes : [];
+  const businessNode = businessNodes.find((node) => node.id === (object && object.owner_node_id));
+  const resolved = resolveEngineeringNodeIdForStep(businessNode);
+  return resolved || state.selectedNodeId || (state.nodes[0] && state.nodes[0].id) || "";
+}
+
+async function triggerObjectAction(object, action) {
+  if (!object || !action) return;
+  const mode = OBJECT_ACTION_MODE[action] || "auto";
+  state.agentMode = mode;
+  const modeSelect = document.getElementById("app-generation-agent-mode");
+  if (modeSelect) modeSelect.value = mode;
+  const nodeId = resolveEngineeringNodeId(object);
+  if (nodeId && (nodeId !== state.selectedNodeId || !state.nodeContext)) {
+    state.selectedNodeId = nodeId;
+    const node = (state.nodes || []).find((item) => item.id === nodeId);
+    if (node && node.selected_variant) state.selectedVariant = node.selected_variant;
+    renderNodes();
+    await refreshNodeContext();
+  }
+  const input = document.getElementById("app-generation-agent-input");
+  const promptBuilder = OBJECT_ACTION_PROMPT[action];
+  if (input && promptBuilder) input.value = promptBuilder(object);
+  setAgentFocus("canvas_object", { view_mode: "canvas_object_detail", selected_text: "" });
+  persistState();
+  await sendAgentMessage(new Event("submit"));
+}
+
+function renderRefGroup(title, refs) {
+  if (!refs.length) return el("p", { className: "meta" }, [`${title}：未记录`]);
+  return el("p", { className: "meta" }, [`${title}：${refs.slice(0, 5).join("，")}${refs.length > 5 ? "…" : ""}`]);
+}
+
+async function selectCanvasBusinessNode(nodeId) {
+  if (!nodeId) return;
+  state.canvas.selectedBusinessNodeId = nodeId;
+  const projection = state.canvas && state.canvas.projection;
+  const businessNodes = projection && Array.isArray(projection.business_nodes) ? projection.business_nodes : [];
+  const step = businessNodes.find((node) => node.id === nodeId);
+  
+  // Sync engineering node when business node changes
+  if (step) {
+    const engineeringNodeId = resolveEngineeringNodeIdForStep(step);
+    if (engineeringNodeId && engineeringNodeId !== state.selectedNodeId) {
+      state.selectedNodeId = engineeringNodeId;
+      const node = (state.nodes || []).find((item) => item.id === engineeringNodeId);
+      if (node && node.selected_variant) state.selectedVariant = node.selected_variant;
+      renderNodes();
+      await refreshNodeContext();
+    }
+  }
+  
+  const objects = allCanvasObjects(projection);
+  const visibleObjects = filteredCanvasObjects(objects);
+  state.canvas.selectedObjectId = visibleObjects[0] ? visibleObjects[0].object_id : "";
+  if (state.canvas.selectedObjectId) {
+    try {
+      await refreshCanvasObjectDetail(state.canvas.selectedObjectId);
+    } catch (err) {
+      state.canvas.selectedObjectDetail = null;
+      appendAgentLog("system", `加载业务对象失败：${err.message}`);
+    }
+  } else {
+    state.canvas.selectedObjectDetail = null;
+  }
+  setAgentFocus("flow_step", { view_mode: "business_step_detail", selected_text: "" });
+  persistState();
+  renderCanvasPanel();
+  renderNodes();
+  renderAgentContextRefs();
+}
+
+async function selectCanvasObject(objectId) {
+  if (!objectId) return;
+  state.canvas.selectedObjectId = objectId;
+  const projection = state.canvas && state.canvas.projection;
+  const objects = allCanvasObjects(projection);
+  const object = objects.find((item) => item.object_id === objectId);
+  if (object && object.owner_node_id) {
+    state.canvas.selectedBusinessNodeId = object.owner_node_id;
+    const engineeringNodeId = resolveEngineeringNodeId(object);
+    if (engineeringNodeId && engineeringNodeId !== state.selectedNodeId) {
+      state.selectedNodeId = engineeringNodeId;
+      const node = (state.nodes || []).find((item) => item.id === engineeringNodeId);
+      if (node && node.selected_variant) state.selectedVariant = node.selected_variant;
+      renderNodes();
+      await refreshNodeContext();
+    }
+  }
+  try {
+    await refreshCanvasObjectDetail(objectId);
+  } catch (err) {
+    state.canvas.selectedObjectDetail = null;
+    appendAgentLog("system", `加载业务对象失败：${err.message}`);
+  }
+  setAgentFocus("canvas_object", { view_mode: "canvas_object_detail", selected_text: "" });
+  persistState();
+  renderCanvasPanel();
+  renderAgentContextRefs();
+}
+
+async function applyCanvasFilters() {
+  const projection = state.canvas && state.canvas.projection;
+  const objects = allCanvasObjects(projection);
+  const visibleObjects = filteredCanvasObjects(objects);
+  if (!visibleObjects.find((object) => object.object_id === state.canvas.selectedObjectId)) {
+    state.canvas.selectedObjectId = visibleObjects[0] ? visibleObjects[0].object_id : "";
+    if (state.canvas.selectedObjectId) {
+      try {
+        await refreshCanvasObjectDetail(state.canvas.selectedObjectId);
+      } catch (err) {
+        state.canvas.selectedObjectDetail = null;
+        appendAgentLog("system", `加载业务对象失败：${err.message}`);
+      }
+    } else {
+      state.canvas.selectedObjectDetail = null;
+      setAgentFocus("node_summary", { view_mode: "node_detail", selected_text: "" });
+    }
+  }
+  persistState();
+  renderCanvasPanel();
+  renderAgentContextRefs();
+}
+
+function objectTypeLabel(type) {
+  const labels = {
+    business_goal: "业务目标",
+    user_persona: "用户角色",
+    scenario: "业务场景",
+    capability: "应用能力",
+    page_flow: "页面流程",
+    data_object: "数据对象",
+    provider_config: "服务配置",
+    knowledge_source: "依赖知识",
+    tool_call: "工具调用",
+    artifact: "中间产物",
+    preview_session: "应用预览",
+    capability_gap: "能力缺口",
+    repair_candidate: "修复候选",
+    delivery_version: "可交付版本",
+  };
+  return labels[type] || type || "业务对象";
 }
 
 function renderVariants(node) {
@@ -829,7 +1900,18 @@ function renderAgentContextRefs() {
   const revisionEl = document.getElementById("app-generation-agent-revision");
   const statusEl = document.getElementById("app-generation-agent-status");
   const node = state.nodes.find((item) => item.id === state.selectedNodeId);
-  if (nodeEl) nodeEl.textContent = nodeTitle(node) || "-";
+  const focus = (state.interactionContext && state.interactionContext.focus) || {};
+  const canvasSelection = buildCanvasSelectionContext();
+  if (nodeEl) {
+    if (focus.card === "flow_step" && canvasSelection && canvasSelection.title) {
+      const engineeringTitle = nodeTitle(node);
+      nodeEl.textContent = engineeringTitle
+        ? `${canvasSelection.title} · ${engineeringTitle}`
+        : canvasSelection.title;
+    } else {
+      nodeEl.textContent = nodeTitle(node) || "-";
+    }
+  }
   if (variantEl) variantEl.textContent = variantLabel(state.selectedVariant) || "-";
   const ctx = state.nodeContext;
   if (revisionEl) {
@@ -838,12 +1920,20 @@ function renderAgentContextRefs() {
   }
   const focusEl = document.getElementById("app-generation-agent-focus");
   if (focusEl) {
-    const focus = (state.interactionContext && state.interactionContext.focus) || {};
     const card = focus.card || "node_summary";
-    focusEl.textContent = focus.artifact_ref ? `${card} · ${focus.artifact_ref}` : card;
+    if (canvasSelection && card === "canvas_object") {
+      focusEl.textContent = `${card} · ${canvasSelection.title}`;
+    } else if (canvasSelection && card === "flow_step") {
+      focusEl.textContent = `${card} · ${canvasSelection.title}`;
+    } else {
+      focusEl.textContent = focus.artifact_ref ? `${card} · ${focus.artifact_ref}` : card;
+    }
   }
   if (statusEl) {
-    if (ctx) {
+    if (state.isNewTask) {
+      statusEl.textContent = "等待 PRD";
+      statusEl.className = "mini-status status-muted";
+    } else if (ctx) {
       statusEl.textContent = "已绑定节点";
       statusEl.className = "mini-status status-completed";
     } else {
@@ -1014,6 +2104,46 @@ async function applyDelegateCodeRepair(runId, payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+async function getDelegateCodeRepairStatus(runId, repairId) {
+  return fetchJSON(`/api/app-generation/runs/${encodeURIComponent(runId)}/delegate-code-repair/status?repair_id=${encodeURIComponent(repairId)}&tail=5`);
+}
+
+function createRepairId() {
+  return `repair-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function startDelegateRepairProgressPolling(runId, repairId) {
+  stopDelegateRepairProgressPolling();
+  appendAgentLog("system", `Code Agent 修复进度：已接收修复请求（${repairId}）。`);
+  let lastEventId = "";
+  state.delegateRepairPollInterval = window.setInterval(async () => {
+    try {
+      const status = await getDelegateCodeRepairStatus(runId, repairId);
+      const events = Array.isArray(status.latest_events) ? status.latest_events : [];
+      const latest = events[events.length - 1];
+      if (latest && latest.event_id && latest.event_id !== lastEventId) {
+        lastEventId = latest.event_id;
+        appendAgentLog("system", `Code Agent 修复进度：${latest.title || status.status || "执行中"}${latest.summary ? ` · ${latest.summary}` : ""}`);
+      } else if (status.progress_status && status.progress_status.current_title && status.progress_status.latest_event_id !== lastEventId) {
+        lastEventId = status.progress_status.latest_event_id || lastEventId;
+        appendAgentLog("system", `Code Agent 修复进度：${status.progress_status.current_title}${status.progress_status.current_summary ? ` · ${status.progress_status.current_summary}` : ""}`);
+      }
+      if (status.result_ready || ["prepared", "failed", "applied"].includes(status.status)) {
+        stopDelegateRepairProgressPolling();
+      }
+    } catch (_err) {
+      // prepare 可能尚未创建 progress 文件，下一轮继续。
+    }
+  }, 2000);
+}
+
+function stopDelegateRepairProgressPolling() {
+  if (state.delegateRepairPollInterval) {
+    window.clearInterval(state.delegateRepairPollInterval);
+    state.delegateRepairPollInterval = null;
+  }
 }
 
 function renderDiffLines(diffText) {
@@ -1337,6 +2467,7 @@ function renderAppPreviewIframe(previewData) {
 function renderAgentActions(actions) {
   const list = el("ul", { className: "app-generation-agent-actions" });
   for (const action of actions || []) {
+    const sourceLine = agentActionSourceLine(action);
     const button = el(
       "button",
       {
@@ -1351,8 +2482,9 @@ function renderAgentActions(actions) {
         el("span", { className: "app-generation-agent-action-title" }, [agentActionTitle(action)]),
         button,
       ]),
+      sourceLine ? el("p", { className: "app-generation-agent-action-source" }, [sourceLine]) : null,
       el("p", { className: "meta" }, [agentActionSummary(action)]),
-    ]);
+    ].filter(Boolean));
     list.appendChild(li);
   }
   return list;
@@ -1386,6 +2518,40 @@ async function handleAgentAction(action) {
     await handleDelegateCodeRepairAction(action);
     return;
   }
+  if (action.type === "repair_generated_app") {
+    if (action.repair_request) {
+      await handleDelegateCodeRepairAction({ ...action, type: "delegate_code_repair" });
+    } else {
+      appendAgentLog("system", "这个对象需要修复，但当前动作缺少 repair_request。请让 Agent 生成“委托 Code Agent 修复”的结构化请求。");
+    }
+    return;
+  }
+  if (action.type === "verify_capability") {
+    await handleVerifyCapabilityAction(action);
+    return;
+  }
+  if (action.type === "explain_step" || action.type === "explain_step_io") {
+    appendAgentLog("system", `${agentActionSourceLine(action) || "当前业务步骤"}：${agentActionSummary(action) || "已聚焦到该业务步骤。"}`);
+    return;
+  }
+  if (action.type === "inspect_evidence") {
+    const evidence = document.getElementById("app-generation-engineering-evidence");
+    if (evidence) evidence.open = true;
+    renderNodes();
+    appendAgentLog("system", `${agentActionSourceLine(action) || "当前业务步骤"}：已展开对应工程证据。`);
+    return;
+  }
+  if (action.type === "rerun_step") {
+    await triggerRerun(
+      action.override_instructions || action.patch_summary || action.summary || "",
+      action.rerun_from_node || action.target_node_id || state.selectedNodeId
+    );
+    return;
+  }
+  if (action.type === "explain_object") {
+    appendAgentLog("system", `${agentActionSourceLine(action) || "当前对象"}：${agentActionSummary(action) || "已聚焦到该业务对象。"}`);
+    return;
+  }
   if (action.type === "patch_artifact") {
     appendAgentLog("system", `patch_artifact 暂未在 UI 接线（target_node=${action.target_node || "-"}，target_path=${action.target_path || "-"}）。`);
     return;
@@ -1407,6 +2573,29 @@ async function handleAgentAction(action) {
   appendAgentLog("system", `${agentActionTitle(action)} 已记录，暂无自动执行步骤。`);
 }
 
+async function handleVerifyCapabilityAction(action) {
+  if (!state.selectedRunId) {
+    appendAgentLog("system", "验证业务能力需要先选择 run。");
+    return;
+  }
+  appendAgentLog("system", `正在刷新能力证据：${action.source_object_title || action.summary || "当前业务对象"}…`);
+  const evidence = [];
+  try {
+    const status = await getAppPreviewStatus(state.selectedRunId);
+    evidence.push(`预览状态 ${status.status || "unknown"}${status.health_status ? ` · 健康 ${status.health_status}` : ""}`);
+  } catch (err) {
+    evidence.push(`预览状态暂不可用：${err.message}`);
+  }
+  try {
+    await refreshCanvasProjection(state.selectedRunId);
+    renderCanvasPanel();
+    evidence.push("生成画布已刷新");
+  } catch (err) {
+    evidence.push(`生成画布刷新失败：${err.message}`);
+  }
+  appendAgentLog("system", `验证动作完成：${evidence.join("；")}。`);
+}
+
 async function handleDelegateCodeRepairAction(action) {
   if (!state.selectedRunId) {
     appendAgentLog("system", "delegate_code_repair 需要先选择 run。");
@@ -1417,18 +2606,23 @@ async function handleDelegateCodeRepairAction(action) {
     appendAgentLog("system", "delegate_code_repair 缺少 repair_request。");
     return;
   }
+  const repairId = action.repair_id || createRepairId();
   appendAgentLog("system", "正在委托 Code Agent 准备候选修复 diff…");
+  startDelegateRepairProgressPolling(state.selectedRunId, repairId);
   let prepared;
   try {
     prepared = await startDelegateCodeRepair(state.selectedRunId, {
+      repair_id: repairId,
       repair_request: repairRequest,
       action_id: action.action_id || "",
       agent_provider: action.source || action.provider || "",
     });
   } catch (err) {
+    stopDelegateRepairProgressPolling();
     appendAgentLog("system", `delegate_code_repair prepare 失败：${err.message}`);
     return;
   }
+  stopDelegateRepairProgressPolling();
   const risks = Array.isArray(prepared.risk_events) ? prepared.risk_events : [];
   const blockers = Array.isArray(prepared.blockers) ? prepared.blockers : [];
   appendAgentLog(
@@ -1573,92 +2767,223 @@ function appendAgentLog(role, text, payload) {
   return entry;
 }
 
-function startStreamingAgentBubble(providerLabel) {
+function agentLogNearBottom(container) {
+  if (!container) return true;
+  return container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+}
+
+function maybeScrollAgentLog(container, wasNearBottom) {
+  if (container && wasNearBottom) container.scrollTop = container.scrollHeight;
+}
+
+function renderInlineMarkdown(text) {
+  const nodes = [];
+  const src = String(text || "");
+  const pattern = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(src)) !== null) {
+    if (match.index > lastIndex) nodes.push(document.createTextNode(src.slice(lastIndex, match.index)));
+    if (match[1]) nodes.push(el("strong", null, [match[2]]));
+    else if (match[3]) nodes.push(el("code", { className: "app-generation-md-code-inline" }, [match[4]]));
+    else if (match[5]) nodes.push(el("a", { href: match[7], target: "_blank", rel: "noopener noreferrer" }, [match[6]]));
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < src.length) nodes.push(document.createTextNode(src.slice(lastIndex)));
+  return nodes;
+}
+
+function renderMarkdownInto(container, text) {
+  if (!container) return;
+  clear(container);
+  const lines = String(text || "").split("\n");
+  let i = 0;
+  let listNode = null;
+  let listType = "";
+  const flushList = () => {
+    if (listNode) container.appendChild(listNode);
+    listNode = null;
+    listType = "";
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^```(.*)$/);
+    if (fence) {
+      flushList();
+      const codeLines = [];
+      i += 1;
+      while (i < lines.length && !/^```/.test(lines[i])) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      i += 1;
+      const pre = el("pre", { className: "app-generation-md-code-block" }, [
+        el("code", null, [codeLines.join("\n")]),
+      ]);
+      container.appendChild(pre);
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      flushList();
+      const level = heading[1].length;
+      const tag = level === 1 ? "h4" : level === 2 ? "h5" : "h6";
+      container.appendChild(el(tag, { className: "app-generation-md-heading" }, renderInlineMarkdown(heading[2])));
+      i += 1;
+      continue;
+    }
+    const ordered = line.match(/^\s*\d+\.\s+(.*)$/);
+    const unordered = line.match(/^\s*[-*]\s+(.*)$/);
+    if (ordered || unordered) {
+      const wantType = ordered ? "ol" : "ul";
+      if (listType !== wantType) {
+        flushList();
+        listNode = el(wantType, { className: "app-generation-md-list" }, []);
+        listType = wantType;
+      }
+      listNode.appendChild(el("li", null, renderInlineMarkdown((ordered || unordered)[1])));
+      i += 1;
+      continue;
+    }
+    if (!line.trim()) {
+      flushList();
+      i += 1;
+      continue;
+    }
+    flushList();
+    container.appendChild(el("p", { className: "app-generation-md-paragraph" }, renderInlineMarkdown(line)));
+    i += 1;
+  }
+  flushList();
+}
+
+const AGENT_PHASE_LABELS = {
+  preparing_context: "正在准备上下文…",
+  connecting_model: "正在连接模型…",
+  thinking: "思考中…",
+};
+
+function startStreamingAgentBubble(providerLabel, options) {
   const container = document.getElementById("app-generation-agent-log");
   if (!container) return null;
-  const eyebrow = el("p", { className: "eyebrow" }, [`agent · ${providerLabel} · ${new Date().toLocaleTimeString()}`]);
-  const body = el("p", { className: "app-generation-agent-stream-body" }, [""]);
+  const onStop = options && typeof options.onStop === "function" ? options.onStop : null;
+  const eyebrow = el("p", { className: "eyebrow" }, [`助手 · ${providerLabel} · ${new Date().toLocaleTimeString()}`]);
+  const statusLine = el("p", { className: "app-generation-agent-thinking" }, [
+    el("span", { className: "app-generation-agent-thinking-dots" }, [el("span"), el("span"), el("span")]),
+    el("span", { className: "app-generation-agent-thinking-text" }, [AGENT_PHASE_LABELS.thinking]),
+  ]);
+  const body = el("div", { className: "app-generation-agent-stream-body app-generation-md" }, []);
+  body.hidden = true;
   const tools = el("ul", { className: "app-generation-agent-tools" });
-  const entry = el("article", { className: "app-generation-agent-entry role-agent streaming" }, [eyebrow, body, tools]);
+  const head = el("div", { className: "app-generation-agent-entry-head" }, [eyebrow]);
+  if (onStop) {
+    const stopBtn = el("button", { type: "button", className: "ghost small app-generation-agent-stop", onclick: () => onStop() }, ["停止"]);
+    head.appendChild(stopBtn);
+  }
+  const entry = el("article", { className: "app-generation-agent-entry role-agent streaming" }, [head, statusLine, body, tools]);
   container.appendChild(entry);
   container.scrollTop = container.scrollHeight;
   const toolNodes = new Map();
   let textBuffer = "";
+  const removeStop = () => {
+    const btn = head.querySelector(".app-generation-agent-stop");
+    if (btn) btn.remove();
+  };
+  const showBody = () => {
+    if (body.hidden) {
+      body.hidden = false;
+      statusLine.hidden = true;
+    }
+  };
   return {
+    setStatus(phase) {
+      const textEl = statusLine.querySelector(".app-generation-agent-thinking-text");
+      if (textEl) textEl.textContent = AGENT_PHASE_LABELS[phase] || AGENT_PHASE_LABELS.thinking;
+    },
     appendText(text) {
+      const near = agentLogNearBottom(container);
       textBuffer += text || "";
-      body.textContent = textBuffer;
-      container.scrollTop = container.scrollHeight;
+      showBody();
+      renderMarkdownInto(body, textBuffer);
+      maybeScrollAgentLog(container, near);
     },
     addToolCall(toolCallId, name, input) {
-      const summary = el(
-        "summary",
-        { className: "app-generation-agent-tool-summary" },
-        [`🔧 ${name || "tool"}`],
-      );
+      const near = agentLogNearBottom(container);
+      const summary = el("summary", { className: "app-generation-agent-tool-summary" }, [
+        el("span", { className: "app-generation-agent-tool-spinner" }, []),
+        el("span", null, [name || "tool"]),
+      ]);
       const inputPre = el("pre", { className: "app-generation-agent-tool-input" }, [
         typeof input === "string" ? input : JSON.stringify(input || {}, null, 2),
       ]);
       const resultPre = el("pre", { className: "app-generation-agent-tool-result pending" }, ["运行中…"]);
-      const details = el(
-        "details",
-        { className: "app-generation-agent-tool-details" },
-        [summary, inputPre, resultPre],
-      );
+      const details = el("details", { className: "app-generation-agent-tool-details" }, [summary, inputPre, resultPre]);
       const li = el("li", { className: "app-generation-agent-tool" }, [details]);
       tools.appendChild(li);
-      toolNodes.set(toolCallId, { resultPre });
-      container.scrollTop = container.scrollHeight;
+      toolNodes.set(toolCallId, { resultPre, summary });
+      maybeScrollAgentLog(container, near);
     },
     updateToolResult(toolCallId, output, isError) {
       const node = toolNodes.get(toolCallId);
       if (!node) return;
+      const near = agentLogNearBottom(container);
       node.resultPre.classList.remove("pending");
-      if (isError) node.resultPre.classList.add("error");
+      node.resultPre.classList.add(isError ? "error" : "success");
+      const spinner = node.summary.querySelector(".app-generation-agent-tool-spinner");
+      if (spinner) spinner.classList.add(isError ? "failed" : "done");
       node.resultPre.textContent = typeof output === "string" ? output : JSON.stringify(output, null, 2);
-      container.scrollTop = container.scrollHeight;
+      maybeScrollAgentLog(container, near);
     },
     finalize(payload) {
+      const near = agentLogNearBottom(container);
       entry.classList.remove("streaming");
+      removeStop();
+      statusLine.hidden = true;
+      if (payload && typeof payload.cleaned_message === "string" && payload.cleaned_message.length) {
+        textBuffer = payload.cleaned_message;
+      }
+      if (!textBuffer && payload && payload.message) {
+        textBuffer = payload.message;
+      }
+      showBody();
+      renderMarkdownInto(body, textBuffer || "(无消息)");
       if (payload && payload.actions && payload.actions.length) {
         entry.appendChild(renderAgentActions(payload.actions));
       }
-      if (payload && typeof payload.cleaned_message === "string" && payload.cleaned_message.length) {
-        textBuffer = payload.cleaned_message;
-        body.textContent = textBuffer;
-      }
       if (payload && payload.usage) {
-        const usage = el("p", { className: "app-generation-agent-usage" }, [
-          `usage · prompt=${payload.usage.prompt_tokens ?? "?"} · completion=${payload.usage.completion_tokens ?? "?"} · total=${payload.usage.total_tokens ?? "?"}`,
-        ]);
-        entry.appendChild(usage);
-      }
-      if (!textBuffer && payload && payload.message) {
-        body.textContent = payload.message;
+        entry.appendChild(
+          el("p", { className: "app-generation-agent-usage" }, [
+            `usage · prompt=${payload.usage.prompt_tokens ?? "?"} · completion=${payload.usage.completion_tokens ?? "?"} · total=${payload.usage.total_tokens ?? "?"}`,
+          ])
+        );
       }
       state.agentLog.push({
-        role: `agent · ${providerLabel}`,
+        role: `助手 · ${providerLabel}`,
         text: textBuffer || (payload && payload.message) || "(无消息)",
         payload,
         at: new Date().toISOString(),
       });
-      container.scrollTop = container.scrollHeight;
+      maybeScrollAgentLog(container, near);
     },
     fail(reason) {
+      const near = agentLogNearBottom(container);
       entry.classList.remove("streaming");
       entry.classList.add("error");
-      const errLine = el("p", { className: "app-generation-agent-error" }, [reason]);
-      entry.appendChild(errLine);
-      container.scrollTop = container.scrollHeight;
+      removeStop();
+      statusLine.hidden = true;
+      showBody();
+      entry.appendChild(el("p", { className: "app-generation-agent-error" }, [reason]));
+      maybeScrollAgentLog(container, near);
     },
   };
 }
 
-async function streamAgentMessage(body, bubble) {
+async function streamAgentMessage(body, bubble, signal) {
   const response = await fetch("/api/app-generation/agent/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok || !response.body) {
     const text = await response.text().catch(() => "");
@@ -1695,7 +3020,9 @@ function dispatchStreamEvent(event, bubble) {
   if (!event || !bubble) return;
   const type = event.type;
   const payload = event.payload || {};
-  if (type === "message_delta") {
+  if (type === "agent_status") {
+    if (bubble.setStatus) bubble.setStatus(payload.phase);
+  } else if (type === "message_delta") {
     bubble.appendText(payload.text || "");
   } else if (type === "tool_call") {
     bubble.addToolCall(payload.tool_call_id || payload.id || cryptoRandomId(), payload.name, payload.input);
@@ -1716,6 +3043,11 @@ function cryptoRandomId() {
 async function sendAgentMessage(event) {
   event.preventDefault();
   const input = document.getElementById("app-generation-agent-input");
+  if (state.isNewTask) {
+    appendAgentLog("system", "请先在「PRD 输入」上传 PRD 并点击「启动生成」，生成任务创建后 Agent 会绑定到对应步骤。");
+    if (input) input.focus();
+    return;
+  }
   if (!input || !state.nodeContext) {
     appendAgentLog("system", "请先选择左侧任务并点击节点。");
     return;
@@ -1723,7 +3055,9 @@ async function sendAgentMessage(event) {
   const message = input.value.trim();
   appendAgentLog("user", message || `[${state.agentMode}]`);
   input.value = "";
-  const bubble = startStreamingAgentBubble(state.provider);
+  const controller = new AbortController();
+  state.agentStreamController = controller;
+  const bubble = startStreamingAgentBubble(state.provider, { onStop: () => controller.abort() });
   const body = {
     provider: state.provider,
     mode: state.agentMode,
@@ -1733,10 +3067,17 @@ async function sendAgentMessage(event) {
     interaction_context: buildAgentInteractionContext(),
   };
   try {
-    await streamAgentMessage(body, bubble);
+    await streamAgentMessage(body, bubble, controller.signal);
   } catch (err) {
-    if (bubble) bubble.fail(`Agent 调用失败：${err.message}`);
-    else appendAgentLog("system", `Agent 调用失败：${err.message}`);
+    if (err && err.name === "AbortError") {
+      if (bubble) bubble.fail("已停止本次 Agent 回复。");
+    } else if (bubble) {
+      bubble.fail(`Agent 调用失败：${err.message}`);
+    } else {
+      appendAgentLog("system", `Agent 调用失败：${err.message}`);
+    }
+  } finally {
+    if (state.agentStreamController === controller) state.agentStreamController = null;
   }
 }
 
@@ -1877,6 +3218,36 @@ function handleRunStreamEvent(runId, event) {
       renderNodes();
       if (target.id === state.selectedNodeId) renderNodeDetail();
     }
+    refreshCanvasProjection(runId).then(() => renderCanvasPanel());
+  } else if (type === "node_progress") {
+    const ev = payload.event || {};
+    const live = state.canvas.coderLive && state.canvas.coderLive.run_id === runId
+      ? state.canvas.coderLive
+      : { run_id: runId, files_changed: 0, tool_calls: 0, event_seq: 0, last_event_id: "" };
+    const evId = String(ev.event_id || "");
+    if (evId && evId !== live.last_event_id) {
+      live.last_event_id = evId;
+      live.event_seq += 1;
+      const evType = String(ev.event_type || "");
+      if (evType === "tool_call") live.tool_calls += 1;
+      if (evType === "file_change" || evType === "patch") live.files_changed += 1;
+    }
+    live.title = ev.title || live.title || "";
+    live.summary = ev.summary || live.summary || "";
+    live.business_status = ev.business_status || live.business_status || "";
+    live.alive = true;
+    live.ts = Date.now();
+    state.canvas.coderLive = live;
+    renderCanvasPanel();
+  } else if (type === "heartbeat") {
+    const live = state.canvas.coderLive && state.canvas.coderLive.run_id === runId
+      ? state.canvas.coderLive
+      : { run_id: runId, files_changed: 0, tool_calls: 0, event_seq: 0, last_event_id: "" };
+    live.running_node = payload.running_node || "";
+    live.heartbeat_ts = Date.now();
+    live.alive = true;
+    state.canvas.coderLive = live;
+    renderCoderLiveBadge();
   } else if (type === "run_finished") {
     const meta = document.getElementById("app-generation-pipeline-meta");
     if (meta) {
@@ -1891,6 +3262,8 @@ function handleRunStreamEvent(runId, event) {
       } catch (_err) {}
       _runEventSource = null;
     }
+    state.canvas.coderLive = null;
+    refreshCanvasProjection(runId).then(() => renderCanvasPanel());
     loadRuns();
   }
 }
@@ -1957,6 +3330,8 @@ function populateUploadControls() {
 }
 
 function bindUI() {
+  const newTaskBtn = document.getElementById("app-generation-new-task");
+  if (newTaskBtn) newTaskBtn.addEventListener("click", enterNewTaskMode);
   const refreshBtn = document.getElementById("app-generation-refresh");
   if (refreshBtn) refreshBtn.addEventListener("click", loadRuns);
   const uploadForm = document.getElementById("app-generation-upload-form");
@@ -1980,6 +3355,22 @@ function bindUI() {
   }
   const form = document.getElementById("app-generation-agent-form");
   if (form) form.addEventListener("submit", sendAgentMessage);
+  const showAllEngineering = document.getElementById("app-generation-show-all-engineering-nodes");
+  if (showAllEngineering) showAllEngineering.addEventListener("change", renderNodes);
+  const canvasTypeFilter = document.getElementById("app-generation-canvas-type-filter");
+  if (canvasTypeFilter) {
+    canvasTypeFilter.addEventListener("change", async () => {
+      state.canvas.filters.objectType = canvasTypeFilter.value || "all";
+      await applyCanvasFilters();
+    });
+  }
+  const canvasStatusFilter = document.getElementById("app-generation-canvas-status-filter");
+  if (canvasStatusFilter) {
+    canvasStatusFilter.addEventListener("change", async () => {
+      state.canvas.filters.status = canvasStatusFilter.value || "all";
+      await applyCanvasFilters();
+    });
+  }
   const detail = document.getElementById("app-generation-node-detail");
   if (detail) {
     detail.addEventListener("click", (event) => {

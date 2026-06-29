@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import threading
 import difflib
+import time
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -78,6 +79,203 @@ IMPLEMENTATION_COMPLETION_GATE_MD_PATH = "implementation_completion_gate.md"
 APP_RUNTIME_VERIFICATION_PATH = "codex/app_runtime_verification.json"
 SLICE_LOOP_EXECUTION_STRATEGY = "single_codex_pass_over_planned_slices_v1"
 BENCHMARK_FIX_SLICE_DISABLE_ENV = "BENCHMARK_FIX_SLICE_DISABLE"
+
+
+SECRET_TEXT_PATTERNS = (
+    re.compile(r"(?i)(api[_-]?key|token|secret|password)(['\"\s:=]+)([A-Za-z0-9_\-./+=]{8,})"),
+    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
+)
+
+
+def _redact_progress_text(value: Any, *, limit: int = 2000) -> str:
+    text = str(value if value is not None else "")
+    for pattern in SECRET_TEXT_PATTERNS:
+        if pattern.groups >= 3:
+            text = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}<redacted>", text)
+        else:
+            text = pattern.sub("<redacted>", text)
+    if len(text) > limit:
+        return text[:limit] + "...<truncated>"
+    return text
+
+
+class CodexProgressRecorder:
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        node_id: str,
+        operation_id: str,
+        operation_type: str,
+        stage: str,
+        progress_path: Path,
+        status_path: Path,
+    ) -> None:
+        self.run_id = run_id
+        self.node_id = node_id
+        self.operation_id = operation_id
+        self.operation_type = operation_type
+        self.stage = stage
+        self.progress_path = progress_path
+        self.status_path = status_path
+        self.started_at = now_iso()
+        self._started_epoch = time.time()
+        self._counter = 0
+        ensure_dir(progress_path.parent)
+        if not progress_path.exists():
+            progress_path.write_text("", encoding="utf-8")
+        self.emit("stage_started", "running", "准备执行", "正在准备 Code Agent 执行上下文。")
+
+    def emit(
+        self,
+        event_type: str,
+        status: str,
+        title: str,
+        summary: str = "",
+        *,
+        artifact_refs: list[str] | None = None,
+        file_changes: list[dict[str, Any]] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+        risk_events: list[str] | None = None,
+        result_ready: bool = False,
+        diff_ready: bool = False,
+        blockers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self._counter += 1
+        now = now_iso()
+        event = {
+            "schema_version": 1,
+            "event_id": f"{self.operation_id}-{self._counter:04d}",
+            "run_id": self.run_id,
+            "operation_id": self.operation_id,
+            "operation_type": self.operation_type,
+            "node_id": self.node_id,
+            "stage": self.stage,
+            "event_type": event_type,
+            "status": status,
+            "title": _redact_progress_text(title, limit=240),
+            "summary": _redact_progress_text(summary),
+            "business_status": _business_progress_status(status),
+            "artifact_refs": artifact_refs or [],
+            "file_changes": file_changes or [],
+            "tool_calls": tool_calls or [],
+            "usage": {},
+            "risk_events": [_redact_progress_text(item, limit=500) for item in (risk_events or [])],
+            "started_at": self.started_at,
+            "finished_at": now if status in {"completed", "failed", "prepared"} else "",
+            "elapsed_ms": int((time.time() - self._started_epoch) * 1000),
+        }
+        with self.progress_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        write_json(
+            self.status_path,
+            {
+                "schema_version": 1,
+                "operation_id": self.operation_id,
+                "operation_type": self.operation_type,
+                "status": status,
+                "current_title": event["title"],
+                "current_summary": event["summary"],
+                "latest_event_id": event["event_id"],
+                "latest_event_at": now,
+                "started_at": self.started_at,
+                "elapsed_ms": event["elapsed_ms"],
+                "result_ready": result_ready,
+                "diff_ready": diff_ready,
+                "artifact_refs": event["artifact_refs"],
+                "risk_events": event["risk_events"],
+                "blockers": [_redact_progress_text(item, limit=500) for item in (blockers or [])],
+            },
+        )
+        return event
+
+    def ingest_stdout_line(self, line: str) -> None:
+        parsed: Any
+        try:
+            parsed = json.loads(line)
+        except Exception:
+            if line.strip():
+                self.emit("codex_item_completed", "running", "Code Agent 有新输出", _redact_progress_text(line))
+            return
+        if not isinstance(parsed, dict):
+            return
+        event_type = str(parsed.get("type") or parsed.get("event") or "")
+        if event_type == "thread.started":
+            self.emit("process_started", "running", "启动 Code Agent", "Codex 线程已启动。")
+            return
+        if event_type == "turn.started":
+            self.emit("stage_started", "running", "开始执行", "Code Agent 开始处理当前任务。")
+            return
+        item = parsed.get("item") if isinstance(parsed.get("item"), dict) else {}
+        item_type = str(item.get("type") or "")
+        status = str(item.get("status") or "running")
+        if event_type == "item.started":
+            self.emit("codex_item_started", "running", _progress_title_for_item(item_type, started=True), _progress_summary_for_item(item))
+            return
+        if event_type == "item.completed":
+            self.emit(
+                "codex_item_completed",
+                "completed" if status == "completed" else status,
+                _progress_title_for_item(item_type, started=False),
+                _progress_summary_for_item(item),
+                file_changes=_progress_file_changes(item),
+            )
+            return
+        if event_type == "agent_message":
+            text = parsed.get("text") or parsed.get("message") or parsed
+            self.emit("agent_message", "running", "Code Agent 说明", _redact_progress_text(text))
+            return
+        self.emit("codex_item_completed", "running", "Code Agent 有新输出", _redact_progress_text(json.dumps(parsed, ensure_ascii=False)))
+
+
+def _business_progress_status(status: str) -> str:
+    return {
+        "pending": "未开始",
+        "running": "执行中",
+        "completed": "已完成",
+        "prepared": "已生成候选改动",
+        "failed": "失败",
+    }.get(status, status or "未记录")
+
+
+def _progress_title_for_item(item_type: str, *, started: bool) -> str:
+    if item_type == "command_execution":
+        return "运行命令" if started else "命令完成"
+    if item_type == "file_change":
+        return "准备修改文件" if started else "修改文件"
+    return "正在执行" if started else "执行完成"
+
+
+def _progress_summary_for_item(item: dict[str, Any]) -> str:
+    if str(item.get("type") or "") == "command_execution":
+        command = item.get("command") or ""
+        exit_code = item.get("exit_code")
+        output = item.get("aggregated_output") or ""
+        parts = [f"命令：{command}" if command else ""]
+        if exit_code is not None:
+            parts.append(f"exit_code={exit_code}")
+        if output:
+            parts.append(_redact_progress_text(output))
+        return "；".join(part for part in parts if part) or "命令执行事件。"
+    changes = _progress_file_changes(item)
+    if changes:
+        return "；".join(f"{change.get('kind', 'update')} {change.get('path', '')}" for change in changes)
+    return _redact_progress_text(item)
+
+
+def _progress_file_changes(item: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = item.get("changes")
+    if not isinstance(raw, list):
+        return []
+    changes = []
+    for change in raw:
+        if not isinstance(change, dict):
+            continue
+        changes.append({
+            "path": _redact_progress_text(change.get("path") or "", limit=500),
+            "kind": _redact_progress_text(change.get("kind") or "update", limit=80),
+        })
+    return changes
 BENCHMARK_FIX_SLICE_MAX_ROUNDS = 1
 BENCHMARK_FIX_SLICE_PROMPT_PATH = "codex/fix_slice_prompt.md"
 BENCHMARK_FIX_SLICE_STDOUT_PATH = "codex/fix_stdout.jsonl"
@@ -433,7 +631,26 @@ class CodexExecutor:
             output_last_message_path=bundle.output_last_message_path,
         )
         write_json(bundle.command_path, {"command": command, "cwd": str(worktree_dir), "created_at": now_iso()})
-        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path)
+        progress = CodexProgressRecorder(
+            run_id=self.run_dir.name,
+            node_id="implementation",
+            operation_id="implementation-coder",
+            operation_type="implementation",
+            stage="coder",
+            progress_path=self.codex_dir / "coder_progress.jsonl",
+            status_path=self.codex_dir / "coder_progress_status.json",
+        )
+        progress.emit("process_started", "running", "启动 Code Agent", "正在启动 Codex 执行应用实现。", artifact_refs=[_relative_to(bundle.stdout_path, self.run_dir)])
+        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path, progress=progress)
+        progress.emit(
+            "stage_completed" if completed.returncode == 0 else "stage_failed",
+            "completed" if completed.returncode == 0 else "failed",
+            "Code Agent 执行结束",
+            f"Codex 进程已结束，退出码 {completed.returncode}。",
+            artifact_refs=[_relative_to(bundle.stdout_path, self.run_dir), _relative_to(bundle.stderr_path, self.run_dir)],
+            result_ready=completed.returncode == 0,
+            blockers=[] if completed.returncode == 0 else [f"codex exited with {completed.returncode}"],
+        )
         codex_run_status = "completed" if completed.returncode == 0 else "failed"
         _trace_step(trace, "codex_running", codex_run_status, f"AI coding 进程已结束，退出码 {completed.returncode}。")
         trace["evidence"]["exit_code"] = completed.returncode
@@ -479,6 +696,11 @@ class CodexExecutor:
                 "blocking_events": _dedupe(_string_list(benchmark_evaluation.get("blocking_events", [])) + app_runtime_events),
                 "artifacts": _dedupe(_string_list(benchmark_evaluation.get("artifacts", [])) + [APP_RUNTIME_VERIFICATION_PATH]),
             }
+        response_blockers, non_blocking_blocker_warnings = _classify_codex_blockers(
+            response_blockers,
+            changed_files=files_changed,
+            app_runtime_verification=app_runtime_verification,
+        )
         first_round_state = {
             "exit_code": completed.returncode,
             "summary": str(response.get("summary", "")),
@@ -524,6 +746,11 @@ class CodexExecutor:
                     "blocking_events": _dedupe(_string_list(benchmark_evaluation.get("blocking_events", [])) + app_runtime_events),
                     "artifacts": _dedupe(_string_list(benchmark_evaluation.get("artifacts", [])) + [APP_RUNTIME_VERIFICATION_PATH]),
                 }
+            response_blockers, non_blocking_blocker_warnings = _classify_codex_blockers(
+                response_blockers,
+                changed_files=files_changed,
+                app_runtime_verification=app_runtime_verification,
+            )
             fix_exit_code = int(fix_slice_result.get("exit_code", 0))
             validation_events = list(fix_slice_result.get("validation_events") or validation_events)
             completed = subprocess.CompletedProcess(completed.args, fix_exit_code, completed.stdout, completed.stderr)
@@ -545,7 +772,9 @@ class CodexExecutor:
             codex_blocking_risk_events=response_blocking_risk_events
             + _string_list(benchmark_evaluation.get("blocking_events", []))
             + app_runtime_events,
-            codex_non_blocking_risk_events=non_blocking_risk_events + _string_list(benchmark_evaluation.get("warnings", [])),
+            codex_non_blocking_risk_events=non_blocking_risk_events
+            + non_blocking_blocker_warnings
+            + _string_list(benchmark_evaluation.get("warnings", [])),
             diff_policy_hits=diff_policy_hits,
             allowed_paths=bundle.allowed_paths,
             boundary_violations=boundary_violations,
@@ -893,11 +1122,32 @@ class CodexExecutor:
             output_last_message_path=bundle.output_last_message_path,
         )
         write_json(bundle.command_path, {"command": command, "cwd": str(worktree_dir), "created_at": now_iso()})
-        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path)
+        repair_id = str((getattr(context, "inputs", {}) or {}).get("repair_id") or "").strip()
+        if repair_id:
+            progress_dir = ensure_dir(self.run_dir / "app_repairs" / repair_id)
+            progress_path = progress_dir / "progress.jsonl"
+            progress_status_path = progress_dir / "progress_status.json"
+            operation_id = repair_id
+        else:
+            progress_path = self.codex_dir / "app_repair_progress.jsonl"
+            progress_status_path = self.codex_dir / "app_repair_progress_status.json"
+            operation_id = "app-repair"
+        progress = CodexProgressRecorder(
+            run_id=self.run_dir.name,
+            node_id="preview_delivery",
+            operation_id=operation_id,
+            operation_type="delegate_code_repair",
+            stage="app_repair",
+            progress_path=progress_path,
+            status_path=progress_status_path,
+        )
+        progress.emit("process_started", "running", "启动 Code Agent", "正在启动 Codex 修复已发布应用。", artifact_refs=[_relative_to(bundle.stdout_path, self.run_dir)])
+        completed = self._run_process(command, bundle.prompt_path.read_text(encoding="utf-8"), worktree_dir, bundle.stdout_path, bundle.stderr_path, progress=progress)
         response, validation_events = _read_codex_response(bundle.output_last_message_path)
 
         diff_path = self.codex_dir / "app_repair_diff.patch"
         changed_files = _write_directory_diff(baseline_dir, candidate_dir, diff_path, app_slug=app_slug)
+        outside_changes = _app_repair_scope_violations(worktree_dir, app_slug)
         verification_record = _run_app_repair_verification(
             commands=bundle.verification_commands,
             app_dir=candidate_dir,
@@ -915,7 +1165,21 @@ class CodexExecutor:
         if not changed_files:
             blockers.append("no_changed_files")
             risk_events.append("no_changed_files")
+        if outside_changes:
+            blockers.append("outside_repair_scope_changes")
+            risk_events.append("outside_repair_scope_changes")
         status = "prepared" if not risk_events and not blockers else "failed"
+        progress.emit(
+            "diff_ready" if changed_files else "stage_failed",
+            "prepared" if status == "prepared" else "failed",
+            "候选改动已生成" if changed_files else "未生成候选改动",
+            "Code Agent 已生成候选 diff。" if changed_files else "Code Agent 没有生成可应用改动。",
+            artifact_refs=[_relative_to(diff_path, self.run_dir)],
+            result_ready=True,
+            diff_ready=bool(changed_files),
+            risk_events=risk_events,
+            blockers=blockers,
+        )
         record = {
             "agent": "app_repair",
             "executor": "codex",
@@ -946,6 +1210,17 @@ class CodexExecutor:
         }
         result_path = self.codex_dir / "app_repair_result.json"
         write_json(result_path, record)
+        progress.emit(
+            "stage_completed" if status == "prepared" else "stage_failed",
+            status,
+            "修复候选已准备好" if status == "prepared" else "修复候选未通过",
+            record["summary"],
+            artifact_refs=[_relative_to(result_path, self.run_dir), _relative_to(diff_path, self.run_dir)],
+            result_ready=True,
+            diff_ready=bool(changed_files),
+            risk_events=record["risk_events"],
+            blockers=record["blockers"],
+        )
         output_paths.extend([
             _relative_to(diff_path, self.run_dir),
             _relative_to(result_path, self.run_dir),
@@ -1099,7 +1374,16 @@ class CodexExecutor:
         )
         return result
 
-    def _run_process(self, command: list[str], prompt_text: str, cwd: Path, stdout_path: Path, stderr_path: Path) -> subprocess.CompletedProcess[str]:
+    def _run_process(
+        self,
+        command: list[str],
+        prompt_text: str,
+        cwd: Path,
+        stdout_path: Path,
+        stderr_path: Path,
+        *,
+        progress: CodexProgressRecorder | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
         stdout_path.write_text("", encoding="utf-8")
@@ -1132,6 +1416,8 @@ class CodexExecutor:
                         chunks.append(chunk)
                         handle.write(chunk)
                         handle.flush()
+                        if progress is not None and path == stdout_path:
+                            progress.ingest_stdout_line(chunk)
 
         stdout_thread = threading.Thread(target=stream_output, args=(process.stdout, stdout_path, stdout_chunks), daemon=True)
         stderr_thread = threading.Thread(target=stream_output, args=(process.stderr, stderr_path, stderr_chunks), daemon=True)
@@ -1860,6 +2146,32 @@ def _write_directory_diff(baseline_dir: Path, candidate_dir: Path, diff_path: Pa
             diff_parts.append("\n")
     diff_path.write_text("".join(diff_parts), encoding="utf-8")
     return changed
+
+
+def _app_repair_scope_violations(worktree_dir: Path, app_slug: str) -> list[str]:
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=worktree_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return []
+    allowed_prefix = f"generated_apps/{app_slug}/"
+    violations: list[str] = []
+    for line in completed.stdout.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:] if len(line) > 3 else line.strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        path = path.strip()
+        if path and not path.startswith(allowed_prefix):
+            violations.append(path)
+    return sorted(set(violations))
 
 
 def _run_app_repair_verification(
@@ -2858,6 +3170,8 @@ def _classification_event(event_id: str, severity: str, source: str, reason: str
 
 def _non_blocking_risk_event_id(event: str) -> str:
     lowered = event.lower()
+    if lowered.startswith("codex_unrelated_test_blocker:"):
+        return "codex_unrelated_test_blocker"
     if "modified tests/" in lowered and "supporting test boundary" in lowered:
         return "supporting_test_boundary_note"
     if "nearby supporting" in lowered or "nearby_supporting" in lowered:
@@ -2922,6 +3236,74 @@ def classify_codex_risk_events(events: list[str]) -> tuple[list[str], list[str]]
         else:
             blocking.append(event)
     return _dedupe(blocking), _dedupe(non_blocking)
+
+
+def _classify_codex_blockers(
+    blockers: list[str],
+    *,
+    changed_files: list[str],
+    app_runtime_verification: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    blocking: list[str] = []
+    warnings: list[str] = []
+    for blocker in blockers:
+        if _is_non_blocking_unrelated_test_blocker(
+            blocker,
+            changed_files=changed_files,
+            app_runtime_verification=app_runtime_verification,
+        ):
+            warnings.append(f"codex_unrelated_test_blocker:{blocker}")
+        else:
+            blocking.append(blocker)
+    return _dedupe(blocking), _dedupe(warnings)
+
+
+def _is_non_blocking_unrelated_test_blocker(
+    blocker: str,
+    *,
+    changed_files: list[str],
+    app_runtime_verification: dict[str, Any],
+) -> bool:
+    if str(app_runtime_verification.get("status") or "") != "passed":
+        return False
+    lowered = blocker.lower()
+    if "unrelated" not in lowered:
+        return False
+    if not any(marker in lowered for marker in ("test", "unittest", "pytest")):
+        return False
+    standalone_markers = (
+        "failed standalone",
+        "fails standalone",
+        "failure standalone",
+        "isolated rerun",
+        "fails in isolation",
+        "failed in isolation",
+        "failure in isolation",
+        "in isolation fails",
+        "in isolation failed",
+        "isolation rerun",
+        "fails the same way",
+    )
+    if not any(marker in lowered for marker in standalone_markers):
+        return False
+    referenced_tests = _referenced_test_files_from_text(blocker)
+    if not referenced_tests:
+        return False
+    changed = {_normalize_changed_path(path) for path in changed_files}
+    return referenced_tests.isdisjoint(changed)
+
+
+def _referenced_test_files_from_text(text: str) -> set[str]:
+    paths = {_normalize_changed_path(match) for match in re.findall(r"\btests/[A-Za-z0-9_./-]+\.py\b", text)}
+    for module in re.findall(r"\b(test_[A-Za-z0-9_]+)\.", text):
+        paths.add(f"tests/{module}.py")
+    for module in re.findall(r"\btests\.([A-Za-z0-9_]+)\b", text):
+        paths.add(f"tests/{module}.py")
+    return {path for path in paths if path}
+
+
+def _normalize_changed_path(path: str) -> str:
+    return str(path or "").replace("\\", "/").strip().strip("`'\".,;:，。、")
 
 
 def _is_non_blocking_codex_risk_note(event: str) -> bool:

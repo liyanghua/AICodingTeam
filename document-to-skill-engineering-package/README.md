@@ -13,6 +13,12 @@
 - `eval_rules.yaml`：质量评测规则。
 - `evidence_schema.yaml`：证据包 Schema。
 
+## 与根项目的关系
+
+在根仓库中，本工程包是 `app_generation` 的上游能力层：它先把业务策略文档编译成 Strategy IR、Skill Spec、Workflow DAG、Data Requirement、Tool Binding、Evidence Pack 和 Eval，再把这些结构化策略资产作为业务上下文、知识、数据、工具和评估输入，接入后续的 Business PRD++ / AppSpec / 应用生成链路。
+
+当前不把本工程包迁入根仓库的 `domains/`，也不改变它的独立包结构。根项目总纲见 `../docs/PROJECT_OVERVIEW.md`。
+
 ## 快速开始
 
 ```bash

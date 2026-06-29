@@ -111,6 +111,196 @@ class CodexProviderTests(unittest.TestCase):
         rerun_action = next(action for action in response["actions"] if action["type"] == "suggest_artifact_regeneration")
         self.assertTrue(rerun_action["requires_confirmation"])
 
+    def test_canvas_selection_routes_to_object_actions_and_preserves_source_object(self) -> None:
+        interaction_context = {
+            "context_revision": "sha256:demo",
+            "focus": {"card": "canvas_object", "view_mode": "canvas_object_detail"},
+            "canvas_selection": {
+                "selection_type": "canvas_object",
+                "selection_id": "capability:image_generation.single",
+                "object_type": "capability",
+                "title": "单张图片生成",
+                "status": "needs_attention",
+                "business_node": "验证业务能力",
+                "business_node_id": "capability_verification",
+                "allowed_actions": ["explain_object", "verify_capability", "repair_generated_app"],
+            },
+            "allowed_operations": ["explain_object", "verify_capability", "repair_generated_app", "delegate_code_repair"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="解释这个能力为什么需要关注",
+                repo_root=Path(temp_dir),
+            )
+            verify_response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="验证一下这个能力",
+                repo_root=Path(temp_dir),
+            )
+
+        self.assertEqual(response["resolved_intent"], "explain_object")
+        explain_action = response["actions"][0]
+        self.assertEqual(explain_action["type"], "explain_object")
+        self.assertEqual(explain_action["source_object_id"], "capability:image_generation.single")
+        self.assertEqual(explain_action["source_object_title"], "单张图片生成")
+        self.assertEqual(verify_response["resolved_intent"], "verify_capability")
+        verify_action = verify_response["actions"][0]
+        self.assertEqual(verify_action["type"], "verify_capability")
+        self.assertEqual(verify_action["source_object_id"], "capability:image_generation.single")
+
+    def test_canvas_repair_action_overrides_edit_mode_to_delegate_repair(self) -> None:
+        interaction_context = {
+            "context_revision": "sha256:demo",
+            "focus": {"card": "canvas_object", "view_mode": "canvas_object_detail"},
+            "canvas_selection": {
+                "selection_type": "canvas_object",
+                "selection_id": "capability:image_generation.single",
+                "object_type": "capability",
+                "title": "单张图片生成",
+                "status": "needs_attention",
+                "business_node": "验证业务能力",
+                "business_node_id": "capability_verification",
+                "allowed_actions": ["explain_object", "verify_capability", "repair_generated_app"],
+            },
+            "allowed_operations": ["repair_generated_app", "delegate_code_repair", "suggest_input_patch"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="edit",
+                mode="edit",
+                message="请基于业务对象「单张图片生成」诊断并修复生成应用中的问题。",
+                repo_root=Path(temp_dir),
+            )
+
+        self.assertEqual(response["resolved_intent"], "delegate_code_repair")
+        action_types = [action["type"] for action in response["actions"]]
+        self.assertIn("delegate_code_repair", action_types)
+        self.assertNotIn("suggest_input_patch", action_types)
+
+    def test_flow_step_selection_routes_to_step_explanation_actions(self) -> None:
+        interaction_context = {
+            "context_revision": "sha256:demo",
+            "focus": {"card": "flow_step", "view_mode": "business_step_detail"},
+            "canvas_selection": {
+                "selection_type": "flow_step",
+                "step_id": "prototype_generation",
+                "step_type": "business",
+                "title": "生成应用原型",
+                "status": "generated",
+                "runtime_nodes": ["implementation"],
+                "input_summary": ["应用契约", "TDD 计划"],
+                "process_summary": ["Code Agent 生成本地应用"],
+                "output_summary": ["生成应用代码", "实现 diff"],
+                "evidence_refs": ["codex/diff.patch"],
+                "allowed_actions": ["explain_step", "explain_step_io", "inspect_evidence", "rerun_step", "delegate_code_repair"],
+            },
+            "allowed_operations": ["explain_step", "explain_step_io", "inspect_evidence", "rerun_step", "delegate_code_repair"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="这一步在干什么？",
+                repo_root=Path(temp_dir),
+            )
+            io_response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="输入输出是什么？",
+                repo_root=Path(temp_dir),
+            )
+
+        self.assertEqual(response["resolved_intent"], "explain_step")
+        self.assertEqual(response["actions"][0]["type"], "explain_step")
+        self.assertEqual(response["actions"][0]["source_step_id"], "prototype_generation")
+        self.assertEqual(io_response["resolved_intent"], "explain_step_io")
+        self.assertEqual(io_response["actions"][0]["type"], "explain_step_io")
+        prompt_context = agent_bridge._agent_prompt_context(_NODE_CONTEXT, interaction_context, "explain_step")
+        self.assertEqual(prompt_context["canvas_selection"]["selection_type"], "flow_step")
+        self.assertEqual(prompt_context["canvas_selection"]["title"], "生成应用原型")
+        self.assertIn("应用契约", prompt_context["canvas_selection"]["input_summary"])
+
+    def test_flow_step_selection_rerun_maps_to_runtime_node(self) -> None:
+        interaction_context = {
+            "context_revision": "sha256:demo",
+            "focus": {"card": "flow_step", "view_mode": "business_step_detail"},
+            "canvas_selection": {
+                "selection_type": "flow_step",
+                "step_id": "prototype_generation",
+                "step_type": "business",
+                "title": "生成应用原型",
+                "status": "generated",
+                "runtime_nodes": ["implementation"],
+                "allowed_actions": ["explain_step", "rerun_step"],
+            },
+            "allowed_operations": ["explain_step", "rerun_step"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="重新跑这一步",
+                repo_root=Path(temp_dir),
+            )
+
+        self.assertEqual(response["resolved_intent"], "rerun_step")
+        action = response["actions"][0]
+        self.assertEqual(action["type"], "rerun_step")
+        self.assertEqual(action["rerun_from_node"], "implementation")
+        self.assertEqual(action["source_step_title"], "生成应用原型")
+
+    def test_app_preview_flow_step_repair_prefers_delegate_code_repair(self) -> None:
+        interaction_context = {
+            "context_revision": "sha256:demo",
+            "focus": {"card": "flow_step", "view_mode": "business_step_detail"},
+            "canvas_selection": {
+                "selection_type": "flow_step",
+                "step_id": "app_preview",
+                "step_type": "terminal",
+                "title": "可预览应用",
+                "status": "running",
+                "runtime_nodes": [],
+                "allowed_actions": ["inspect_evidence", "delegate_code_repair"],
+            },
+            "allowed_operations": ["inspect_evidence", "delegate_code_repair"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            response = agent_bridge.send_agent_message(
+                provider_id="codex",
+                node_context=_NODE_CONTEXT,
+                interaction_context=interaction_context,
+                intent="auto",
+                mode="explain",
+                message="生成单张图时报 gpt-image-1 not configured，请只修复当前预览问题",
+                repo_root=Path(temp_dir),
+            )
+
+        self.assertEqual(response["resolved_intent"], "delegate_code_repair")
+        action = response["actions"][0]
+        self.assertEqual(action["type"], "delegate_code_repair")
+        self.assertEqual(action["target"], "published_app")
+
     def test_auto_intent_reruns_node_from_natural_language(self) -> None:
         interaction_context = {
             "context_revision": "sha256:demo",

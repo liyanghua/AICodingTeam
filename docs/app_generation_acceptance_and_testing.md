@@ -934,3 +934,139 @@ git diff -- docs/app_generation*.md
 python3 -m unittest tests.test_codex_executor tests.test_dashboard -v
 node --check dashboard/app_generation.js
 ```
+
+## V2 生成画布验收标准
+
+### AC-074 V2 业务节点轨道
+
+生成画布默认只展示六个业务节点：理解业务目标、编译业务规格、规划应用结构、生成应用原型、验证业务能力、输出可交付版本。内部 runtime node id 只在开发者详情中出现。
+
+验证信号：
+
+- UI 默认节点标题为业务中文。
+- 每个业务节点可映射到现有 V1 runtime artifacts。
+- 业务节点卡片展示状态、摘要、对象数量和最近事件。
+- `node_id`、artifact path、raw JSON 不作为默认主文案。
+
+### AC-075 CanvasObject 投影可从 artifacts 重建
+
+Dashboard 必须能从 run artifacts、`NodeContext`、preview status、evaluation artifacts 和 `adjustment_events` 生成 `CanvasObject` 投影。
+
+验证信号：
+
+- 同一 run 在刷新页面后对象列表一致。
+- 删除浏览器 localStorage 后对象事实不丢失。
+- `CanvasObject` 包含 `object_id`、`object_type`、`title`、`summary`、`status`、`source_refs`、`artifact_refs`、`evidence_refs` 和 `actions`。
+- 投影层不写入事实源；事实仍以 artifacts 为准。
+
+### AC-076 CanvasSelectionContext 注入右侧 Agent
+
+用户点击任意画布对象后，右侧 Agent 请求必须携带 `CanvasSelectionContext`。
+
+验证信号：
+
+- 请求中包含 `selection_id`、`selection_type`、`object_type`、`business_node`、`focus_surface`、`visible_related_objects` 和 `allowed_actions`。
+- `selection_id` 必须引用当前 run 的对象，不允许跨 run 引用。
+- Agent 回答围绕当前对象和证据，不退化为泛泛解释当前节点。
+
+### AC-077 Code Agent 过程业务化表达
+
+生成应用原型节点必须把 `CodexProgressEvent` 映射成业务进度。
+
+验证信号：
+
+- `command_execution` 显示为“正在检查应用代码语法”“正在模拟用户操作”“正在验证业务能力”等业务文案。
+- 30 秒无新事件时显示“Code Agent 仍在运行，暂无新输出”。
+- 超过 5 分钟时展示最长耗时阶段、最近事件时间和查看日志入口。
+- 不默认展示完整 stdout、prompt、源码或 secret。
+
+### AC-078 对象化 AgentAction
+
+右侧 Agent 必须支持 V2 对象化动作：`explain_object`、`suggest_object_patch`、`repair_generated_app`、`verify_capability`、`compare_canvas_objects`、`promote_to_generation_rule` 和 `rerun_business_node`。
+
+验证信号：
+
+- 所有 V2 action 包含 `source_object_id`。
+- 修改事实源的 action 必须 `requires_confirmation=true`。
+- `repair_generated_app` 必须映射到 `patch_app` 或 `delegate_code_repair`，不能直接写文件。
+- `suggest_object_patch` 不直接改旧 artifact，只进入 override 或新 run。
+
+### AC-079 ContextObject 支持 PRD 之外上下文
+
+工作台必须能记录和展示 PRD 之外的上下文对象，包括业务场景、样例数据、领域知识、参考应用、用户反馈、工具能力和策略约束。
+
+验证信号：
+
+- `ContextObject` 包含 `context_id`、`context_type`、`title`、`summary`、`source`、`confidence`、`used_by_nodes` 和 `linked_objects`。
+- 用户确认的上下文优先于模型推断。
+- 上下文对象被节点使用时留下引用。
+- 上下文对象不得包含 API key、完整 `.env` 或未授权文件正文。
+
+### AC-080 版本和调优回放
+
+生成画布必须能展示初始生成、发布快照、patch、delegate repair、回滚和规则提升候选。
+
+验证信号：
+
+- 每次 `patch_app` 或 `delegate_code_repair` 成功后形成可点击版本事件。
+- 版本事件展示用户输入、Agent 判断、diff、验证结果、预览状态和是否可回滚。
+- 成功修复可建议 `promote_to_generation_rule`，但不自动修改模板、benchmark 或 verifier。
+
+### AC-081 画布对象编辑边界
+
+业务对象编辑、已发布应用修复和生成规则提升必须走不同协议。
+
+验证信号：
+
+- 业务对象编辑生成 `object_patch` / `user_override`，需要从最小影响业务节点重跑。
+- 已发布应用修复走 `patch_app` 或 `delegate_code_repair`。
+- 生成规则提升只创建候选记录，必须用户确认后进入后续实施。
+- 任何路径都不得直接覆盖 `codex/` 原始输出或 worktree。
+
+### AC-082 V2 Secret 边界
+
+画布对象、Agent prompt、SSE、日志摘要、preview status 和 diff 预览不得泄露 secret。
+
+验证信号：
+
+- API key、完整 `.env`、进程环境和未授权文件正文不会进入 `CanvasObject`、`ContextObject` 或 `CanvasSelectionContext`。
+- provider health 只展示配置状态、provider 名和模型名。
+- 日志和 progress 默认截断并脱敏。
+
+### AC-083 V2 分阶段实施可验收
+
+V2 生成画布必须按 V2.0、V2.1、V2.2 分阶段交付，每个阶段都有独立输入、输出、验证命令和停止条件。
+
+验证信号：
+
+- V2.0 至少交付 `CanvasProjectionBuilder`、只读 Canvas API、六个业务节点、对象列表、对象详情和 `CanvasSelectionContext`。
+- V2.1 至少交付对象画布主视图、Code Agent 业务进度卡、对象化 AgentAction、确认卡，以及 `patch_app` / `delegate_code_repair` 映射。
+- V2.2 至少交付 `ContextObject`、版本回放、规则提升候选、secret/path 安全回归和端到端验收记录。
+- `docs/app_generation_implementation_task_plan.md` 必须包含 T29.0 到 T31.6 的子任务，每个子任务包含输入、中间过程、输出、验证命令和停止条件。
+- 任何子任务不得要求引入数据库、替换 Team Runtime、绕过人工确认 gate 或直接修改 `codex/` 原始输出。
+
+### AC-084 V2 任务与验收覆盖矩阵
+
+实施前必须能从文档追踪每个关键验收标准对应的任务切片，避免出现“有验收无任务”或“有任务无验收”。
+
+验证信号：
+
+- AC-074 由 T29.3、T29.7 覆盖。
+- AC-075 由 T29.1、T29.2、T29.4、T29.5 覆盖。
+- AC-076 由 T30.3、T30.4 覆盖。
+- AC-077 由 T30.1、T30.2 覆盖。
+- AC-078 由 T30.4、T30.5、T30.7 覆盖。
+- AC-079 由 T31.1、T31.2 覆盖。
+- AC-080 由 T31.3、T31.4、T31.6 覆盖。
+- AC-081 由 T30.5、T30.7、T31.4 覆盖。
+- AC-082 由 T31.5 覆盖。
+- AC-083 由 T29.0 到 T31.6 的任务表覆盖。
+
+### AC-085 V2 文档静态验收
+
+文档同步完成后运行：
+
+```bash
+rg -n "T29.0|T29.7|T30.7|T31.6|CanvasProjectionBuilder|CanvasSelectionContext|ContextObject|业务节点轨道|Code Agent 长过程|规则提升|AC-074|AC-085" docs/app_generation*.md
+git diff -- docs/app_generation*.md
+```

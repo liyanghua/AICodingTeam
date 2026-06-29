@@ -1325,6 +1325,176 @@ node --check dashboard/app_generation.js
 - 进度事件可能泄露 secret 或完整源码。
 - `delegate_code_repair` 的 progress API 需要引入数据库或外部队列。
 
+## T29: V2.0 CanvasObject 投影与业务节点轨道
+
+### 输入
+
+- `docs/app_generation_canvas_experience_spec.md` 的 V2.0 范围。
+- 现有 `build_app_generation_nodes()`、`build_app_generation_node_context()`、run artifacts、preview status 和 evaluation artifacts。
+- AC-074、AC-075、AC-076、AC-077。
+
+### 中间过程
+
+1. 新增只读 `CanvasProjection` 聚合层，从 run artifacts 投影业务节点和 `CanvasObject`。
+2. 固定六个业务节点：理解业务目标、编译业务规格、规划应用结构、生成应用原型、验证业务能力、输出可交付版本。
+3. 建立 V1 runtime node 到 V2 业务节点的映射表。
+4. 从 `input_prd.md`、`app_contract.json`、`planning/*`、`generated_apps/<slug>/`、`codex/app_runtime_verification.json`、`benchmark_diff.md`、`agqs_score.json`、`adjustment_events.jsonl` 提取对象摘要。
+5. 新增只读 API：`GET /api/app-generation/runs/<run_id>/canvas`。
+6. 前端在现有中间区增加“业务对象”视图，不大改布局。
+7. Code Agent 进度卡片使用业务文案映射，不默认展示 raw stdout。
+
+### 输出
+
+- `CanvasObject` 投影 API。
+- 业务节点轨道数据结构。
+- 前端业务对象 tab / panel。
+- `CanvasSelectionContext` 前端状态。
+
+### 评估与验证
+
+```bash
+python3 -m unittest tests.test_dashboard tests.test_codex_executor -v
+node --check dashboard/app_generation.js
+```
+
+验收信号：
+
+- 页面刷新后对象投影可从 artifacts 重建。
+- 业务节点默认展示中文标题。
+- 点击对象后右侧 Agent 请求带 `CanvasSelectionContext`。
+- 30 秒无 Codex progress 事件时展示业务等待提示。
+
+### 停止条件
+
+- 对象投影需要依赖浏览器 localStorage 才能重建。
+- 对象投影需要读取 secret、完整 `.env`、完整源码或完整 stdout。
+- 无法稳定映射 V1 node 到六个业务节点。
+
+### 可执行子任务
+
+| 子任务 | 输入 | 中间过程 | 输出 | 验证命令 | 停止条件 |
+| --- | --- | --- | --- | --- | --- |
+| T29.0 固化 V2 fixture run | 历史 app generation run、Dingdang benchmark run、成功/失败 repair 样本 | 整理最小 fixture：PRD、contract、planning、codex progress、verification、preview、patch/repair record | 可复用 fixture helper | `python3 -m unittest tests.test_app_generation_canvas -v` | fixture 缺少 implementation、preview 或 repair 主路径 |
+| T29.1 Canvas schema 测试 | V2 体验规范、技术方案、AC-074 到 AC-077 | 先写失败测试，覆盖 projection、business node、object、redaction 和状态枚举 | `tests/test_app_generation_canvas.py` | `python3 -m unittest tests.test_app_generation_canvas -v` | 测试失败原因不是缺实现，而是 fixture 或断言不稳定 |
+| T29.2 `CanvasProjectionBuilder` | run artifacts、preview status、evaluation、adjustment events | 新增只读 builder，聚合、脱敏、路径归一、生成 warning | `CanvasProjection` dict | `python3 -m unittest tests.test_app_generation_canvas -v` | builder 需要写事实源或读取 secret |
+| T29.3 六个业务节点映射 | V1 runtime nodes、`build_app_generation_nodes()` 输出 | 固定中文业务节点，维护 runtime refs、状态、摘要、对象计数、最近事件 | `business_nodes[]` | `python3 -m unittest tests.test_app_generation_canvas -v` | 默认 UI 仍必须展示英文 node id 才能理解状态 |
+| T29.4 `CanvasObject` 抽取 | PRD、contract、planning、codex、verification、preview、patch、repair artifacts | 抽取业务目标、场景、能力、页面、数据、provider、预览、缺口、修复候选 | `objects[]`、`edges[]` | `python3 -m unittest tests.test_app_generation_canvas -v` | object id 不能稳定重建或对象摘要需要完整源码 |
+| T29.5 对象详情构建 | `object_id`、projection、artifact/evidence refs | 校验当前 run、返回摘要、证据、可编辑字段、allowed actions、受控 preview refs | `CanvasObjectDetail` | `python3 -m unittest tests.test_dashboard -v` | 跨 run object id 无法拒绝 |
+| T29.6 Canvas API | projection builder、run id、object id | 增加只读路由、404/403、path confinement 和 redaction | `/canvas`、`/canvas/objects/<object_id>` | `python3 -m unittest tests.test_dashboard -v` | API 会泄露 `.env`、API key 或未授权路径 |
+| T29.7 V2.0 前端入口 | Canvas API、现有 V1 中间区 | 增加业务对象视图、对象选择状态、详情面板和 V1 降级 | 业务节点轨道 + 对象详情 | `node --check dashboard/app_generation.js` | Canvas API 失败会导致 V1 工作台不可用 |
+
+## T30: V2.1 生成画布主视图与对象化 AgentAction
+
+### 输入
+
+- T29 的 `CanvasProjection` 和 `CanvasSelectionContext`。
+- `docs/app_generation_agent_bridge_spec.md` 的 V2 AgentIntent / AgentAction。
+- AC-078、AC-080、AC-081。
+
+### 中间过程
+
+1. 将中间区主视图升级为“业务节点轨道 + 对象画布 + 对象详情”。
+2. 支持对象选中、相关对象跳转、对象状态筛选和证据预览。
+3. AgentBridge 在 `AgentPromptContext` 中注入当前 `CanvasObject` 和 `CanvasSelectionContext`。
+4. 扩展 `intent=auto`：对象选中时优先解析为 `explain_object`、`repair_generated_app`、`verify_capability`、`compare_canvas_objects` 或 `edit_business_object`。
+5. 将 `repair_generated_app` 映射到现有 `patch_app` / `delegate_code_repair`。
+6. 将 `suggest_object_patch` 映射到 user override 或最小业务节点重跑。
+7. 在画布中展示 patch、repair、回滚和规则提升候选事件。
+
+### 输出
+
+- 生成画布主视图。
+- 对象详情区。
+- 对象化 AgentAction 渲染和确认卡。
+- 版本/调优事件轨道。
+
+### 评估与验证
+
+```bash
+python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v
+node --check dashboard/app_generation.js
+```
+
+验收信号：
+
+- 用户点击能力缺口后询问“修复这个问题”，Agent 生成 `repair_generated_app`，不是泛泛解释节点。
+- 用户点击业务能力后询问“验证一下”，Agent 生成 `verify_capability`。
+- 修改事实源的动作必须出现确认卡。
+- `patch_app` / `delegate_code_repair` 仍走 V1 受控 API 和证据落盘。
+
+### 停止条件
+
+- V2 action 绕过 V1 受控 API。
+- Agent 可以直接写 worktree、`codex/` 或 secret 文件。
+- 对象画布无法解释 action 对哪个对象生效。
+
+### 可执行子任务
+
+| 子任务 | 输入 | 中间过程 | 输出 | 验证命令 | 停止条件 |
+| --- | --- | --- | --- | --- | --- |
+| T30.1 Code Agent 业务进度卡 | `codex/coder_progress*.json`、SSE `node_progress`、`execution_progress` | 将命令/验证/stdout 事件映射为业务文案，增加 30 秒无事件提示 | implementation timeline | `python3 -m unittest tests.test_codex_executor tests.test_dashboard -v` | 进度事件可能泄露完整 prompt、源码或 secret |
+| T30.2 修复进度卡 | `app_repairs/<repair_id>/progress*.json`、delegate repair status | 展示“准备候选 diff / 正在验证 / diff ready / failed” | 右侧 Code Agent 修复进度卡 | `python3 -m unittest tests.test_dashboard -v` | delegate repair 等待期间仍只有静态“执行中” |
+| T30.3 `CanvasSelectionContext` 注入 | selected object、business node、surface、allowed actions | 前端 Agent 请求携带 canvas selection，后端校验 selection 属于当前 run | Agent interaction payload | `python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v` | 可以引用跨 run object 或未授权 object |
+| T30.4 对象化 intent 路由 | selection context、用户消息、provider | `intent=auto` 优先按对象和消息解析，失败再回退 V1 node context | `explain_object`、`repair_generated_app`、`verify_capability` 等 action | `python3 -m unittest tests.test_agent_bridge -v` | “修复这个预览错误”仍被解释成节点说明 |
+| T30.5 CodeAgentExecutor 权威收口 | AgentAction、patch/delegate APIs | 复杂代码修改走 `delegate_code_repair`，简单补丁走受控 `patch_app`，均需确认和证据 | 可确认 repair action | `python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v` | PI-Agent 直接生成并执行代码修改 |
+| T30.6 对象画布主视图 | `business_nodes[]`、`objects[]`、`edges[]` | 渲染对象簇、状态筛选、相关对象跳转、证据入口 | 生成画布主视图 | `node --check dashboard/app_generation.js` | 右侧 Agent 被预览或画布压缩到不可用 |
+| T30.7 对象化确认卡 | AgentAction、selected object、diff/verification plan | 展示问题来源、影响对象、最小修改目标、确认/取消/回滚入口 | action card | `python3 -m unittest tests.test_dashboard -v` | 确认前会写文件或确认后无验证证据 |
+
+## T31: V2.2 ContextObject、版本回放与规则提升候选
+
+### 输入
+
+- T29/T30 的画布对象和对象化 AgentAction。
+- `docs/app_generation_canvas_experience_spec.md` 的 `ContextObject`、版本和回放契约。
+- AC-079、AC-080、AC-082。
+
+### 中间过程
+
+1. 新增 `ContextObject` 投影，支持业务场景、样例数据、领域知识、参考应用、用户反馈、工具能力和策略约束。
+2. 支持用户在工作台登记上下文对象，并记录来源、可信度、使用节点和关联对象。
+3. 将 benchmark、reference app、用户反馈和 preview 缺口转为上下文或能力缺口对象。
+4. 增加版本线：初始生成、发布快照、patch、delegate repair、rollback 和 promote candidate。
+5. `promote_to_generation_rule` 只创建候选记录，不自动改模板、benchmark 或 verifier。
+6. 所有上下文和版本对象都必须脱敏并可从 artifacts 重建。
+
+### 输出
+
+- `ContextObject` 投影和登记 API。
+- 版本回放 UI。
+- 规则提升候选记录。
+- 上下文对象与业务节点/能力对象的引用关系。
+
+### 评估与验证
+
+```bash
+python3 -m unittest tests.test_dashboard tests.test_agent_bridge tests.test_app_generation -v
+node --check dashboard/app_generation.js
+```
+
+验收信号：
+
+- PRD 之外的场景、样例数据和用户反馈可作为对象展示。
+- 上下文对象被节点使用时能看到引用。
+- 版本线展示每次 patch/repair 的用户输入、diff、验证结果和预览状态。
+- 规则提升必须是候选状态，不能自动修改上游生成规则。
+
+### 停止条件
+
+- 上下文对象可能泄露 API key 或未授权文件正文。
+- 版本回放无法从 artifacts 重建。
+- 规则提升绕过用户确认或直接改上游代码。
+
+### 可执行子任务
+
+| 子任务 | 输入 | 中间过程 | 输出 | 验证命令 | 停止条件 |
+| --- | --- | --- | --- | --- | --- |
+| T31.1 `ContextObject` 投影 | PRD、benchmark、reference app、用户反馈、Project Skills、工具调用 | 抽取场景、样例数据、知识、工具能力和策略约束，记录来源和可信度 | `context_objects[]` | `python3 -m unittest tests.test_app_generation_canvas tests.test_dashboard -v` | 上下文对象需要保存 API key 或未授权正文 |
+| T31.2 上下文登记入口 | 用户补充信息、当前 selected object | 记录用户确认的 context，关联 used_by_nodes 和 linked_objects | context registration artifact/API | `python3 -m unittest tests.test_dashboard -v` | 用户上下文只能存在浏览器本地 |
+| T31.3 版本线聚合 | publish record、patch index、repair result、rollback、adjustment events | 生成初始生成、发布、patch、repair、rollback、promotion candidate 事件 | `versions[]` | `python3 -m unittest tests.test_app_generation_canvas -v` | 版本事件无法从 artifacts 重建 |
+| T31.4 规则提升候选 | 成功 patch/repair、能力缺口、验证结果、用户确认 | 创建候选记录，描述适用条件、来源和验证证据，不改上游规则 | promotion candidate object | `python3 -m unittest tests.test_dashboard tests.test_agent_bridge -v` | 候选创建会自动修改模板、benchmark 或 verifier |
+| T31.5 Secret 与路径边界回归 | projection、context、Agent payload、preview/repair logs | 增加泄露样本和越界路径测试 | 安全回归测试 | `python3 -m unittest tests.test_app_generation_canvas tests.test_dashboard -v` | 任一接口暴露 `.env`、API key、完整 prompt 或越界文件 |
+| T31.6 端到端验收 | Dingdang run、普通 PRD run、一次失败后修复 run | 打开 run、查看业务节点、选中缺口、Agent 修复、Code Agent diff、确认、预览验证 | V2 验收记录 | `python3 -m unittest discover -s tests -v` | 用户必须理解工程 node id 才能完成修复闭环 |
+
 ## 总体验证门
 
 所有任务完成后运行：
@@ -1346,7 +1516,7 @@ python3 -m unittest discover -s tests -v
 推荐顺序：
 
 ```text
-T1 -> T2 -> T3 -> T4 -> T5 -> T6 -> T7 -> T8 -> T9 -> T10 -> T11 -> T12 -> T13 -> T14 -> T15 -> T16 -> T17 -> T18 -> T19 -> T20 -> T21 -> T22 -> T23 -> T24 -> T25 -> T26 -> T27
+T1 -> T2 -> T3 -> T4 -> T5 -> T6 -> T7 -> T8 -> T9 -> T10 -> T11 -> T12 -> T13 -> T14 -> T15 -> T16 -> T17 -> T18 -> T19 -> T20 -> T21 -> T22 -> T23 -> T24 -> T25 -> T26 -> T27 -> T28 -> T29 -> T30 -> T31
 ```
 
-T1 到 T3 建立 artifact 和 gate 基础；T4 暴露 CLI；T5 和 T6 让 Codex 生成结果可控且可验证；T7 补 Dashboard 操作面；T8 做端到端验收；T9 用真实实现回写文档。T10 到 T13 建立工作台节点、对比、AgentBridge 和重跑基础；T14 建立三栏工作台；T15 打磨中间节点事实层的信息架构；T16 增加受控文件预览能力；T17 补列宽伸缩和预览插位规则。T18 把 PiAgentProvider 从占位升级为 `pi --mode rpc` 子进程真实接入；T19 让右侧对话走 SSE 通道并支持工具调用流；T20 提供 in-workbench PRD 上传与节点 SSE 实时观测，闭合 PRD → 节点流 → Agent 协作的完整链路；T21 建立 AGQS 评估体系、Dingdang benchmark 和 auto-research 优化闭环，为后续多 variant 对比提供可审计基准；T22 收口右侧 Agent 操作协议，让 PI-Agent 围绕当前卡片和中间产物协作，并通过可确认 AgentAction 改变生成链路；T23 对齐真实 PI RPC 事件协议，避免答案文本、thinking 和 tool call 被错误丢弃或误渲染；T24 补齐 Provider 上下文增强和 `intent=auto` 路由，让右侧 Agent 能回答节点、输入、输出和重跑类自然语言请求；T25 把 benchmark parity 变成可注入、可评分、可阻断的生成质量门禁；T26 先把短期 `patch_app` 做到可预测、可失败、可解释；T27 再把复杂应用修复收敛到唯一 `CodeAgentExecutor`，让右侧 PI-Agent 从“尝试写代码”变成“理解诉求并委托代码修复”。
+T1 到 T3 建立 artifact 和 gate 基础；T4 暴露 CLI；T5 和 T6 让 Codex 生成结果可控且可验证；T7 补 Dashboard 操作面；T8 做端到端验收；T9 用真实实现回写文档。T10 到 T13 建立工作台节点、对比、AgentBridge 和重跑基础；T14 建立三栏工作台；T15 打磨中间节点事实层的信息架构；T16 增加受控文件预览能力；T17 补列宽伸缩和预览插位规则。T18 把 PiAgentProvider 从占位升级为 `pi --mode rpc` 子进程真实接入；T19 让右侧对话走 SSE 通道并支持工具调用流；T20 提供 in-workbench PRD 上传与节点 SSE 实时观测，闭合 PRD → 节点流 → Agent 协作的完整链路；T21 建立 AGQS 评估体系、Dingdang benchmark 和 auto-research 优化闭环，为后续多 variant 对比提供可审计基准；T22 收口右侧 Agent 操作协议，让 PI-Agent 围绕当前卡片和中间产物协作，并通过可确认 AgentAction 改变生成链路；T23 对齐真实 PI RPC 事件协议，避免答案文本、thinking 和 tool call 被错误丢弃或误渲染；T24 补齐 Provider 上下文增强和 `intent=auto` 路由，让右侧 Agent 能回答节点、输入、输出和重跑类自然语言请求；T25 把 benchmark parity 变成可注入、可评分、可阻断的生成质量门禁；T26 先把短期 `patch_app` 做到可预测、可失败、可解释；T27 再把复杂应用修复收敛到唯一 `CodeAgentExecutor`，让右侧 PI-Agent 从“尝试写代码”变成“理解诉求并委托代码修复”；T28 让 Code Agent 长过程可观测；T29-T31 将 V1 工作台逐步升级为 V2 生成画布。

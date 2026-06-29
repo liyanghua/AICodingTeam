@@ -734,6 +734,92 @@ Agent 转成 `AgentAction` 时的具体 action type（`patch_artifact` / `patch_
 
 交互焦点变化本身不改变 `NodeContext.context_revision`，因为它不是节点事实源。只有 artifact 引用、hash、variant 或 override 变化时，`NodeContext.context_revision` 才变化。
 
+## V2 Canvas Context 扩展
+
+V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_generation_canvas_experience_spec.md)。V2 在 `NodeContext` 之上增加只读画布投影和选中对象上下文。
+
+### CanvasObject 摘要
+
+`NodeContext` 可以携带当前节点相关的 `canvas_objects` 摘要，用于右侧 Agent 和对象详情区理解业务对象。`canvas_objects` 是从 run artifacts 投影出来的只读摘要，不是新的事实源。
+
+```json
+{
+  "canvas_objects": [
+    {
+      "object_id": "capability:image_generation.single",
+      "object_type": "capability",
+      "title": "单张图片生成",
+      "summary": "用户可以基于选中的 Prompt 生成单张主图。",
+      "status": "needs_attention",
+      "owner_business_node": "验证业务能力",
+      "source_refs": ["input_prd.md", "app_contract.json"],
+      "artifact_refs": ["generated_apps/input-prd/public/app.js"],
+      "evidence_refs": ["codex/app_runtime_verification.json"],
+      "actions": ["explain_object", "repair_generated_app", "verify_capability"]
+    }
+  ]
+}
+```
+
+规则：
+
+- `canvas_objects` 只包含摘要和 refs，不包含完整源码、完整 artifact、完整 stdout、完整 prompt 或 secret。
+- `object_id` 必须稳定，可跨节点引用。
+- `object_type` 必须来自 V2 规范的固定枚举。
+- `status` 必须来自 artifacts、preview status、evaluation artifacts 或 adjustment events，不得由前端随意伪造。
+- 对象摘要变化不一定改变节点事实；只有其底层 artifact refs、hash、override 或 evaluation 变化时，`context_revision` 才变化。
+
+### CanvasSelectionContext
+
+`CanvasSelectionContext` 是 `AgentInteractionContext` 的 V2 扩展，用于描述用户当前选中的业务对象。
+
+```json
+{
+  "canvas_selection": {
+    "selection_id": "capability:image_generation.single",
+    "selection_type": "canvas_object",
+    "object_type": "capability",
+    "business_node": "验证业务能力",
+    "focus_surface": "object_detail",
+    "selected_text": "",
+    "visible_related_objects": [
+      "provider_config:openrouter",
+      "preview_session:current",
+      "capability_gap:gpt-image-1-not-configured"
+    ],
+    "allowed_actions": [
+      "explain_object",
+      "repair_generated_app",
+      "verify_capability",
+      "compare_versions"
+    ]
+  }
+}
+```
+
+规则：
+
+- `CanvasSelectionContext` 不属于节点事实源，焦点变化不写 run artifacts。
+- `selection_id` 必须引用当前 run 的 `CanvasObject`，不得引用跨 run 或未授权对象。
+- `allowed_actions` 必须由 Dashboard 根据对象类型、run 状态、preview 状态和权限计算；Provider 不得自行扩权。
+- 当 `selection_type="canvas_object"` 时，右侧 Agent 默认围绕对象回答，而不是退回到节点解释。
+- 用户编辑业务对象时，Agent 只能生成 `suggest_object_patch` / `edit_business_object`，确认后进入 user override 或新 run；不能直接覆盖旧 artifact。
+
+### 与 V1 字段关系
+
+| V1 字段 | V2 投影 |
+| --- | --- |
+| `inputs` / `outputs` | `artifact` 对象、source refs、evidence refs |
+| `skills` | `tool_call` / `tool_capability` 对象 |
+| `tool_calls` | `tool_call` 对象 |
+| `usage` | 对象详情的成本/耗时摘要 |
+| `scores` | `capability`、`delivery_version` 或 `benchmark_result` 对象评分 |
+| `risks` | `capability_gap` 或 `risk` 摘要 |
+| `preview_status` | `preview_session` 对象 |
+| `generated_app_capability_gaps` | `capability_gap` 对象 |
+| `execution_progress` | `生成应用原型` 业务节点进度 |
+| `code_repair_progress` | `repair_candidate` 对象进度 |
+
 ## Agent Message 响应
 
 ```json

@@ -113,6 +113,7 @@ def _repair_context(repair_request: dict[str, Any], *, run_dir: Path, repo_root:
         brief=brief,
         inputs={
             "app_slug": app_slug,
+            "repair_id": str(repair_request.get("repair_id") or "").strip(),
             "repair_request": repair_request,
             "allowed_paths": [f"generated_apps/{app_slug}"] if app_slug else ["generated_apps/"],
             "verification_commands": [str(item) for item in verification if item],

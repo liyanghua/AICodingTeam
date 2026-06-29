@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">AI native</p>
           <h1>PRD生成应用 · 可观测工作台</h1>
-          <p class="subtitle">用一份 PRD 触发完整生成链路，并对每个节点的输入、过程、产物、Skill、tool call、usage、风险与重跑关系做事实级观察。</p>
+          <p class="subtitle">用一份 PRD 触发应用生成，并在业务画布上观察目标、规格、结构、原型、验证和交付版本；工程细节保留在可展开证据层。</p>
         </div>
         <nav class="app-generation-nav">
           <a class="ghost small" href="/index.html">返回主工作台</a>
@@ -23,140 +23,198 @@
         <aside id="app-generation-task-list" class="app-generation-task-list" aria-label="任务记录与对比组">
           <div class="panel-header">
             <h2>任务与对比组</h2>
-            <button id="app-generation-refresh" type="button" class="ghost small">刷新</button>
+            <div class="app-generation-task-actions">
+              <button id="app-generation-new-task" type="button" class="primary small">新建任务</button>
+              <button id="app-generation-refresh" type="button" class="ghost small">刷新</button>
+            </div>
           </div>
-          <form id="app-generation-upload-form" class="app-generation-upload-form">
-            <label for="app-generation-upload-prd">上传 PRD</label>
-            <textarea id="app-generation-upload-prd" placeholder="# App Title&#10;&#10;在此粘贴 PRD 内容…" rows="4"></textarea>
-            <div class="app-generation-upload-file-row">
-              <input type="file" id="app-generation-upload-file" accept=".md,.markdown,.txt" />
-              <label for="app-generation-upload-file" class="file-upload-label">或选择 PRD 文件 (.md)</label>
-            </div>
-            <div class="app-generation-upload-toolbar">
-              <label>
-                Executor:
-                <select id="app-generation-upload-executor">
-                  <option value="codex">Codex</option>
-                  <option value="llm">LLM</option>
-                  <option value="rule">Rule</option>
-                </select>
-              </label>
-              <label>
-                Provider:
-                <select id="app-generation-upload-provider">
-                  <option value="default">default</option>
-                  <option value="aicodemirror">aicodemirror</option>
-                </select>
-              </label>
-              <label>
-                Model:
-                <select id="app-generation-upload-model"></select>
-              </label>
-              <button type="submit" class="primary small">启动生成</button>
-            </div>
-            <p id="app-generation-upload-status" class="upload-status"></p>
-          </form>
           <div id="app-generation-runs" class="app-generation-runs"></div>
         </aside>
 
-        <section id="app-generation-node-workspace" class="app-generation-node-workspace" aria-label="节点流与节点详情">
-          <div class="app-generation-pipeline">
-            <div class="panel-header">
-              <h2 id="app-generation-pipeline-title">节点流</h2>
-              <span id="app-generation-pipeline-meta" class="meta"></span>
-            </div>
-            <div id="app-generation-node-list" class="app-generation-node-list" role="list"></div>
-          </div>
-
+        <section id="app-generation-node-workspace" class="app-generation-node-workspace app-generation-canvas-first" aria-label="生成画布与工程证据">
           <article id="app-generation-node-detail" class="app-generation-node-detail" aria-live="polite">
-            <header class="app-generation-detail-header">
-              <div>
-                <p class="eyebrow" id="app-generation-node-kicker">选择左侧任务后查看节点详情</p>
-                <h2 id="app-generation-node-title">节点详情</h2>
-                <p id="app-generation-node-summary" class="summary-text"></p>
-              </div>
-              <span id="app-generation-node-status" class="mini-status status-muted">未选择</span>
-            </header>
-
-            <section class="app-generation-detail-card app-generation-app-preview-controls" data-focus-card="app_preview">
+            <section id="app-generation-canvas-panel" class="app-generation-detail-card app-generation-canvas-panel" data-focus-card="canvas_object">
               <div class="panel-header">
-                <h3>应用预览与发布</h3>
-              </div>
-              <div class="app-generation-app-preview-actions">
-                <button id="app-generation-publish-btn" type="button" class="ghost small" disabled>发布应用快照</button>
-                <button id="app-generation-preview-btn" type="button" class="primary small" disabled>启动应用预览</button>
-              </div>
-              <p id="app-generation-app-preview-status" class="meta"></p>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="timeline">
-              <div class="panel-header">
-                <h3>运行 Timeline</h3>
-                <span id="app-generation-timeline-meta" class="meta"></span>
-              </div>
-              <ol id="app-generation-timeline" class="app-generation-timeline"></ol>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="skill_routing">
-              <div class="panel-header">
-                <h3>Skill 路由</h3>
-              </div>
-              <div id="app-generation-skill-routing" class="summary-text"></div>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="variant_comparison">
-              <div class="panel-header">
-                <h3>变体与对比</h3>
-                <span id="app-generation-node-variant-meta" class="meta"></span>
-              </div>
-              <div id="app-generation-variants" class="app-generation-variants"></div>
-              <p id="app-generation-comparison" class="meta"></p>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="project_skills">
-              <div class="panel-header">
-                <h3>Project Skills</h3>
-              </div>
-              <ul id="app-generation-skills" class="app-generation-list"></ul>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="inputs">
-              <div class="panel-header">
-                <h3>输入</h3>
-              </div>
-              <ul id="app-generation-inputs" class="app-generation-list"></ul>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="outputs">
-              <div class="panel-header">
-                <h3>输出</h3>
-              </div>
-              <ul id="app-generation-outputs" class="app-generation-list"></ul>
-            </section>
-
-            <section class="app-generation-detail-card" data-focus-card="evidence">
-              <div class="panel-header">
-                <h3>Tool calls · Usage · Scores · 风险</h3>
-              </div>
-              <div class="app-generation-evidence-grid">
                 <div>
-                  <h4>Tool calls</h4>
-                  <ul id="app-generation-tool-calls" class="app-generation-list"></ul>
+                  <h3>生成流程</h3>
+                  <p id="app-generation-canvas-meta" class="meta">选择任务后查看业务节点和对象。</p>
                 </div>
-                <div>
-                  <h4>Usage</h4>
-                  <dl id="app-generation-usage" class="app-generation-dl"></dl>
+              </div>
+              <div class="app-generation-business-step-layout">
+                <div class="app-generation-business-step-flow">
+                  <div id="app-generation-pipeline-overview" class="app-generation-pipeline-overview"></div>
+                  <div id="app-generation-business-node-track" class="app-generation-business-node-track" aria-label="业务节点轨道"></div>
                 </div>
-                <div>
-                  <h4>Scores</h4>
-                  <dl id="app-generation-scores" class="app-generation-dl"></dl>
-                </div>
-                <div>
-                  <h4>风险</h4>
-                  <ul id="app-generation-risks" class="app-generation-list"></ul>
+                <div class="app-generation-business-step-detail">
+                  <header class="app-generation-step-detail-header">
+                    <div>
+                      <p class="eyebrow">当前 BusinessStep</p>
+                      <h4 id="app-generation-step-title">PRD 输入</h4>
+                      <p id="app-generation-step-summary" class="summary-text"></p>
+                    </div>
+                    <span id="app-generation-step-status" class="mini-status status-muted">未选择</span>
+                  </header>
+                  <div id="app-generation-step-summary-cards" class="app-generation-step-summary-cards"></div>
+
+                  <section id="app-generation-prd-entry-detail" class="app-generation-step-special app-generation-prd-entry-detail">
+                    <form id="app-generation-upload-form" class="app-generation-upload-form">
+                      <label for="app-generation-upload-prd">上传 PRD</label>
+                      <textarea id="app-generation-upload-prd" placeholder="# App Title&#10;&#10;在此粘贴 PRD 内容…" rows="4"></textarea>
+                      <div class="app-generation-upload-file-row">
+                        <input type="file" id="app-generation-upload-file" accept=".md,.markdown,.txt" />
+                        <label for="app-generation-upload-file" class="file-upload-label">或选择 PRD 文件 (.md)</label>
+                      </div>
+                      <div class="app-generation-upload-toolbar">
+                        <label>
+                          Executor:
+                          <select id="app-generation-upload-executor">
+                            <option value="codex">Codex</option>
+                            <option value="llm">LLM</option>
+                            <option value="rule">Rule</option>
+                          </select>
+                        </label>
+                        <label>
+                          Provider:
+                          <select id="app-generation-upload-provider">
+                            <option value="default">default</option>
+                            <option value="aicodemirror">aicodemirror</option>
+                          </select>
+                        </label>
+                        <label>
+                          Model:
+                          <select id="app-generation-upload-model"></select>
+                        </label>
+                        <button type="submit" class="primary small">启动生成</button>
+                      </div>
+                      <p id="app-generation-upload-status" class="upload-status"></p>
+                    </form>
+                  </section>
+
+                  <section id="app-generation-app-preview-detail" class="app-generation-step-special app-generation-app-preview-controls" data-focus-card="app_preview">
+                    <div class="panel-header">
+                      <h4>应用预览与发布</h4>
+                    </div>
+                    <div class="app-generation-app-preview-actions">
+                      <button id="app-generation-publish-btn" type="button" class="ghost small" disabled>发布应用快照</button>
+                      <button id="app-generation-preview-btn" type="button" class="primary small" disabled>启动应用预览</button>
+                    </div>
+                    <p id="app-generation-app-preview-status" class="meta"></p>
+                  </section>
+
+                  <div class="app-generation-canvas-grid">
+                    <div>
+                      <h4 id="app-generation-canvas-objects-title">当前步骤对象</h4>
+                      <div id="app-generation-canvas-objects" class="app-generation-canvas-objects"></div>
+                    </div>
+                    <div>
+                      <h4 id="app-generation-canvas-object-detail-title">对象详情</h4>
+                      <div id="app-generation-canvas-object-detail" class="app-generation-canvas-object-detail"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
+
+            <details id="app-generation-engineering-evidence" class="app-generation-engineering-evidence">
+              <summary>
+                <span>工程证据层</span>
+                <small>查看原始节点流、执行过程、输入输出、Tool、Usage、Scores 与风险</small>
+              </summary>
+
+              <div class="app-generation-engineering-grid">
+                <div class="app-generation-pipeline">
+                  <div class="panel-header">
+                    <h2 id="app-generation-pipeline-title">工程节点映射</h2>
+                    <label class="meta app-generation-engineering-all-toggle">
+                      <input id="app-generation-show-all-engineering-nodes" type="checkbox" />
+                      查看全部工程节点
+                    </label>
+                    <span id="app-generation-pipeline-meta" class="meta"></span>
+                  </div>
+                  <div id="app-generation-node-list" class="app-generation-node-list" role="list"></div>
+                </div>
+
+                <div class="app-generation-engineering-detail">
+                  <header class="app-generation-detail-header">
+                    <div>
+                      <p class="eyebrow" id="app-generation-node-kicker">选择左侧任务后查看工程证据</p>
+                      <h2 id="app-generation-node-title">工程证据</h2>
+                      <p id="app-generation-node-summary" class="summary-text"></p>
+                    </div>
+                    <span id="app-generation-node-status" class="mini-status status-muted">未选择</span>
+                  </header>
+
+                  <section class="app-generation-detail-card" data-focus-card="timeline">
+                    <div class="panel-header">
+                      <h3>执行过程</h3>
+                      <span id="app-generation-timeline-meta" class="meta"></span>
+                    </div>
+                    <ol id="app-generation-timeline" class="app-generation-timeline"></ol>
+                  </section>
+
+                  <section class="app-generation-detail-card" data-focus-card="skill_routing">
+                    <div class="panel-header">
+                      <h3>Skill 路由</h3>
+                    </div>
+                    <div id="app-generation-skill-routing" class="summary-text"></div>
+                  </section>
+
+                  <section class="app-generation-detail-card" data-focus-card="variant_comparison">
+                    <div class="panel-header">
+                      <h3>变体与对比</h3>
+                      <span id="app-generation-node-variant-meta" class="meta"></span>
+                    </div>
+                    <div id="app-generation-variants" class="app-generation-variants"></div>
+                    <p id="app-generation-comparison" class="meta"></p>
+                  </section>
+
+                  <section class="app-generation-detail-card" data-focus-card="project_skills">
+                    <div class="panel-header">
+                      <h3>Project Skills</h3>
+                    </div>
+                    <ul id="app-generation-skills" class="app-generation-list"></ul>
+                  </section>
+
+                  <section class="app-generation-detail-card" data-focus-card="inputs">
+                    <div class="panel-header">
+                      <h3>输入</h3>
+                    </div>
+                    <ul id="app-generation-inputs" class="app-generation-list"></ul>
+                  </section>
+
+                  <section class="app-generation-detail-card" data-focus-card="outputs">
+                    <div class="panel-header">
+                      <h3>输出</h3>
+                    </div>
+                    <ul id="app-generation-outputs" class="app-generation-list"></ul>
+                  </section>
+
+                  <section class="app-generation-detail-card" data-focus-card="evidence">
+                    <div class="panel-header">
+                      <h3>Tool calls · Usage · Scores · 风险</h3>
+                    </div>
+                    <div class="app-generation-evidence-grid">
+                      <div>
+                        <h4>Tool calls</h4>
+                        <ul id="app-generation-tool-calls" class="app-generation-list"></ul>
+                      </div>
+                      <div>
+                        <h4>Usage</h4>
+                        <dl id="app-generation-usage" class="app-generation-dl"></dl>
+                      </div>
+                      <div>
+                        <h4>Scores</h4>
+                        <dl id="app-generation-scores" class="app-generation-dl"></dl>
+                      </div>
+                      <div>
+                        <h4>风险</h4>
+                        <ul id="app-generation-risks" class="app-generation-list"></ul>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </details>
           </article>
         </section>
 

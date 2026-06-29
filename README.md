@@ -1,13 +1,52 @@
 # growth-dev
 
-Agent Team Runtime plus a benchmark harness for comparing browser automation frameworks on the same XHS-style collection task.
+AI-native Agent Team Runtime for turning business context into gated engineering artifacts, controlled Code Agent runs, review evidence, verification records, and human-confirmed delivery.
+
+The current primary domain is `app_generation`: PRD / business-spec-to-local-app generation for producing runnable, reviewable, and iterated business applications. XHS/browser automation remains a reusable domain pack and historical benchmark, not the whole-project identity.
+
+For the full project map, read [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md).
 
 ## Current status
 
-The deterministic Agent Team Runtime, domain packs, harness, mock site, scoring, report generator, and task package scaffolding are implemented.
-The framework-specific runners are scaffolded as integration points and can be wired once the corresponding packages are installed.
+Implemented foundations include the deterministic Agent Team Runtime, domain packs, Codex executor integration, Project Skills method layer, app-generation domain, observable Dashboard/workbench, preview and repair infrastructure, benchmark harness, scoring, report generation, and task package scaffolding.
+
+The intended business compiler chain is:
+
+```text
+Business strategy documents
+-> document-to-skill compiler
+-> Strategy IR / Skill Spec / Workflow DAG / Data Requirement / Tool Binding / Evidence / Eval
+-> app_generation Business PRD++ / AppSpec / DataSpec / KnowledgeSpec / ToolSpec / EvalSpec
+-> controlled Code Agent generation
+-> local app preview / review / verification / repair
+```
 
 ## Quick start
+
+### Business document to Skill
+
+```bash
+cd document-to-skill-engineering-package
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+python -m doc_to_skill.cli compile \
+  --input examples/source_docs/20260519市场分析洞察元策略.md \
+  --output build/market_insight_skill
+pytest -q
+```
+
+### PRD / business spec to local app
+
+```bash
+python -m growth_dev app generate \
+  --foreground \
+  --executor codex \
+  --prd-text "Todo App：用户可以新增、完成、筛选待办，状态保存在浏览器本地。" \
+  --app-slug todo-prototype
+```
+
+### Agent Team Runtime
 
 ```bash
 python -m growth_dev team init --domain xhs_browser_benchmark
@@ -36,7 +75,11 @@ python -m growth_dev team memory export --run-id <run-id> --vault-dir /path/to/O
 python -m growth_dev review --run-id <run-id>
 python -m growth_dev test --run-id <run-id>
 python -m growth_dev report --run-id <run-id>
+```
 
+### XHS / browser benchmark
+
+```bash
 python -m growth_dev xhs init
 python -m growth_dev xhs serve-mock --port 8787
 python -m growth_dev xhs benchmark --suite mock
@@ -57,7 +100,23 @@ The `team` command turns a single brief into a gated artifact pipeline:
 - `verifier`: `test_report.md`
 - `publisher`: `final_report.md`
 
-Runs are written to `runs/<run_id>/`. Domain packs live under `domains/`; `xhs_browser_benchmark` is the first domain and `web_monitoring` proves the runtime can be reused without changing orchestration code.
+Runs are written to `runs/<run_id>/`. Domain packs live under `domains/`; `xhs_browser_benchmark` is the historical first domain and `web_monitoring` proves the runtime can be reused without changing orchestration code.
+
+`app_generation` is the current P0 domain for product work. The XHS browser benchmark remains a reusable domain pack and benchmark proving the runtime's domain-agnostic shape.
+
+## Document-to-Skill compiler
+
+The `document-to-skill-engineering-package/` package compiles business strategy documents into Agent Runtime assets:
+
+- `Strategy IR`
+- `Skill Spec`
+- `Workflow DAG`
+- `Data Requirement`
+- `Tool Binding`
+- `Evidence Pack`
+- `Eval`
+
+These assets are upstream context for richer `app_generation` flows. They can map into Business PRD++ / AppSpec / DataSpec / KnowledgeSpec / ToolSpec / EvalSpec, but this repository does not currently move the package into `domains/`.
 
 ## Project Skills
 

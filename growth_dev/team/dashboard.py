@@ -26,6 +26,7 @@ from .release import generate_production_readiness, generate_release_readiness, 
 from .github_pr import create_draft_pr, refresh_ci_status
 from .staging import run_staging_rehearsal
 from . import preview
+from .app_generation_canvas import build_canvas_object_detail, build_canvas_projection
 
 
 _DASHBOARD_PROCESSES: list[subprocess.Popen] = []
@@ -524,12 +525,14 @@ def list_app_generation_runs(runs_dir: Path = Path("runs"), limit: int = 50) -> 
     runs: list[dict[str, Any]] = []
     for run in list_dashboard_runs(runs_dir, limit=max(limit * 3, 60)):
         run_id = str(run.get("run_id", ""))
-        if str(run.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID:
-            continue
         run_dir = _safe_run_dir(Path(runs_dir), run_id)
         record = _safe_read_json(run_dir / "team_run_record.json")
         process = _safe_read_json(run_dir / "process.json")
+        if str(run.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID and _process_domain_id(process) != APP_GENERATION_DOMAIN_ID:
+            continue
         inputs = record.get("inputs") if isinstance(record.get("inputs"), dict) else {}
+        if not inputs:
+            inputs = _process_inputs_json(process)
         contract = _safe_read_json(run_dir / "app_contract.json")
         app_slug = str(inputs.get("app_slug") or contract.get("app_slug") or _slug_from_contract(contract))
         comparison_group_id = str(inputs.get("comparison_group_id") or f"cmp-{app_slug or run_id}")
@@ -537,8 +540,9 @@ def list_app_generation_runs(runs_dir: Path = Path("runs"), limit: int = 50) -> 
         rerun_from_node = str(inputs.get("rerun_from_node") or "")
         run.update(
             {
+                "domain_id": APP_GENERATION_DOMAIN_ID,
                 "app_slug": app_slug,
-                "executor": str(record.get("executor", "")),
+                "executor": str(record.get("executor") or _process_command_arg(process, "--executor") or ""),
                 "comparison_group_id": comparison_group_id,
                 "source_run_id": source_run_id,
                 "rerun_from_node": rerun_from_node,
@@ -553,6 +557,47 @@ def list_app_generation_runs(runs_dir: Path = Path("runs"), limit: int = 50) -> 
     return runs[:limit]
 
 
+def _process_command(process: dict[str, Any]) -> list[str]:
+    command = process.get("command") if isinstance(process, dict) else []
+    return [str(item) for item in command] if isinstance(command, list) else []
+
+
+def _process_command_arg(process: dict[str, Any], flag: str) -> str:
+    command = _process_command(process)
+    for index, item in enumerate(command):
+        if item == flag and index + 1 < len(command):
+            return command[index + 1]
+    return ""
+
+
+def _process_domain_id(process: dict[str, Any]) -> str:
+    return _process_command_arg(process, "--domain")
+
+
+def _process_inputs_json(process: dict[str, Any]) -> dict[str, Any]:
+    raw = _process_command_arg(process, "--inputs-json")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _pending_app_generation_record(run_id: str, process: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "domain_id": APP_GENERATION_DOMAIN_ID,
+        "brief": _process_command_arg(process, "--brief"),
+        "status": str(process.get("status") or "starting") if isinstance(process, dict) else "starting",
+        "inputs": _process_inputs_json(process),
+        "executor": _process_command_arg(process, "--executor"),
+        "agent_runs": [],
+        "risk_events": [],
+    }
+
+
 def build_app_generation_nodes(
     run_id: str,
     *,
@@ -565,9 +610,12 @@ def build_app_generation_nodes(
     if not run_dir.exists():
         raise FileNotFoundError(f"Run not found: {run_id}")
     record = _safe_read_json(run_dir / "team_run_record.json")
-    if str(record.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID:
-        raise ValueError(f"Run is not app_generation: {run_id}")
     process = _safe_read_json(run_dir / "process.json")
+    if str(record.get("domain_id", "")) != APP_GENERATION_DOMAIN_ID:
+        if not record and _process_domain_id(process) == APP_GENERATION_DOMAIN_ID:
+            record = _pending_app_generation_record(run_id, process)
+        else:
+            raise ValueError(f"Run is not app_generation: {run_id}")
     inputs = record.get("inputs") if isinstance(record.get("inputs"), dict) else {}
     contract = _safe_read_json(run_dir / "app_contract.json")
     comparison_group_id = str(inputs.get("comparison_group_id") or f"cmp-{str(inputs.get('app_slug') or contract.get('app_slug') or run_id)}")
@@ -635,6 +683,8 @@ def build_app_generation_node_context(
         "usage": _variant_usage(node, selected_variant),
         "scores": node.get("scores", {}),
         "risks": node.get("risks", []),
+        "execution_progress": _execution_progress_summary(run_dir),
+        "code_repair_progress": _code_repair_progress_summary(run_dir),
         "user_overrides": overrides,
         "available_actions": _node_available_actions(node_id),
     }
@@ -760,6 +810,8 @@ def stream_app_generation_agent_message(
     if not run_id or not node_id:
         raise ValueError("node_context must include run_id and node_id")
 
+    yield {"type": "agent_status", "payload": {"phase": "preparing_context", "run_id": run_id, "node_id": node_id}}
+
     current_context = build_app_generation_node_context(
         run_id,
         node_id,
@@ -801,6 +853,8 @@ def stream_app_generation_agent_message(
         return
 
     from growth_dev.team.agent_bridge import stream_agent_message
+
+    yield {"type": "agent_status", "payload": {"phase": "connecting_model", "provider": provider}}
 
     saw_terminal_event = False
     for event in stream_agent_message(
@@ -1607,10 +1661,22 @@ def start_app_generation_delegate_repair(config: DashboardConfig, payload: dict[
         provider=provider_config,
     )
     repair_id = str(payload.get("repair_id") or f"repair-{timestamp_slug()}-{uuid.uuid4().hex[:8]}")
-    result = run_repair(repair_request, run_dir=run_dir, repo_root=repo_root, config=codex_config)
-
     repairs_dir = run_dir / "app_repairs" / repair_id
     repairs_dir.mkdir(parents=True, exist_ok=True)
+    repair_request = {**repair_request, "repair_id": repair_id}
+    _write_repair_progress_event(
+        run_dir,
+        repair_id,
+        {
+            "event_id": f"{repair_id}-0000",
+            "event_type": "stage_started",
+            "status": "running",
+            "title": "已接收修复请求",
+            "summary": "正在准备委托 Code Agent 修复当前已发布应用。",
+        },
+    )
+    result = run_repair(repair_request, run_dir=run_dir, repo_root=repo_root, config=codex_config)
+
     write_json(repairs_dir / "repair_request.json", repair_request)
     write_json(repairs_dir / "repair_result.json", result.to_dict())
     diff_path = run_dir / result.diff_path if result.diff_path else None
@@ -1649,6 +1715,82 @@ def start_app_generation_delegate_repair(config: DashboardConfig, payload: dict[
         "codex_artifacts": result.codex_artifacts,
         "message": result.message,
     })
+
+
+def get_app_generation_delegate_repair_status(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(payload.get("run_id") or "").strip()
+    repair_id = str(payload.get("repair_id") or "").strip()
+    tail = int(payload.get("tail") or 20)
+    if not run_id:
+        raise ValueError("run_id is required")
+    if not repair_id:
+        raise ValueError("repair_id is required")
+    run_dir = _safe_run_dir(Path(config.runs_dir).resolve(), run_id)
+    repairs_dir = run_dir / "app_repairs" / repair_id
+    status = _safe_read_json(repairs_dir / "progress_status.json")
+    progress_path = repairs_dir / "progress.jsonl"
+    events: list[dict[str, Any]] = []
+    if progress_path.exists():
+        lines = progress_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in lines[-max(1, min(tail, 100)):]:
+            try:
+                parsed = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
+    result_path = repairs_dir / "repair_result.json"
+    diff_path = repairs_dir / "candidate.diff"
+    return _redact({
+        "run_id": run_id,
+        "repair_id": repair_id,
+        "status": str(status.get("status") or ("unknown" if not events else events[-1].get("status", "unknown"))),
+        "latest_events": events,
+        "progress_status": status,
+        "result_ready": result_path.exists() or bool(status.get("result_ready")),
+        "diff_ready": diff_path.exists() or bool(status.get("diff_ready")),
+        "risk_events": status.get("risk_events", []) if isinstance(status.get("risk_events"), list) else [],
+        "blockers": status.get("blockers", []) if isinstance(status.get("blockers"), list) else [],
+    })
+
+
+def _write_repair_progress_event(run_dir: Path, repair_id: str, event: dict[str, Any]) -> None:
+    progress_dir = run_dir / "app_repairs" / repair_id
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = progress_dir / "progress.jsonl"
+    normalized = {
+        "schema_version": 1,
+        "run_id": run_dir.name,
+        "operation_id": repair_id,
+        "operation_type": "delegate_code_repair",
+        "node_id": "preview_delivery",
+        "stage": "app_repair",
+        "started_at": now_iso(),
+        "elapsed_ms": 0,
+        **event,
+    }
+    with progress_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_redact(normalized), ensure_ascii=False) + "\n")
+    write_json(
+        progress_dir / "progress_status.json",
+        _redact({
+            "schema_version": 1,
+            "operation_id": repair_id,
+            "operation_type": "delegate_code_repair",
+            "status": str(event.get("status") or "running"),
+            "current_title": str(event.get("title") or ""),
+            "current_summary": str(event.get("summary") or ""),
+            "latest_event_id": str(event.get("event_id") or ""),
+            "latest_event_at": now_iso(),
+            "started_at": now_iso(),
+            "elapsed_ms": 0,
+            "result_ready": False,
+            "diff_ready": False,
+            "artifact_refs": [],
+            "risk_events": [],
+            "blockers": [],
+        }),
+    )
 
 
 def apply_app_generation_delegate_repair(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1790,6 +1932,10 @@ def stream_app_generation_run_events(
     Event shape (matches the right-dialog StreamEvent shape):
       - ``snapshot``: full run + 6-node view (sent once at subscribe time)
       - ``node_state``: emitted whenever a node's ``status`` changes
+      - ``node_progress``: emitted when the code agent writes a new
+        ``coder_progress.jsonl`` row (most-recent event only)
+      - ``heartbeat``: emitted every poll cycle (even with no change) so the
+        client can tell "still computing" from "actually stuck"
       - ``run_finished``: emitted when record.status transitions to a terminal
         state (completed | failed). Generator returns afterwards.
 
@@ -1803,7 +1949,7 @@ def stream_app_generation_run_events(
     if not run_dir.exists():
         raise FileNotFoundError(f"Run not found: {run_id}")
 
-    sleep_fn = sleeper if sleeper is not None else lambda _seconds: None
+    sleep_fn = sleeper if sleeper is not None else time.sleep
 
     snapshot = build_app_generation_nodes(run_id, runs_dir=runs_dir, repo_root=repo_root)
     yield {"type": "snapshot", "payload": snapshot}
@@ -1812,6 +1958,7 @@ def stream_app_generation_run_events(
         for node in snapshot.get("nodes", [])
         if isinstance(node, dict)
     }
+    last_progress_event_id = ""
     last_run_status = str(snapshot.get("run", {}).get("status") or "")
     if last_run_status in {"completed", "failed"}:
         yield {
@@ -1852,6 +1999,35 @@ def stream_app_generation_run_events(
                     },
                 }
 
+        progress_event = _latest_codex_progress_event(run_dir / "codex" / "coder_progress.jsonl")
+        progress_event_id = str(progress_event.get("event_id") or "") if progress_event else ""
+        if progress_event_id and progress_event_id != last_progress_event_id:
+            last_progress_event_id = progress_event_id
+            yield {
+                "type": "node_progress",
+                "payload": {
+                    "run_id": run_id,
+                    "node_id": "implementation",
+                    "operation_id": progress_event.get("operation_id", "implementation-coder"),
+                    "event": progress_event,
+                },
+            }
+
+        running_node_id = ""
+        for node in current.get("nodes", []):
+            if isinstance(node, dict) and str(node.get("status") or "") == "running":
+                running_node_id = str(node.get("id") or "")
+                break
+        yield {
+            "type": "heartbeat",
+            "payload": {
+                "run_id": run_id,
+                "ts": now_iso(),
+                "running_node": running_node_id,
+                "last_event_id": last_progress_event_id,
+            },
+        }
+
         run_status = str(current.get("run", {}).get("status") or "")
         if run_status in {"completed", "failed"} and run_status != last_run_status:
             last_run_status = run_status
@@ -1861,6 +2037,99 @@ def stream_app_generation_run_events(
             }
             return
         last_run_status = run_status
+
+
+def _latest_codex_progress_event(progress_path: Path) -> dict[str, Any]:
+    if not progress_path.exists():
+        return {}
+    try:
+        lines = progress_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _read_progress_events_tail(progress_path: Path, *, tail: int = 5) -> list[dict[str, Any]]:
+    if not progress_path.exists():
+        return []
+    try:
+        lines = progress_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    events: list[dict[str, Any]] = []
+    for line in lines[-max(1, min(tail, 50)):]:
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            events.append(parsed)
+    return _redact(events)
+
+
+def _execution_progress_summary(run_dir: Path) -> dict[str, Any]:
+    progress_path = run_dir / "codex" / "coder_progress.jsonl"
+    status_path = run_dir / "codex" / "coder_progress_status.json"
+    status = _safe_read_json(status_path)
+    events = _read_progress_events_tail(progress_path, tail=5)
+    if not status and not events:
+        return {}
+    latest = events[-1] if events else {}
+    summary = {
+        "operation_id": str(status.get("operation_id") or latest.get("operation_id") or "implementation-coder"),
+        "operation_type": str(status.get("operation_type") or latest.get("operation_type") or "app_generation_coder"),
+        "status": str(status.get("status") or latest.get("status") or "unknown"),
+        "current_title": str(status.get("current_title") or latest.get("title") or ""),
+        "current_summary": str(status.get("current_summary") or latest.get("summary") or ""),
+        "latest_event_id": str(status.get("latest_event_id") or latest.get("event_id") or ""),
+        "latest_event_at": str(status.get("latest_event_at") or latest.get("finished_at") or latest.get("started_at") or ""),
+        "elapsed_ms": status.get("elapsed_ms", latest.get("elapsed_ms", 0)),
+        "progress_refs": ["codex/coder_progress.jsonl", "codex/coder_progress_status.json"],
+        "latest_events": events,
+    }
+    return _redact(summary)
+
+
+def _code_repair_progress_summary(run_dir: Path) -> dict[str, Any]:
+    active = _safe_read_json(run_dir / "app_repairs" / "active.json")
+    repair_id = str(active.get("repair_id") or "").strip()
+    if not repair_id:
+        return {}
+    progress_dir = run_dir / "app_repairs" / repair_id
+    status = _safe_read_json(progress_dir / "progress_status.json")
+    events = _read_progress_events_tail(progress_dir / "progress.jsonl", tail=5)
+    if not status and not events and not active:
+        return {}
+    latest = events[-1] if events else {}
+    summary = {
+        "repair_id": repair_id,
+        "operation_id": str(status.get("operation_id") or latest.get("operation_id") or repair_id),
+        "operation_type": str(status.get("operation_type") or latest.get("operation_type") or "delegate_code_repair"),
+        "status": str(status.get("status") or active.get("status") or latest.get("status") or "unknown"),
+        "current_title": str(status.get("current_title") or latest.get("title") or ""),
+        "current_summary": str(status.get("current_summary") or latest.get("summary") or ""),
+        "latest_event_id": str(status.get("latest_event_id") or latest.get("event_id") or ""),
+        "latest_event_at": str(status.get("latest_event_at") or latest.get("finished_at") or latest.get("started_at") or ""),
+        "result_ready": bool(status.get("result_ready")),
+        "diff_ready": bool(status.get("diff_ready")),
+        "progress_refs": [
+            f"app_repairs/{repair_id}/progress.jsonl",
+            f"app_repairs/{repair_id}/progress_status.json",
+        ],
+        "latest_events": events,
+    }
+    return _redact(summary)
 
 
 def start_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -> dict[str, Any]:
@@ -2430,6 +2699,20 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
             if len(parts) == 4:
                 self._send_json(build_app_generation_nodes(run_id, runs_dir=config.runs_dir, repo_root=config.repo_root))
                 return
+            if len(parts) == 5 and parts[4] == "canvas":
+                self._send_json(build_canvas_projection(run_id, runs_dir=config.runs_dir, repo_root=config.repo_root))
+                return
+            if len(parts) == 7 and parts[4] == "canvas" and parts[5] == "objects":
+                object_id = parts[6]
+                self._send_json(
+                    build_canvas_object_detail(
+                        run_id,
+                        object_id,
+                        runs_dir=config.runs_dir,
+                        repo_root=config.repo_root,
+                    )
+                )
+                return
             if len(parts) == 6 and parts[4] == "artifacts" and parts[5] == "preview":
                 params = parse_qs(query)
                 artifact_path = (params.get("path") or [""])[0]
@@ -2470,6 +2753,24 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
             if len(parts) == 6 and parts[4:] == ["preview", "status"]:
                 try:
                     self._send_json(get_app_generation_preview_status(config, run_id))
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if len(parts) == 6 and parts[4:] == ["delegate-code-repair", "status"]:
+                try:
+                    query_params = parse_qs(query)
+                    repair_id = (query_params.get("repair_id") or [""])[0]
+                    tail = (query_params.get("tail") or ["20"])[0]
+                    self._send_json(
+                        get_app_generation_delegate_repair_status(
+                            config,
+                            {"run_id": run_id, "repair_id": repair_id, "tail": tail},
+                        )
+                    )
                 except FileNotFoundError as exc:
                     self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
                 except ValueError as exc:

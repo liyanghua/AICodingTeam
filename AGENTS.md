@@ -1,13 +1,39 @@
 # AGENTS.md
 
+## Agent Entry Role
+
+This file is the AI-coding entrypoint for the root repository. It defines execution rules, safety boundaries, file ownership, and project-level reading order. It is not the full product whitepaper.
+
+For the project identity and document map, read `docs/PROJECT_OVERVIEW.md` first after this file.
+
 ## Product Goal
 
-This repository is an AI-native Agent Team Runtime with an XHS-style browser automation benchmark as its first domain pack.
-It turns a single business brief into gated engineering artifacts, then compares browser frameworks against the same task, same schema, and same safety gates.
+This repository is an AI-native Agent Team Runtime. It turns business briefs, domain specs, and run artifacts into gated engineering artifacts, controlled code-generation runs, review evidence, verification records, and human-confirmed delivery.
+
+The current primary domain is `app_generation`: PRD / business-spec-to-local-app generation for producing runnable, reviewable, and iterated business applications.
+
+`document-to-skill-engineering-package/` is an upstream strategy and Skill compilation capability. It compiles business strategy documents into Strategy IR, Skill Spec, Workflow DAG, Data Requirement, Tool Binding, Evidence Pack, and Eval artifacts that can feed richer business context for `app_generation`.
+
+XHS/browser automation remains an important reusable domain pack and historical starting point, but it is not the whole-project identity.
+
+## Main Product Chain
+
+```text
+Business strategy documents
+-> document-to-skill compiler
+-> Strategy IR / Skill Spec / Workflow DAG
+-> Data Requirement / Tool Binding / Evidence Pack / Eval
+-> app_generation Business PRD++ / AppSpec / DataSpec / KnowledgeSpec / ToolSpec / EvalSpec
+-> controlled Code Agent generation
+-> local app preview / review / verification / repair
+-> run artifacts and improvement candidates
+```
 
 ## Architecture Principles
 
 - Manual login only. Do not automate credential collection, captcha bypass, fingerprint spoofing, proxy rotation, or anti-bot evasion.
+- Do not turn business strategy documents directly into prompts. Compile them into Strategy IR, data requirements, tool bindings, evidence, and eval contracts first.
+- Do not let LLM output become factual business conclusions without evidence.
 - Keep all outputs structured and reproducible.
 - Preserve backward-compatible APIs and task schemas.
 - Store run artifacts in `runs/` and task specs in `tasks/current/`.
@@ -19,13 +45,18 @@ It turns a single business brief into gated engineering artifacts, then compares
 
 ## File Ownership
 
+- Project overview: `docs/PROJECT_OVERVIEW.md`
 - Task package: `tasks/current/`
 - Domain packs: `domains/`
+- Primary app generation domain docs: `docs/app_generation_*.md`
+- Upstream document-to-skill compiler: `document-to-skill-engineering-package/`
 - Team runtime: `growth_dev/team/`
 - Core harness: `growth_dev/`
 - Mock site: `growth_dev/mock_site.py`
 - Scoring and reporting: `growth_dev/scoring.py`, `growth_dev/reporting.py`
 - Framework adapters: `growth_dev/adapters/`
+
+`tasks/current/` describes the active task package. It must not be used as the root project identity when it disagrees with `docs/PROJECT_OVERVIEW.md`.
 
 ## Project Skills
 

@@ -6,6 +6,12 @@
 
 当前 MVP 聚焦“市场洞察元策略”文档，后续扩展到竞品分析、价格带布局、产品升级、主图策划、达人建联等业务策略文档。
 
+## 与根项目的关系
+
+本包是根仓库 AI-native Agent Team Runtime 的上游策略编译能力层。它负责把业务文档先编译成 Strategy IR、Skill、Workflow DAG、Data Requirement、Tool Binding、Evidence Pack 和 Eval，再为后续 `app_generation` 的 Business PRD++ / AppSpec / 应用生成链路提供结构化业务上下文。
+
+当前保持独立包结构，不迁入根仓库 `domains/`。
+
 ## AI-coding 角色要求
 
 你是一个资深 Agent Runtime / 数据平台 / 电商经营分析系统工程师。编码时必须遵守以下原则：

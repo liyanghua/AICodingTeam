@@ -790,3 +790,112 @@ PatchSet 规则：
 ### PI-Agent fallback 要求
 
 PI-Agent 的自然语言回复如果指出了正确修复方向，但没有返回结构化 `AgentAction`，AgentBridge 必须根据 `resolved_intent`、`AppPreviewContext` 和可 patch 文件摘要生成 deterministic fallback action。这样用户不会停在“建议正确但不知道怎么改”的状态。
+
+## V2 生成画布 Agent 契约
+
+V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_generation_canvas_experience_spec.md)。V2 中右侧 Agent 的默认协作对象从“当前工程节点”升级为“当前选中的画布对象”。V1 的 `NodeContext` 仍然是事实上下文，V2 的 `CanvasSelectionContext` 用于描述 UI 焦点和对象权限。
+
+### AgentPromptContext V2
+
+AgentBridge 调用 Provider 前必须把以下上下文合成为 `AgentPromptContext`：
+
+- 当前 run 和业务节点摘要。
+- 当前 `CanvasObject` 摘要。
+- 当前对象的 source refs、artifact refs、evidence refs。
+- 当前对象状态和能力缺口。
+- 当前 preview/provider/repair 进度摘要。
+- 当前 allowed actions。
+- 不能改变的已通过能力。
+- 需要用户确认的动作边界。
+
+默认不得注入：
+
+- 完整 artifact 正文。
+- 完整源码。
+- 完整 stdout/stderr。
+- 完整 prompt。
+- API key、完整 `.env` 或进程环境。
+- iframe DOM。
+
+### AgentIntent V2
+
+| Intent | 触发场景 | 默认动作 |
+| --- | --- | --- |
+| `explain_object` | 用户问“这个能力是什么”“这个输入从哪来”“为什么这个对象需要关注” | 解释当前对象、来源和证据 |
+| `edit_business_object` | 用户要求调整目标、场景、能力、验收标准或优先级 | `suggest_object_patch`，确认后进入 override 或新 run |
+| `repair_generated_app` | 用户在应用预览中报告运行错误、按钮无响应、模型/provider 错误、下载失败、局部迭代失败 | 简单锚点问题 `patch_app`；复杂问题 `delegate_code_repair` |
+| `verify_capability` | 用户要求“验证这个能力”“看看修好没” | 运行受控验证或生成验证计划 |
+| `compare_canvas_objects` | 用户要求比较能力、版本、变体、修复前后 | 读取对象摘要和 evidence refs |
+| `promote_to_generation_rule` | 用户要求“以后生成都这样”“沉淀为规则” | 生成候选规则，待确认 |
+| `rerun_business_node` | 缺口来自业务输入、规格或规划，不适合直接修已发布应用 | 创建新 run，记录业务节点起点 |
+| `ask_clarification` | 输入不足或风险太高 | 提问，不执行修改 |
+
+当 `CanvasSelectionContext.selection_type="canvas_object"` 时，`intent=auto` 必须优先按对象类型和用户消息解析。只有没有选中对象或对象上下文不可用时，才退回 V1 的节点解释策略。
+
+### AgentAction V2
+
+V2 新增或规范化以下对象化动作：
+
+```json
+{
+  "type": "suggest_object_patch",
+  "source_object_id": "capability:image_generation.single",
+  "summary": "补充单张生图验收标准",
+  "patch": {
+    "field": "acceptance",
+    "operation": "append",
+    "value": "用户点击单张生图后，服务端使用 OPENROUTER_IMAGE_MODEL 生成图片或返回可行动错误。"
+  },
+  "requires_confirmation": true,
+  "verification": ["更新后从 编译业务规格 节点重跑"]
+}
+```
+
+```json
+{
+  "type": "repair_generated_app",
+  "source_object_id": "capability_gap:gpt-image-1-not-configured",
+  "strategy": "delegate_code_repair",
+  "problem_source": "app_preview",
+  "preserve_capabilities": ["四阶段工作流", "Prompt 下载", "localStorage 状态"],
+  "repair_request": {
+    "app_slug": "input-prd",
+    "problem": "单张生图仍使用 gpt-image-1，未读取 OPENROUTER_IMAGE_MODEL",
+    "constraints": ["只修改当前已发布应用", "不重跑完整 PRD"],
+    "verification": ["node --check server.js", "node runtime_smoke.js"]
+  },
+  "requires_confirmation": true
+}
+```
+
+```json
+{
+  "type": "verify_capability",
+  "source_object_id": "capability:image_generation.single",
+  "verification": ["node runtime_smoke.js", "GET /api/health"],
+  "requires_confirmation": false
+}
+```
+
+所有 V2 action 必须包含：
+
+- `source_object_id`
+- `summary`
+- `requires_confirmation`
+- `verification` 或明确说明无需验证
+- `preserve_capabilities`，当动作会影响已发布应用或生成规则时必填
+
+### V1 / V2 动作映射
+
+| V2 action | V1 / 后端动作 |
+| --- | --- |
+| `explain_object` | `explain` |
+| `suggest_object_patch` | `suggest_input_patch` 或新 run override |
+| `repair_generated_app(strategy=patch_app)` | `patch_app` |
+| `repair_generated_app(strategy=delegate_code_repair)` | `delegate_code_repair` |
+| `verify_capability` | 受控 verification / preview health / capability scanner |
+| `compare_canvas_objects` | `compare` + artifact/evaluation refs |
+| `promote_to_generation_rule` | 候选规则记录，后续实施确认 |
+| `rerun_business_node` | `rerun_from_node` + 业务节点到 runtime node 映射 |
+
+V2 action 只是更业务友好的协议层。真正修改应用、重跑节点或提升规则时，仍必须进入 V1 受控 API 和人工确认 gate。

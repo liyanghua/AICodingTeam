@@ -48,6 +48,10 @@ UNKNOWN_USAGE = {
 # structured suggestions the Provider can parse without prose heuristics.
 PI_ALLOWED_ACTION_TYPES: tuple[str, ...] = (
     "explain_node",
+    "explain_step",
+    "explain_step_io",
+    "inspect_evidence",
+    "rerun_step",
     "compare_variants",
     "read_artifact",
     "suggest_input_patch",
@@ -271,13 +275,29 @@ def _interaction_focus(interaction_context: dict[str, Any] | None) -> dict[str, 
     return focus if isinstance(focus, dict) else {}
 
 
+def _canvas_selection(interaction_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(interaction_context, dict):
+        return {}
+    selection = interaction_context.get("canvas_selection")
+    if not isinstance(selection, dict):
+        return {}
+    if str(selection.get("selection_type") or "") not in {"canvas_object", "flow_step"}:
+        return {}
+    return selection
+
+
 def _allowed_operations(interaction_context: dict[str, Any] | None) -> set[str]:
     if not isinstance(interaction_context, dict):
         return set()
+    allowed: set[str] = set()
     operations = interaction_context.get("allowed_operations")
-    if not isinstance(operations, list):
-        return set()
-    return {str(item) for item in operations}
+    if isinstance(operations, list):
+        allowed.update(str(item) for item in operations)
+    selection = _canvas_selection(interaction_context)
+    selection_actions = selection.get("allowed_actions")
+    if isinstance(selection_actions, list):
+        allowed.update(str(item) for item in selection_actions)
+    return allowed
 
 
 def _focused_artifact(interaction_context: dict[str, Any] | None) -> str:
@@ -287,6 +307,33 @@ def _focused_artifact(interaction_context: dict[str, Any] | None) -> str:
 
 def _operation_allowed(allowed: set[str], operation: str) -> bool:
     return not allowed or operation in allowed
+
+
+def _annotate_actions_with_canvas(actions: list[dict[str, Any]], interaction_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    selection = _canvas_selection(interaction_context)
+    if not selection:
+        return actions
+    annotated: list[dict[str, Any]] = []
+    selection_type = str(selection.get("selection_type") or "")
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        enriched = dict(action)
+        if selection_type == "flow_step":
+            enriched.setdefault("source_step_id", selection.get("step_id", ""))
+            enriched.setdefault("source_step_type", selection.get("step_type", ""))
+            enriched.setdefault("source_step_title", selection.get("title", ""))
+            runtime_nodes = selection.get("runtime_nodes")
+            if isinstance(runtime_nodes, list):
+                enriched.setdefault("source_runtime_nodes", runtime_nodes)
+        else:
+            enriched.setdefault("source_object_id", selection.get("selection_id", ""))
+            enriched.setdefault("source_object_type", selection.get("object_type", ""))
+            enriched.setdefault("source_object_title", selection.get("title", ""))
+            enriched.setdefault("source_business_node", selection.get("business_node", ""))
+            enriched.setdefault("source_business_node_id", selection.get("business_node_id", ""))
+        annotated.append(enriched)
+    return annotated
 
 
 def _resolve_intent(
@@ -299,10 +346,39 @@ def _resolve_intent(
     requested = (intent or mode or "auto").strip()
     allowed = _allowed_operations(interaction_context)
     artifact_ref = _focused_artifact(interaction_context)
+    canvas_selection = _canvas_selection(interaction_context)
     text = message.lower()
 
     def allowed_or_clarify(operation: str) -> str:
         return operation if _operation_allowed(allowed, operation) else "ask_clarification"
+
+    def resolve_canvas_object_repair() -> str:
+        if _mentions_complex_repair(message) and _operation_allowed(allowed, "delegate_code_repair"):
+            return "delegate_code_repair"
+        if _operation_allowed(allowed, "patch_app"):
+            return "patch_app"
+        if _operation_allowed(allowed, "delegate_code_repair"):
+            return "delegate_code_repair"
+        if _operation_allowed(allowed, "repair_generated_app"):
+            return "repair_generated_app"
+        return "ask_clarification"
+
+    def resolve_flow_step_repair() -> str:
+        if _operation_allowed(allowed, "delegate_code_repair"):
+            return "delegate_code_repair"
+        if _operation_allowed(allowed, "patch_app"):
+            return "patch_app"
+        if _operation_allowed(allowed, "diagnose_app_bug"):
+            return "diagnose_app_bug"
+        return "ask_clarification"
+
+    if canvas_selection and _is_canvas_object_focus(interaction_context) and _mentions_app_repair(message):
+        return resolve_canvas_object_repair()
+    if canvas_selection and _is_flow_step_focus(interaction_context):
+        step_id = str(canvas_selection.get("step_id") or "")
+        repair_step = step_id in {"app_preview", "prototype_generation", "capability_verification", "delivery_version"}
+        if _mentions_app_repair(message) and (repair_step or _is_app_preview_focus(interaction_context)):
+            return resolve_flow_step_repair()
 
     if requested and requested != "auto":
         explicit = {
@@ -318,6 +394,31 @@ def _resolve_intent(
             # commands such as rerun/read that users often type without changing
             # the mode dropdown.
             requested = "auto"
+
+    if canvas_selection and _is_canvas_object_focus(interaction_context):
+        if any(token in message for token in ("验证", "检查", "跑一下", "验收")) or "verify" in text or "check" in text:
+            return allowed_or_clarify("verify_capability")
+        if _mentions_app_repair(message):
+            return resolve_canvas_object_repair()
+        if any(token in message for token in ("修改", "补充", "调整", "改一下", "改成")) or "patch" in text or "override" in text:
+            return allowed_or_clarify("suggest_input_patch")
+        return allowed_or_clarify("explain_object")
+
+    if canvas_selection and _is_flow_step_focus(interaction_context):
+        step_id = str(canvas_selection.get("step_id") or "")
+        step_type = str(canvas_selection.get("step_type") or "")
+        repair_step = step_id in {"app_preview", "prototype_generation", "capability_verification", "delivery_version"}
+        if _mentions_app_repair(message) and (repair_step or _is_app_preview_focus(interaction_context)):
+            return resolve_flow_step_repair()
+        if any(token in message for token in ("重跑", "重新生成", "重新跑", "再生成", "再跑", "重新执行")) or "rerun" in text:
+            return allowed_or_clarify("rerun_step")
+        if any(token in message for token in ("证据", "工程", "日志", "查看", "打开", "看一下")) or "evidence" in text:
+            return allowed_or_clarify("inspect_evidence")
+        if any(token in message for token in ("输入", "输出", "上游", "下游", "产物", "文件")) or "input" in text or "output" in text or "artifact" in text:
+            return allowed_or_clarify("explain_step_io")
+        if step_type == "terminal" and _mentions_app_repair(message):
+            return allowed_or_clarify("delegate_code_repair")
+        return allowed_or_clarify("explain_step")
 
     negates_rerun = any(token in message for token in ("不重跑", "不要重跑", "别重跑", "不用重跑")) or "do not rerun" in text or "don't rerun" in text
     wants_rerun = (
@@ -387,9 +488,33 @@ def _is_app_preview_focus(interaction_context: dict[str, Any] | None) -> bool:
     return str(focus.get("card", "")) == "app_preview" or str(focus.get("view_mode", "")) == "app_preview"
 
 
+def _is_canvas_object_focus(interaction_context: dict[str, Any] | None) -> bool:
+    focus = _interaction_focus(interaction_context)
+    selection = _canvas_selection(interaction_context)
+    return bool(selection) and (
+        str(selection.get("selection_type") or "") == "canvas_object"
+        and (
+            str(focus.get("card", "")) == "canvas_object"
+            or str(focus.get("view_mode", "")) == "canvas_object_detail"
+        )
+    )
+
+
+def _is_flow_step_focus(interaction_context: dict[str, Any] | None) -> bool:
+    focus = _interaction_focus(interaction_context)
+    selection = _canvas_selection(interaction_context)
+    return bool(selection) and (
+        str(selection.get("selection_type") or "") == "flow_step"
+        and (
+            str(focus.get("card", "")) == "flow_step"
+            or str(focus.get("view_mode", "")) == "business_step_detail"
+        )
+    )
+
+
 def _mentions_app_repair(message: str) -> bool:
     text = message.lower()
-    chinese_tokens = ("报错", "模型", "生图", "按钮", "下载", "局部迭代", "没反应", "无法", "失败", "换成", "改成")
+    chinese_tokens = ("修复", "报错", "模型", "生图", "按钮", "下载", "局部迭代", "没反应", "无法", "失败", "换成", "改成")
     english_tokens = ("not configured", "timeout", "provider", "api key", "openrouter", "gpt-image", "gpt-5.4", "button", "download", "error")
     return any(token in message for token in chinese_tokens) or any(token in text for token in english_tokens)
 
@@ -654,6 +779,7 @@ def _agent_prompt_context(
     resolved_intent: str,
 ) -> dict[str, Any]:
     focus = _interaction_focus(interaction_context)
+    canvas_selection = _canvas_selection(interaction_context)
     context = {
         "schema_version": 1,
         "run": {
@@ -676,6 +802,7 @@ def _agent_prompt_context(
             "selected_text": focus.get("selected_text", ""),
             "view_mode": focus.get("view_mode", ""),
         },
+        "canvas_selection": _prompt_canvas_selection(canvas_selection) if canvas_selection else {},
         "inputs": _artifact_prompt_items(node_context.get("inputs", [])),
         "outputs": _artifact_prompt_items(node_context.get("outputs", [])),
         "skills": node_context.get("skills", []) if isinstance(node_context.get("skills"), list) else [],
@@ -689,6 +816,33 @@ def _agent_prompt_context(
     if _is_app_preview_focus(interaction_context) or resolved_intent in ("patch_app", "delegate_code_repair"):
         context["app_patch_targets"] = _build_app_patch_targets(node_context)
     return context
+
+
+def _prompt_canvas_selection(selection: dict[str, Any]) -> dict[str, Any]:
+    if str(selection.get("selection_type") or "") == "flow_step":
+        return {
+            "selection_type": "flow_step",
+            "step_id": selection.get("step_id", ""),
+            "step_type": selection.get("step_type", ""),
+            "title": selection.get("title", ""),
+            "status": selection.get("status", ""),
+            "runtime_nodes": selection.get("runtime_nodes", []) if isinstance(selection.get("runtime_nodes"), list) else [],
+            "input_summary": selection.get("input_summary", []) if isinstance(selection.get("input_summary"), list) else [],
+            "process_summary": selection.get("process_summary", []) if isinstance(selection.get("process_summary"), list) else [],
+            "output_summary": selection.get("output_summary", []) if isinstance(selection.get("output_summary"), list) else [],
+            "evidence_refs": selection.get("evidence_refs", []) if isinstance(selection.get("evidence_refs"), list) else [],
+            "allowed_actions": selection.get("allowed_actions", []) if isinstance(selection.get("allowed_actions"), list) else [],
+        }
+    return {
+        "selection_type": "canvas_object",
+        "selection_id": selection.get("selection_id", ""),
+        "object_type": selection.get("object_type", ""),
+        "title": selection.get("title", ""),
+        "status": selection.get("status", ""),
+        "business_node": selection.get("business_node", ""),
+        "business_node_id": selection.get("business_node_id", ""),
+        "allowed_actions": selection.get("allowed_actions", []) if isinstance(selection.get("allowed_actions"), list) else [],
+    }
 
 
 def _baseline_actions(
@@ -710,6 +864,70 @@ def _baseline_actions(
     message_l = message.lower()
     wants_rerun = any(token in message for token in ("重跑", "重新生成", "重新跑", "再生成")) or "rerun" in message_l
     actions: list[dict[str, Any]] = []
+    canvas_selection = _canvas_selection(interaction_context)
+    if canvas_selection and _is_flow_step_focus(interaction_context):
+        step_title = str(canvas_selection.get("title") or canvas_selection.get("step_id") or "当前步骤")
+        runtime_nodes = canvas_selection.get("runtime_nodes")
+        runtime_node_id = ""
+        if isinstance(runtime_nodes, list):
+            runtime_node_id = next((str(item) for item in runtime_nodes if str(item).strip()), "")
+        if effective_intent == "explain_step":
+            return _annotate_actions_with_canvas(
+                [
+                    {
+                        "type": "explain_step",
+                        "target_node_id": runtime_node_id or node_id,
+                        "summary": f"解释业务步骤「{step_title}」的目标、状态和当前产出。",
+                        "requires_confirmation": False,
+                        "context_revision": node_context.get("context_revision", ""),
+                    }
+                ],
+                interaction_context,
+            )
+        if effective_intent == "explain_step_io":
+            return _annotate_actions_with_canvas(
+                [
+                    {
+                        "type": "explain_step_io",
+                        "target_node_id": runtime_node_id or node_id,
+                        "summary": f"说明业务步骤「{step_title}」的输入、执行过程和输出。",
+                        "requires_confirmation": False,
+                        "context_revision": node_context.get("context_revision", ""),
+                    }
+                ],
+                interaction_context,
+            )
+        if effective_intent == "inspect_evidence":
+            return _annotate_actions_with_canvas(
+                [
+                    {
+                        "type": "inspect_evidence",
+                        "target_node_id": runtime_node_id or node_id,
+                        "evidence_refs": canvas_selection.get("evidence_refs", []) if isinstance(canvas_selection.get("evidence_refs"), list) else [],
+                        "summary": f"查看业务步骤「{step_title}」对应的工程证据。",
+                        "requires_confirmation": False,
+                        "context_revision": node_context.get("context_revision", ""),
+                    }
+                ],
+                interaction_context,
+            )
+        if effective_intent == "rerun_step":
+            return _annotate_actions_with_canvas(
+                [
+                    {
+                        "type": "rerun_step",
+                        "source_run_id": source_run_id,
+                        "rerun_from_node": runtime_node_id or node_id,
+                        "selected_variant": selected_variant,
+                        "override_instructions": message,
+                        "comparison_group_id": comparison_group_id,
+                        "summary": f"从业务步骤「{step_title}」对应的工程节点重新执行。",
+                        "requires_confirmation": True,
+                        "context_revision": node_context.get("context_revision", ""),
+                    }
+                ],
+                interaction_context,
+            )
     if artifact_ref and (not allowed or "read_artifact" in allowed) and effective_intent in {"read_artifact", "explain_node", "explain_outputs", "compare_variants", "suggest_artifact_regeneration"}:
         actions.append(
             {
@@ -736,6 +954,23 @@ def _baseline_actions(
         )
     if actions:
         return actions
+    if effective_intent in ("patch_app", "delegate_code_repair"):
+        fallback = _fallback_actions_for_provider_text(
+            node_context=node_context,
+            interaction_context=interaction_context,
+            resolved_intent=effective_intent,
+            user_message=message,
+            provider_text="",
+        )
+        return fallback or [
+            {
+                "type": "diagnose_app_bug",
+                "target_node_id": node_id,
+                "summary": "已识别为应用预览修复问题，但还需要定位具体文件和锚点。",
+                "requires_confirmation": False,
+                "context_revision": node_context.get("context_revision", ""),
+            }
+        ]
     if effective_intent == "compare_variants" or mode == "compare":
         return [
             {
@@ -779,23 +1014,35 @@ def _baseline_actions(
                 "requires_confirmation": False,
             }
         ]
-    if effective_intent in ("patch_app", "delegate_code_repair"):
-        fallback = _fallback_actions_for_provider_text(
-            node_context=node_context,
-            interaction_context=interaction_context,
-            resolved_intent=effective_intent,
-            user_message=message,
-            provider_text="",
+    if effective_intent == "explain_object":
+        selection = _canvas_selection(interaction_context)
+        return _annotate_actions_with_canvas(
+            [
+                {
+                    "type": "explain_object",
+                    "target_node_id": node_id,
+                    "summary": f"解释业务对象：{selection.get('title') or selection.get('selection_id') or '当前对象'}。",
+                    "requires_confirmation": False,
+                    "context_revision": node_context.get("context_revision", ""),
+                }
+            ],
+            interaction_context,
         )
-        return fallback or [
-            {
-                "type": "diagnose_app_bug",
-                "target_node_id": node_id,
-                "summary": "已识别为应用预览修复问题，但还需要定位具体文件和锚点。",
-                "requires_confirmation": False,
-                "context_revision": node_context.get("context_revision", ""),
-            }
-        ]
+    if effective_intent == "verify_capability":
+        selection = _canvas_selection(interaction_context)
+        return _annotate_actions_with_canvas(
+            [
+                {
+                    "type": "verify_capability",
+                    "target_node_id": node_id,
+                    "summary": f"验证业务能力：{selection.get('title') or selection.get('selection_id') or '当前能力'}。",
+                    "verification": ["preview health", "runtime smoke", "capability evidence review"],
+                    "requires_confirmation": False,
+                    "context_revision": node_context.get("context_revision", ""),
+                }
+            ],
+            interaction_context,
+        )
     return [
         {
             "type": "explain_node",
@@ -823,6 +1070,11 @@ def _baseline_message(
     artifact_ref = _focused_artifact(interaction_context)
     if artifact_ref:
         head = f"{head} · 当前产物 {artifact_ref}"
+    canvas_selection = _canvas_selection(interaction_context)
+    if canvas_selection and _is_canvas_object_focus(interaction_context):
+        head = f"{head} · 当前对象 {canvas_selection.get('title') or canvas_selection.get('selection_id')}"
+    if canvas_selection and _is_flow_step_focus(interaction_context):
+        head = f"{head} · 当前业务步骤 {canvas_selection.get('title') or canvas_selection.get('step_id')}"
     if mode == "compare":
         return f"{head}\n对比说明：rule 提供确定性 baseline；codex 提供更细致的实现细节。当前节点有 {len(ready_outputs)} 份产物已就绪。"
     if mode == "edit":
@@ -995,6 +1247,7 @@ class CodexProvider(AgentProvider):
     ) -> dict[str, Any]:
         resolved_intent = _resolve_intent(node_context, mode, message, interaction_context, intent)
         actions = _baseline_actions(node_context, mode, message, interaction_context, intent, resolved_intent)
+        actions = _annotate_actions_with_canvas(actions, interaction_context)
         baseline_message = _baseline_message(node_context, mode, message, interaction_context)
         base_url, api_key = _codex_credentials(repo_root)
 
@@ -1073,6 +1326,7 @@ class CodexProvider(AgentProvider):
             )
             if fallback_actions:
                 actions = fallback_actions
+        actions = _annotate_actions_with_canvas(actions, interaction_context)
         return {
             "provider": "codex",
             "status": "completed",
@@ -1251,6 +1505,7 @@ class PiAgentProvider(AgentProvider):
         prompt_context = _agent_prompt_context(node_context, interaction_context, resolved_intent)
         prompt = _pi_prompt_text(node_context, mode, message, interaction_context, intent, resolved_intent)
         actions = _baseline_actions(node_context, mode, message, interaction_context, intent, resolved_intent)
+        actions = _annotate_actions_with_canvas(actions, interaction_context)
         context_revision = str(node_context.get("context_revision", "")) if isinstance(node_context, dict) else ""
         answer_buffer: list[str] = []
         saw_terminal_event = False
@@ -1302,6 +1557,7 @@ class PiAgentProvider(AgentProvider):
                         prompt_context=prompt_context,
                     )
                     actions_source = "provider_payload"
+                resolved_actions = _annotate_actions_with_canvas(resolved_actions, interaction_context)
                 event = {
                     **event,
                     "payload": {
@@ -1340,6 +1596,7 @@ class PiAgentProvider(AgentProvider):
         tool_results: dict[str, dict[str, Any]] = {}
         resolved_intent = _resolve_intent(node_context, mode, message, interaction_context, intent)
         actions = _baseline_actions(node_context, mode, message, interaction_context, intent, resolved_intent)
+        actions = _annotate_actions_with_canvas(actions, interaction_context)
         usage: dict[str, Any] = dict(UNKNOWN_USAGE)
         usage["usage_source"] = "pi_agent_end_missing"
         risk_events: list[dict[str, Any]] = []

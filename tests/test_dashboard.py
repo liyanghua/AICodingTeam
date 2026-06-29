@@ -963,6 +963,52 @@ console.log(JSON.stringify(vm));
         self.assertEqual(runs[0]["comparison_group_id"], "cmp-todo-prototype")
         self.assertFalse(runs[0]["is_rerun"])
 
+    def test_app_generation_pending_process_only_run_is_listed_and_readable(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_nodes, list_app_generation_runs
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "app_generation-pending"
+            run_dir.mkdir(parents=True)
+            (run_dir / "process.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "app_generation-pending",
+                        "status": "running",
+                        "command": [
+                            "python3",
+                            "-m",
+                            "growth_dev.cli",
+                            "team",
+                            "run",
+                            "--run-id",
+                            "app_generation-pending",
+                            "--brief",
+                            "根据 PRD 生成本地应用：pending-app",
+                            "--domain",
+                            "app_generation",
+                            "--inputs-json",
+                            json.dumps({"app_slug": "pending-app", "comparison_group_id": "cmp-pending"}, ensure_ascii=False),
+                            "--executor",
+                            "codex",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            runs = list_app_generation_runs(runs_dir)
+            state = build_app_generation_nodes("app_generation-pending", runs_dir=runs_dir, repo_root=root)
+
+        self.assertEqual([run["run_id"] for run in runs], ["app_generation-pending"])
+        self.assertEqual(runs[0]["domain_id"], "app_generation")
+        self.assertEqual(runs[0]["app_slug"], "pending-app")
+        self.assertEqual(runs[0]["executor"], "codex")
+        self.assertEqual(state["run"]["status"], "running")
+        self.assertEqual(state["run"]["app_slug"], "pending-app")
+        self.assertEqual(state["run"]["executor"], "codex")
+
     def test_app_generation_workbench_nodes_expose_observable_contract(self) -> None:
         from growth_dev.team.dashboard import build_app_generation_nodes
 
@@ -1004,6 +1050,121 @@ console.log(JSON.stringify(vm));
         self.assertFalse(app_js_output["preview"]["enabled"])
         self.assertEqual(app_js_output["preview"]["kind"], "missing")
         self.assertEqual(app_js_output["preview"]["size_bytes"], app_js_output["size_bytes"])
+
+    def test_app_generation_canvas_routes_return_projection_and_object_detail(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, create_dashboard_handler
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            self._write_app_generation_workbench_run(runs_dir)
+            handler = create_dashboard_handler(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                )
+            )
+
+            request = handler.__new__(handler)
+            request.path = "/api/app-generation/runs/app-generation-workbench/canvas"
+            request._send_json = mock.Mock()
+            request.do_GET()
+            projection = request._send_json.call_args.args[0]
+            object_id = projection["objects"][0]["object_id"]
+
+            request = handler.__new__(handler)
+            request.path = f"/api/app-generation/runs/app-generation-workbench/canvas/objects/{object_id}"
+            request._send_json = mock.Mock()
+            request.do_GET()
+            detail = request._send_json.call_args.args[0]
+
+        self.assertEqual(
+            [node["title"] for node in projection["business_nodes"]],
+            ["理解业务目标", "编译业务规格", "规划应用结构", "生成应用原型", "验证业务能力", "输出可交付版本"],
+        )
+        self.assertEqual(detail["object_id"], object_id)
+        self.assertIn("related_objects", detail)
+        self.assertNotIn("sk-", json.dumps(projection, ensure_ascii=False))
+
+    def test_app_generation_frontend_exposes_canvas_v2_entry_and_selection_context(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "dashboard" / "app_generation.html").read_text(encoding="utf-8")
+        script = (root / "dashboard" / "app_generation.js").read_text(encoding="utf-8")
+        css = (root / "dashboard" / "styles.css").read_text(encoding="utf-8")
+
+        for token in (
+            'id="app-generation-new-task"',
+            'id="app-generation-canvas-panel"',
+            'class="app-generation-business-step-layout"',
+            'class="app-generation-business-step-flow"',
+            'class="app-generation-business-step-detail"',
+            'id="app-generation-business-node-track"',
+            'id="app-generation-step-summary-cards"',
+            'id="app-generation-prd-entry-detail"',
+            'id="app-generation-app-preview-detail"',
+            'id="app-generation-show-all-engineering-nodes"',
+            'id="app-generation-canvas-objects"',
+            'id="app-generation-canvas-object-detail"',
+            'id="app-generation-engineering-evidence"',
+            "生成流程",
+            "当前步骤对象",
+            "工程证据层",
+        ):
+            self.assertIn(token, html)
+        self.assertLess(html.index('id="app-generation-canvas-panel"'), html.index('id="app-generation-engineering-evidence"'))
+        self.assertLess(html.index('id="app-generation-prd-entry-detail"'), html.index('id="app-generation-upload-form"'))
+        self.assertLess(html.index('id="app-generation-app-preview-detail"'), html.index('id="app-generation-publish-btn"'))
+        self.assertLess(html.index('id="app-generation-engineering-evidence"'), html.index('id="app-generation-node-list"'))
+        for token in (
+            "/canvas",
+            "buildCanvasSelectionContext",
+            "canvas_selection",
+            'selection_type: "flow_step"',
+            "enterNewTaskMode",
+            "initialCanvasProjection",
+            "canvasFlowSteps",
+            "selectCanvasObject",
+            "selectCanvasBusinessNode",
+            "renderCanvasPanel",
+            "renderStepDetail",
+            "triggerStepAction",
+            "visibleEngineeringNodes",
+            "filteredCanvasObjects",
+            "currentCanvasBusinessNode",
+            "selectedBusinessNodeId",
+            "syncCanvasFilterControls",
+            "agentActionSourceLine",
+            "handleVerifyCapabilityAction",
+            "repair_generated_app",
+            "verify_capability",
+            "renderClassificationBanner",
+            "classificationBannerView",
+            "openClassificationArtifact",
+            "classification_summary",
+        ):
+            self.assertIn(token, script)
+        self.assertEqual(html.count('id="app-generation-upload-form"'), 1)
+        self.assertIn("if (!state.runs.length)", script)
+        self.assertIn("state.isNewTask = false", script)
+        self.assertLess(script.index("await loadRuns();"), script.index("await selectRun(response.run_id);"))
+        for token in (
+            ".app-generation-business-step-layout",
+            ".app-generation-business-step-flow",
+            ".app-generation-business-step-detail",
+            ".app-generation-business-node-track",
+            ".app-generation-step-card",
+            ".app-generation-canvas-grid",
+            ".app-generation-canvas-object",
+            ".app-generation-engineering-evidence",
+            ".app-generation-engineering-grid",
+            ".app-generation-agent-action-source",
+            ".app-generation-classification-banner",
+            "overflow-wrap: anywhere",
+        ):
+            self.assertIn(token, css)
 
     def test_app_generation_node_exposes_phases_and_output_summary(self) -> None:
         """节点契约扩展：每个 node 必须带 phases + output_summary；implementation 节点 phases 复用 implementation_trace.steps。"""
@@ -1434,8 +1595,11 @@ console.log(JSON.stringify(vm));
             )
 
         types = [event.get("type") for event in events]
-        self.assertEqual(types, ["agent_end"])
-        agent_end_payload = events[0]["payload"]
+        self.assertEqual(types[0], "agent_status")
+        self.assertEqual(types[-1], "agent_end")
+        status_phases = [e["payload"].get("phase") for e in events if e.get("type") == "agent_status"]
+        self.assertEqual(status_phases, ["preparing_context", "connecting_model"])
+        agent_end_payload = next(e["payload"] for e in events if e.get("type") == "agent_end")
         self.assertEqual(agent_end_payload["provider"], "codex")
         self.assertEqual(agent_end_payload["status"], "completed")
         self.assertTrue(any(a["type"] == "explain_node" for a in agent_end_payload["actions"]))
@@ -1481,8 +1645,10 @@ console.log(JSON.stringify(vm));
                 )
             )
 
-        self.assertEqual([event.get("type") for event in events], ["agent_end"])
-        actions = events[0]["payload"]["actions"]
+        types = [event.get("type") for event in events]
+        self.assertEqual(types[0], "agent_status")
+        self.assertEqual(types[-1], "agent_end")
+        actions = next(e["payload"] for e in events if e.get("type") == "agent_end")["actions"]
         action_types = [action["type"] for action in actions]
         self.assertIn("read_artifact", action_types)
         self.assertIn("suggest_artifact_regeneration", action_types)
@@ -1519,9 +1685,11 @@ console.log(JSON.stringify(vm));
                         )
                     )
 
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["type"], "upstream_error")
-        self.assertEqual(events[0]["payload"]["phase"], "not_configured")
+        self.assertEqual(events[0]["type"], "agent_status")
+        self.assertEqual(events[0]["payload"]["phase"], "preparing_context")
+        error_events = [e for e in events if e.get("type") == "upstream_error"]
+        self.assertEqual(len(error_events), 1)
+        self.assertEqual(error_events[0]["payload"]["phase"], "not_configured")
 
     def test_app_generation_agent_stream_routes_pi_provider_through_fake_subprocess(self) -> None:
         import json as _json
@@ -1887,6 +2055,85 @@ console.log(JSON.stringify(vm));
         self.assertEqual(node_state_events[0]["payload"]["status"], "completed")
         self.assertEqual(types[-1], "run_finished")
         self.assertEqual(events[-1]["payload"]["status"], "completed")
+
+    def test_stream_app_generation_run_events_emits_heartbeat_each_poll_cycle(self) -> None:
+        from growth_dev.team import dashboard as dashboard_module
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "beat-run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "team_run_record.json").write_text(
+                json.dumps({"run_id": "beat-run", "domain_id": "app_generation", "status": "running"}),
+                encoding="utf-8",
+            )
+
+            snapshot = {
+                "run": {"run_id": "beat-run", "status": "running"},
+                "nodes": [
+                    {"id": "implementation", "status": "running", "outputs": [], "risks": [], "selected_variant": "codex"},
+                ],
+            }
+
+            def fake_build(run_id: str, *, runs_dir: Path, repo_root: Path) -> dict:
+                return snapshot
+
+            with mock.patch.object(dashboard_module, "build_app_generation_nodes", side_effect=fake_build):
+                events = list(
+                    dashboard_module.stream_app_generation_run_events(
+                        "beat-run",
+                        runs_dir=runs_dir,
+                        repo_root=root,
+                        poll_interval=0,
+                        max_iterations=3,
+                    )
+                )
+
+        heartbeats = [e for e in events if e["type"] == "heartbeat"]
+        self.assertEqual(len(heartbeats), 3)
+        for beat in heartbeats:
+            self.assertEqual(beat["payload"]["run_id"], "beat-run")
+            self.assertEqual(beat["payload"]["running_node"], "implementation")
+            self.assertTrue(beat["payload"]["ts"])
+
+    def test_stream_app_generation_run_events_defaults_to_real_sleep(self) -> None:
+        from growth_dev.team import dashboard as dashboard_module
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "sleep-run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "team_run_record.json").write_text(
+                json.dumps({"run_id": "sleep-run", "domain_id": "app_generation", "status": "running"}),
+                encoding="utf-8",
+            )
+            snapshot = {
+                "run": {"run_id": "sleep-run", "status": "running"},
+                "nodes": [
+                    {"id": "implementation", "status": "running", "outputs": [], "risks": [], "selected_variant": "codex"},
+                ],
+            }
+
+            def fake_build(run_id: str, *, runs_dir: Path, repo_root: Path) -> dict:
+                return snapshot
+
+            with (
+                mock.patch.object(dashboard_module, "build_app_generation_nodes", side_effect=fake_build),
+                mock.patch.object(dashboard_module.time, "sleep") as sleep_mock,
+            ):
+                list(
+                    dashboard_module.stream_app_generation_run_events(
+                        "sleep-run",
+                        runs_dir=runs_dir,
+                        repo_root=root,
+                        poll_interval=0.25,
+                        max_iterations=2,
+                    )
+                )
+
+        self.assertEqual(sleep_mock.call_args_list, [mock.call(0.25), mock.call(0.25)])
 
     def test_dashboard_acceptance_runner_records_successful_apply_and_tests(self) -> None:
         from growth_dev.team.dashboard import run_dashboard_acceptance_once
@@ -2279,6 +2526,20 @@ console.log(JSON.stringify(vm));
         self.assertIn("patch_set_id", patch_fn)
         self.assertIn("{ ...patchPayload, dry_run: true }", patch_fn)
         self.assertIn("PatchSet", patch_fn)
+
+    def test_app_generation_frontend_delegate_repair_polls_progress_status(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "dashboard" / "app_generation.js").read_text(encoding="utf-8")
+        repair_fn = script[
+            script.index("async function handleDelegateCodeRepairAction") : script.index("async function handlePatchAppAction")
+        ]
+
+        self.assertIn("function createRepairId", script)
+        self.assertIn("getDelegateCodeRepairStatus", script)
+        self.assertIn("startDelegateRepairProgressPolling", script)
+        self.assertIn("stopDelegateRepairProgressPolling", script)
+        self.assertIn("repair_id: repairId", repair_fn)
+        self.assertIn("Code Agent 修复进度", script)
 
     def test_dashboard_flow_detail_uses_compact_artifact_and_evidence_layout(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -3342,12 +3603,133 @@ console.log(JSON.stringify(vm));
                     },
                 )
                 published_text = (published / "server.js").read_text(encoding="utf-8")
+                progress_events = [
+                    json.loads(line)
+                    for line in (run_dir / "app_repairs" / "repair-1" / "progress.jsonl").read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
 
         self.assertEqual(result["status"], "prepared")
         self.assertEqual(result["repair_id"], "repair-1")
         self.assertIn("fixed", result["diff"])
         self.assertEqual(published_text, "original\n")
+        self.assertEqual(progress_events[0]["event_type"], "stage_started")
+        self.assertEqual(progress_events[0]["status"], "running")
         runner.assert_called_once()
+
+    def test_delegate_code_repair_status_returns_latest_progress_events(self) -> None:
+        from growth_dev.team.dashboard import DashboardConfig, get_app_generation_delegate_repair_status
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "delegate-status"
+            progress_dir = run_dir / "app_repairs" / "repair-1"
+            progress_dir.mkdir(parents=True)
+            (progress_dir / "progress.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_id": "e1", "event_type": "stage_started", "title": "准备执行"}),
+                        json.dumps({"event_id": "e2", "event_type": "process_started", "title": "启动 Code Agent"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (progress_dir / "progress_status.json").write_text(
+                json.dumps({"status": "running", "result_ready": False, "diff_ready": False}),
+                encoding="utf-8",
+            )
+
+            result = get_app_generation_delegate_repair_status(
+                DashboardConfig(
+                    runs_dir=runs_dir,
+                    domains_dir=root / "domains",
+                    repo_root=root,
+                    dashboard_dir=root / "dashboard",
+                    executor="codex",
+                ),
+                {"run_id": "delegate-status", "repair_id": "repair-1", "tail": 1},
+            )
+
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(len(result["latest_events"]), 1)
+        self.assertEqual(result["latest_events"][0]["event_id"], "e2")
+
+    def test_app_generation_run_stream_emits_node_progress(self) -> None:
+        from growth_dev.team.dashboard import stream_app_generation_run_events
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir, run_id="progress-run")
+            record_path = run_dir / "team_run_record.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["status"] = "running"
+            for agent in record["agent_runs"]:
+                if agent["agent_id"] == "coder":
+                    agent["status"] = "running"
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            progress_path = run_dir / "codex" / "coder_progress.jsonl"
+            progress_path.write_text(
+                json.dumps(
+                    {
+                        "event_id": "p1",
+                        "event_type": "codex_item_completed",
+                        "title": "运行命令",
+                        "summary": "node --check server.js 已完成。",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            events = list(
+                stream_app_generation_run_events(
+                    "progress-run",
+                    runs_dir=runs_dir,
+                    repo_root=root,
+                    max_iterations=1,
+                )
+            )
+
+        progress_events = [event for event in events if event["type"] == "node_progress"]
+        self.assertEqual(len(progress_events), 1)
+        self.assertEqual(progress_events[0]["payload"]["node_id"], "implementation")
+        self.assertEqual(progress_events[0]["payload"]["event"]["event_id"], "p1")
+
+    def test_app_generation_node_context_includes_progress_summaries(self) -> None:
+        from growth_dev.team.dashboard import build_app_generation_node_context
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = self._write_app_generation_workbench_run(runs_dir, run_id="context-progress")
+            (run_dir / "codex" / "coder_progress.jsonl").write_text(
+                json.dumps({"event_id": "p1", "event_type": "codex_item_completed", "title": "运行命令", "summary": "已完成语法检查。"}) + "\n",
+                encoding="utf-8",
+            )
+            repair_dir = run_dir / "app_repairs" / "repair-1"
+            repair_dir.mkdir(parents=True)
+            (repair_dir / "progress_status.json").write_text(
+                json.dumps({"status": "running", "current_title": "启动 Code Agent", "diff_ready": False, "result_ready": False}),
+                encoding="utf-8",
+            )
+            (run_dir / "app_repairs" / "active.json").write_text(
+                json.dumps({"repair_id": "repair-1", "status": "running"}),
+                encoding="utf-8",
+            )
+
+            context = build_app_generation_node_context(
+                "context-progress",
+                "implementation",
+                runs_dir=runs_dir,
+                repo_root=root,
+            )
+
+        self.assertEqual(context["execution_progress"]["latest_events"][0]["event_id"], "p1")
+        self.assertEqual(context["code_repair_progress"]["repair_id"], "repair-1")
+        self.assertEqual(context["code_repair_progress"]["status"], "running")
 
     def test_delegate_code_repair_apply_promotes_candidate_and_writes_adjustment_event(self) -> None:
         from growth_dev.team.dashboard import DashboardConfig, apply_app_generation_delegate_repair
