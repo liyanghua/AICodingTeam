@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>从业务场景到应用，到共享的电商场景能力</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --ink: #111820;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px; }
+
+    header { margin-bottom: 24px; }
+
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.25; font-weight: 760; }
+
+    h2 { margin: 0 0 14px; font-size: 15px; line-height: 1.25; font-weight: 740; }
+
+    p { margin: 0; color: var(--muted); }
+
+    .lead { max-width: 980px; color: var(--text); font-size: 15px; }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .responsibility-grid, .principle-grid { display: grid; gap: 12px; }
+    .responsibility-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .principle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .item {
+      min-height: 112px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .item h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.25; font-weight: 740; }
+    .item p { font-size: 13px; color: var(--muted); }
+
+    .item.accent { background: #f6efe3; border-color: #d5bd87; }
+
+    .diagram-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfd; }
+
+    svg { display: block; width: 100%; min-width: 1040px; height: auto; }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+    }
+
+    .note.summary { border-left-color: var(--green); background: #eaf4ee; font-weight: 600; color: #214d36; }
+
+    @media (max-width: 980px) {
+      main { padding: 24px 16px 36px; }
+      .responsibility-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .principle-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .responsibility-grid, .principle-grid { grid-template-columns: 1fr; }
+      .section { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>从业务场景到应用，到共享的电商场景能力</h1>
+      <p class="lead">
+        全链路：电商业务场景编译成可运行的应用与可共享的场景能力。App 是壳(A)，能力运行时是承载多场景 Skill 的共享能力层(B)——运行内核通用，业务逻辑按场景可插拔。B 的第一阶段是一组带契约的服务端点：横切的内核服务（数据 / 知识 / 工具 / 证据 / 评估，场景无关、全场景共享）加上调用它们的场景端点，此时尚未收敛成 Skill。MVP 1.0：A+B 同进程合体、逻辑分离。
+      </p>
+    </header>
+
+    <section class="section" aria-labelledby="diagram-title">
+      <h2 id="diagram-title">全链路极简架构图</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 720" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">从业务场景到应用再到共享电商场景能力的全链路架构</title>
+          <desc id="svg-desc">生成期把业务场景输入编译成 TDS Bundle，应用装配器分三路产出 App 壳；运行期 App 壳调用共享能力运行时，能力运行时由运行内核与多场景 Skill 组成，证据与反馈回写能力运行时。MVP 1.0 中 App 壳与能力运行时同进程合体、逻辑分离。</desc>
+          <defs>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <style>
+              .lane { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .box-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .box-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .box-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .colo { fill: none; stroke: #b58a36; stroke-width: 1.6; stroke-dasharray: 7 5; }
+              .title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .band { fill: #667684; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 1px; }
+              .label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .mono { fill: #314455; font: 12px SFMono-Regular, Consolas, monospace; }
+              .colo-label { fill: #8a5a00; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .skill-on { fill: #1f7a4d; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .skill-off { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .tagA { fill: #1f7a4d; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .tagB { fill: #1f5d8c; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow-blue); }
+              .arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#arrow-green); }
+              .arrow-amber { stroke: #946200; stroke-width: 2; fill: none; marker-end: url(#arrow-amber); stroke-dasharray: 6 4; }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="672" rx="12" class="lane"></rect>
+          <text x="48" y="54" class="title">生成期装配 App 壳，运行期共享承载多场景 Skill 的能力运行时</text>
+
+          <text x="48" y="88" class="band">生成期 BUILD</text>
+
+          <rect x="48" y="102" width="176" height="150" rx="8" class="box"></rect>
+          <text x="66" y="130" class="label">业务场景输入</text>
+          <text x="66" y="156" class="small">BRD → PRD</text>
+          <text x="66" y="180" class="small">能力上下文</text>
+          <text x="66" y="204" class="small">AppSpec</text>
+          <text x="66" y="228" class="small">EvalSpec</text>
+
+          <rect x="262" y="130" width="132" height="92" rx="8" class="box box-blue"></rect>
+          <text x="280" y="170" class="label">TDS Builder</text>
+          <text x="280" y="192" class="small">统一编译</text>
+
+          <rect x="432" y="130" width="132" height="92" rx="8" class="box"></rect>
+          <text x="450" y="170" class="label">TDS Bundle</text>
+          <text x="450" y="192" class="small">单一交付包</text>
+
+          <rect x="602" y="110" width="210" height="132" rx="8" class="box box-amber"></rect>
+          <text x="620" y="140" class="label">应用装配器 · 分流</text>
+          <text x="620" y="168" class="small">模板装配 · 确定结构</text>
+          <text x="620" y="192" class="small">能力运行时绑定 · 业务逻辑</text>
+          <text x="620" y="216" class="small">Code Agent · 兜底定制</text>
+
+          <rect x="872" y="130" width="222" height="92" rx="8" class="box box-green"></rect>
+          <text x="890" y="164" class="label">App 壳 <tspan class="tagA">(A)</tspan></text>
+          <text x="890" y="190" class="small">UI / 页面 / 状态机 · 自包含</text>
+
+          <path d="M224 176 H262" class="arrow-blue"></path>
+          <path d="M394 176 H432" class="arrow-blue"></path>
+          <path d="M564 176 H602" class="arrow-blue"></path>
+          <path d="M812 178 H872" class="arrow-green"></path>
+
+          <rect x="48" y="284" width="1064" height="1" fill="#dce2e7"></rect>
+          <text x="48" y="308" class="band">运行期 RUN</text>
+
+          <path d="M983 222 C983 300 900 320 884 372" class="arrow-blue"></path>
+          <text x="902" y="320" class="small">调用</text>
+
+          <rect x="360" y="346" width="520" height="252" rx="8" class="box box-blue"></rect>
+          <text x="378" y="378" class="label">能力运行时 <tspan class="tagB">(B)</tspan> · 运行实体共享 · 单一真相</text>
+
+          <rect x="378" y="396" width="244" height="184" rx="6" class="box"></rect>
+          <text x="396" y="424" class="label">运行内核（场景无关）</text>
+          <text x="396" y="450" class="small">服务端点 / 执行</text>
+          <text x="396" y="474" class="small">证据 / 回放 / eval</text>
+          <text x="396" y="498" class="small">阶段0 端点 → 阶段1 skill</text>
+          <text x="396" y="524" class="mono">validate / score /</text>
+          <text x="396" y="544" class="mono">build-evidence / cards</text>
+
+          <rect x="638" y="396" width="224" height="184" rx="6" class="box box-green"></rect>
+          <text x="656" y="424" class="label">电商场景 Skill（可插拔）</text>
+          <text x="656" y="452" class="skill-on">● 商机洞察（已实现）</text>
+          <text x="656" y="476" class="skill-off">○ 主图策划</text>
+          <text x="656" y="500" class="skill-off">○ 商品运营</text>
+          <text x="656" y="524" class="skill-off">○ 新品洞察</text>
+          <text x="656" y="552" class="skill-off">… 挂内核即扩展</text>
+
+          <rect x="80" y="400" width="184" height="92" rx="8" class="box"></rect>
+          <text x="98" y="434" class="label">evidence / trace</text>
+          <text x="98" y="458" class="small">run record / 回放</text>
+
+          <path d="M360 446 H264" class="arrow-green"></path>
+          <path d="M172 492 C172 600 470 612 480 584" class="arrow-amber"></path>
+          <text x="208" y="556" class="small">rsi_feedback 回写</text>
+
+          <rect x="336" y="116" width="772" height="496" rx="14" class="colo"></rect>
+          <text x="930" y="636" class="colo-label">MVP 1.0 部署单元：A + B 同进程合体 · 逻辑分离</text>
+
+          <text x="48" y="664" class="small">能力运行时内核通用、场景 Skill 可插拔；扩展新场景 = 挂一个新 Skill 包，不改内核。</text>
+        </svg>
+      </div>
+      <p class="note">
+        全链路口径：业务场景 → 生成期装配 App 壳(A) → 运行期调用共享能力运行时(B)。能力运行时由「场景无关的运行内核」与「可插拔的电商场景 Skill」组成；证据与反馈回写能力运行时形成闭环。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="modules-title">
+      <h2 id="modules-title">模块职责</h2>
+      <div class="responsibility-grid">
+        <article class="item">
+          <h3>业务场景输入</h3>
+          <p>BRD → PRD，加上能力上下文、AppSpec、EvalSpec，描述一个电商经营场景。</p>
+        </article>
+        <article class="item">
+          <h3>TDS Builder</h3>
+          <p>把四类输入统一编译成单一交付包 TDS Bundle。</p>
+        </article>
+        <article class="item">
+          <h3>应用装配器</h3>
+          <p>按确定性分流：模板装配做确定结构、能力运行时绑定接业务逻辑、Code Agent 兜底定制。</p>
+        </article>
+        <article class="item">
+          <h3>App 壳 (A)</h3>
+          <p>自包含的 UI / 页面 / 状态机。可漂移、可重生成、可离线预览，不是事实源。</p>
+        </article>
+        <article class="item accent">
+          <h3>能力运行时 (B)</h3>
+          <p>运行内核（场景无关：执行/证据/回放/eval）+ 电商多场景 Skill（商机洞察 / 主图策划 / 商品运营 / 新品…），单一真相、可回放。</p>
+          <p>service / skill / runtime 是三层不是三阶段：service 是对外调用面（两阶段都在）；skill 是对内封装面（第二阶段才补上）；能力运行时是装它俩的容器。阶段升级动的是封装形态（裸函数 → skill 包），不是调用形态——端点签名不变，App 零改动。</p>
+        </article>
+        <article class="item">
+          <h3>反馈回写</h3>
+          <p>运行期 evidence 与 rsi_feedback 回写能力运行时，闭环沉淀，而非从 app 代码逆向。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="principles-title">
+      <h2 id="principles-title">设计原则</h2>
+      <div class="principle-grid">
+        <article class="item">
+          <h3>A/B 切分</h3>
+          <p>壳可漂移，能力单一真相。</p>
+        </article>
+        <article class="item">
+          <h3>多载体装配</h3>
+          <p>确定走模板，逻辑走能力运行时，定制才 codegen。</p>
+        </article>
+        <article class="item">
+          <h3>先服务后 Skill</h3>
+          <p>端点先上线，稳定后内部收敛成 skill。</p>
+        </article>
+        <article class="item accent">
+          <h3>内核 + 多场景</h3>
+          <p>能力运行时是通用内核 + 可插拔场景 Skill，不是单一通用引擎。</p>
+        </article>
+        <article class="item">
+          <h3>契约前置</h3>
+          <p>端点 input/output 有 schema，结论挂 evidence。</p>
+        </article>
+        <article class="item accent">
+          <h3>MVP 1.0 合体</h3>
+          <p>A+B 物理合体、逻辑分离；后续可平移拆为独立服务。</p>
+        </article>
+      </div>
+      <p class="note summary">
+        一句总结：全链路把电商业务场景编译成可运行的应用与可共享的场景能力——App 是壳，能力运行时以「内核 + 多场景 Skill」承载业务；MVP 1.0 先同进程合体、逻辑分离，再按需拆分。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

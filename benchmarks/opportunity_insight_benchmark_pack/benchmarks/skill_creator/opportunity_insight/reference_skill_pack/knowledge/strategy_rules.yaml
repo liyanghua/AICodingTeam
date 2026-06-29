@@ -1,0 +1,12 @@
+strategy_rules:
+  - id: opportunity_score_rule
+    formula_hint: demand_strength - competition_intensity + differentiation_space + supply_chain_fit + evidence_quality
+  - id: red_ocean_penalty
+    condition: high_search_volume and high_competition_index and high_paid_competition
+    action: lower_opportunity_score
+  - id: content_opportunity_split
+    condition: high_content_engagement and weak_shelf_sales
+    action: classify_as_content_or_main_image_opportunity
+  - id: low_sample_confidence
+    condition: sample_size < 30
+    action: lower_confidence_and_request_more_data

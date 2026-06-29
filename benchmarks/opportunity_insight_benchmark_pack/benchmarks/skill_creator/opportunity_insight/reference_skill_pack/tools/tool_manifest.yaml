@@ -1,0 +1,52 @@
+tools:
+  keyword_analyzer:
+    description: 分析关键词需求强度、趋势和竞争度
+    mode: mock
+    input_schema: {category: string, keyword_dataset: array}
+    output_schema: {keyword_clusters: array, demand_strength_scores: array}
+    failure_modes: [missing_keyword_dataset, invalid_numeric_fields]
+
+  competitor_analyzer:
+    description: 分析竞品价格带、卖点、销量和评论结构
+    mode: mock
+    input_schema: {competitor_dataset: array}
+    output_schema: {competitor_clusters: array, price_band_distribution: array, selling_point_patterns: array}
+    failure_modes: [missing_price, insufficient_competitor_samples]
+
+  content_signal_extractor:
+    description: 从内容数据中抽取场景、人群、痛点和互动信号
+    mode: mock
+    input_schema: {content_signal_dataset: array}
+    output_schema: {topics: array, scene_signals: array, pain_points: array}
+    failure_modes: [missing_content_dataset, low_engagement_sample]
+
+  evidence_builder:
+    description: 为机会卡构建证据链
+    mode: internal
+    input_schema: {signals: array}
+    output_schema: {evidence_pack: array}
+    failure_modes: [insufficient_evidence]
+
+  opportunity_score_calculator:
+    description: 计算机会分和置信度
+    mode: internal
+    input_schema:
+      demand_strength: number
+      competition_intensity: number
+      differentiation_space: number
+      supply_chain_fit: number
+      evidence_quality: number
+    output_schema: {opportunity_score: number, confidence: number, score_breakdown: object}
+    failure_modes: [missing_score_input, low_evidence_quality]
+
+  task_exporter:
+    description: 将机会卡转成运营任务清单
+    mode: local
+    input_schema: {opportunity_cards: array}
+    output_schema: {markdown_report: string, task_json: array}
+
+forbidden_actions:
+  - direct_modify_online_product
+  - direct_change_ad_budget
+  - store_secret
+  - unauthorized_platform_scraping

@@ -1,0 +1,80 @@
+benchmark_id: opportunity_insight_skill_creator_v0
+benchmark_type: skill_creator
+domain: ecommerce
+scenario: opportunity_insight
+version: 0.1.0
+
+task:
+  name: Generate Opportunity Insight Skill Pack
+  description: >
+    Given ecommerce business context, data dictionary, knowledge seed,
+    claim pack seed, tool manifest, output requirements and sample data,
+    generate a reusable opportunity_insight Business Skill Pack.
+
+input_files:
+  - input/scenario_brief.md
+  - input/business_context.md
+  - input/data_dictionary.yaml
+  - input/knowledge_seed.md
+  - input/claim_pack_seed.md
+  - input/tool_manifest.yaml
+  - input/output_requirements.yaml
+  - input/constraints.yaml
+  - input/sample_inputs/sample_category_context.json
+  - input/sample_inputs/sample_keyword_data.csv
+  - input/sample_inputs/sample_competitor_data.csv
+  - input/sample_inputs/sample_content_signals.csv
+  - input/sample_inputs/sample_review_snippets.jsonl
+
+expected_outputs:
+  root_dir: generated_skills/ecommerce/opportunity_insight/
+  required_files:
+    - SKILL.md
+    - skill.yaml
+    - README.md
+    - contracts/input_schema.json
+    - contracts/output_schema.json
+    - contracts/data_contract.json
+    - contracts/tool_contract.json
+    - contracts/knowledge_contract.yaml
+    - contracts/eval_contract.json
+    - knowledge/claim_pack.md
+    - knowledge/strategy_rules.yaml
+    - knowledge/negative_cases.md
+    - prompts/planner.md
+    - prompts/executor.md
+    - prompts/reviewer.md
+    - prompts/failure_triage.md
+    - tools/tool_manifest.yaml
+    - examples/sample_input.json
+    - examples/sample_output.md
+    - evals/scoring_rubric.yaml
+    - runtime/execution_plan.yaml
+    - runtime/error_policy.yaml
+
+hard_gates:
+  - required_file_tree_created
+  - has_skill_entry
+  - data_contract_complete
+  - knowledge_contract_grounded
+  - tool_contract_defined
+  - execution_plan_ordered
+  - opportunity_card_schema_present
+  - evidence_required
+  - eval_defined
+  - rsi_feedback_defined
+  - no_unsafe_action
+
+scoring:
+  rubric_file: eval/scoring_rubric.yaml
+  pass_score: 80
+  excellent_score: 90
+
+reference:
+  reference_skill_pack: reference_skill_pack/
+  exact_match_required: false
+
+notes:
+  - Reference Skill Pack is not the only correct answer.
+  - Score capability coverage, contract quality, business usefulness and evolvability.
+  - Do not reward verbose generic prompts without executable contracts.

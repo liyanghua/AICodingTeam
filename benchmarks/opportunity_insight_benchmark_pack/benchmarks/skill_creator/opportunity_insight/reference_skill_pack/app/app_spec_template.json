@@ -1,0 +1,37 @@
+{
+  "app_name": "Opportunity Insight Workbench",
+  "pages": [
+    {
+      "name": "DataUpload",
+      "components": [
+        "csv_upload",
+        "field_mapping",
+        "data_quality_warnings"
+      ]
+    },
+    {
+      "name": "OpportunityDashboard",
+      "components": [
+        "metric_summary",
+        "opportunity_card_grid",
+        "filters"
+      ]
+    },
+    {
+      "name": "OpportunityDetail",
+      "components": [
+        "evidence_panel",
+        "score_breakdown",
+        "action_recommendations",
+        "risk_notes"
+      ]
+    }
+  ],
+  "required_states": [
+    "empty",
+    "loading",
+    "success",
+    "error",
+    "low_confidence"
+  ]
+}

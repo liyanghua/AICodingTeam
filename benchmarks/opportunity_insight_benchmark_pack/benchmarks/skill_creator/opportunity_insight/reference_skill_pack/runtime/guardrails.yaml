@@ -1,0 +1,6 @@
+guardrails:
+  - no_direct_production_mutation
+  - no_secret_storage
+  - no_unauthorized_platform_scraping
+  - no_strong_claim_without_evidence
+  - confidence_must_reflect_data_quality

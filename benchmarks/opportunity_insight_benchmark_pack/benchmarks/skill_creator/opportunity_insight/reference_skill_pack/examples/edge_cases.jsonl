@@ -1,0 +1,1 @@
+{"case_id":"missing_competitor_price","description":"Competitor data lacks price","expected":"Do not calculate price gap; show missing data risk."}

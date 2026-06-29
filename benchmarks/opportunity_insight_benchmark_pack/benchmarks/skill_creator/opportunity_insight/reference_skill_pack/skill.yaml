@@ -1,0 +1,22 @@
+skill_id: ecommerce.opportunity_insight
+version: 0.1.0
+title: 商机洞察 Skill
+domain: ecommerce
+scenario: opportunity_discovery
+
+description: >
+  从关键词、竞品、内容、评论、价格带和企业经营数据中识别电商商机，输出机会卡、证据链、机会评分、风险判断和下一步行动建议。
+
+trigger:
+  when_to_use:
+    - 需要判断某个类目是否存在新品机会
+    - 需要从关键词或竞品数据中生成机会卡
+    - 需要为上新、主图、内容、投流提供经营洞察
+  when_not_to_use:
+    - 没有任何数据或业务上下文
+    - 只需要普通报表查询
+    - 需要直接执行投放或改动线上商品
+
+rsi_feedback:
+  collect: [user_acceptance, user_edits, downstream_task_created, business_outcome, failed_claims, missing_data_fields, tool_failures]
+  update_targets: [knowledge_contract, data_contract, scoring_rubric, examples, negative_cases, execution_plan]

@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "required": [
+    "category",
+    "keyword_dataset",
+    "competitor_dataset"
+  ],
+  "properties": {
+    "category": {
+      "type": "string"
+    },
+    "keyword_dataset": {
+      "type": "array"
+    },
+    "competitor_dataset": {
+      "type": "array"
+    },
+    "content_signal_dataset": {
+      "type": "array"
+    },
+    "review_dataset": {
+      "type": "array"
+    },
+    "brand_positioning": {
+      "type": "string"
+    },
+    "supply_chain_constraints": {
+      "type": "object"
+    },
+    "target_platform": {
+      "type": "string"
+    }
+  }
+}

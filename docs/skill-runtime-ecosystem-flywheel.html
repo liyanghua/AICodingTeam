@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>生态飞轮：四角色 × 入口 × 贡献 × 分润</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --teacher: #6b4ea6;
+      --tp: #1f5d8c;
+      --data: #1f7a4d;
+      --merchant: #b46a1f;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px; }
+    header { margin-bottom: 24px; }
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.25; font-weight: 760; }
+    h2 { margin: 0 0 14px; font-size: 15px; line-height: 1.25; font-weight: 740; }
+    h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.25; font-weight: 740; }
+    p { margin: 0; color: var(--muted); }
+    .kicker { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #eef4f8; color: var(--action); font-size: 12px; font-weight: 620; margin-bottom: 10px; }
+    .lead { max-width: 980px; color: var(--text); font-size: 15px; }
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+    .role-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .role-card { padding: 14px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; border-top: 4px solid var(--action); }
+    .role-card.teacher { border-top-color: var(--teacher); }
+    .role-card.tp { border-top-color: var(--tp); }
+    .role-card.data { border-top-color: var(--data); }
+    .role-card.merchant { border-top-color: var(--merchant); }
+    .role-card h3 { margin-bottom: 6px; }
+    .role-card .role-sub { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+    .role-card dl { margin: 0; }
+    .role-card dt { font-size: 11px; font-weight: 700; color: var(--ink); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 10px; }
+    .role-card dd { margin: 4px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.5; }
+    .role-card dd .meta { color: var(--muted); font-size: 11.5px; display: block; margin-top: 2px; }
+
+    .flywheel-list { counter-reset: f; display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .flywheel-list .step { position: relative; padding: 12px 14px 12px 44px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; }
+    .flywheel-list .step::before { counter-increment: f; content: counter(f); position: absolute; left: 12px; top: 12px; width: 24px; height: 24px; border-radius: 50%; background: var(--action); color: #fff; font-weight: 720; font-size: 12px; display: grid; place-items: center; }
+    .flywheel-list .step h3 { margin: 0 0 4px; font-size: 13px; }
+    .flywheel-list .step p { font-size: 12.5px; }
+
+    .moat-grid, .risk-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .moat { padding: 14px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; }
+    .moat.heavy { background: #f6efe3; border-color: #d5bd87; }
+    .moat .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 620; background: #eef4f8; color: var(--action); margin-bottom: 6px; }
+    .moat.heavy .tag { background: #f3e2b7; color: var(--amber); }
+    .risk { padding: 14px; background: #fff7f7; border: 1px solid #f0caca; border-radius: 8px; }
+    .risk h3 { color: var(--red); }
+    .risk p { color: #6b3232; font-size: 12.5px; }
+
+    .diagram-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfd; padding: 8px; }
+    svg.flywheel { display: block; width: 100%; min-width: 1040px; height: auto; }
+    .svg-title { font-size: 14px; font-weight: 720; fill: var(--ink); }
+    .svg-small { font-size: 11px; fill: var(--muted); }
+    .svg-label { font-size: 12.5px; font-weight: 680; fill: var(--ink); }
+    .svg-step { font-size: 11px; font-weight: 640; fill: #fff; }
+    .svg-step-text { font-size: 12px; fill: var(--ink); font-weight: 580; }
+
+    .note { margin-top: 12px; padding: 12px 14px; border-left: 4px solid var(--action); background: #eef4f8; color: #314455; border-radius: 6px; }
+    .note.summary { border-left-color: var(--green); background: #eaf4ee; font-weight: 600; color: #214d36; }
+
+    @media (max-width: 980px) {
+      main { padding: 24px 16px 36px; }
+      .role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flywheel-list, .moat-grid, .risk-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="kicker">能力运行时 · 生态飞轮</span>
+      <h1>四角色 × 入口 × 贡献 × 分润</h1>
+      <p class="lead">为什么这套架构天然能长成生态。四类电商既有玩家——培训老师、TP 代运营、数据服务商+平台、商家——各自手里的资产，正好对应 Skill 的四个面（骨架 / SOP+阈值 / 数据 / evidence）。每类角色都有自然的入口、明确的贡献和复利型分润，飞轮转一圈，下一圈更省力。</p>
+    </header>
+
+    <section class="section">
+      <h2>飞轮总览</h2>
+      <p class="lead" style="font-size:13px;margin-bottom:14px;">中心是 Skill 资产池（骨架 + SOP+阈值 + 数据 + evidence 四面）。四角色顺时针围绕，编号 1–6 是飞轮六圈的顺序。</p>
+      <div class="diagram-wrap">
+        <svg class="flywheel" viewBox="0 0 1080 720" role="img" aria-labelledby="svg-title svg-desc">
+          <title id="svg-title">生态飞轮：四角色围绕 Skill 资产池，六圈顺时针闭环</title>
+          <desc id="svg-desc">培训老师贡献骨架、商家产出 evidence、TP 贡献 SOP 与阈值、数据服务商接入 Data Connector，六个动作形成顺时针闭环。</desc>
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f5d8c"/>
+            </marker>
+          </defs>
+
+          <rect x="0" y="0" width="1080" height="720" fill="#fbfcfd"/>
+
+          <circle cx="540" cy="360" r="150" fill="#fff" stroke="#c9d3dc" stroke-width="1.5"/>
+          <text x="540" y="332" text-anchor="middle" class="svg-label">Skill 资产池</text>
+          <text x="540" y="354" text-anchor="middle" class="svg-small">骨架方法论 · SOP + 阈值</text>
+          <text x="540" y="372" text-anchor="middle" class="svg-small">数据供给 · 运行期 evidence</text>
+          <text x="540" y="396" text-anchor="middle" class="svg-small">+ 圈层切片元数据</text>
+
+          <g>
+            <rect x="60" y="60" width="280" height="150" rx="10" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+            <text x="200" y="92" text-anchor="middle" class="svg-label" fill="#6b4ea6">① 培训老师</text>
+            <text x="200" y="116" text-anchor="middle" class="svg-small">方法论骨架作者</text>
+            <text x="200" y="146" text-anchor="middle" class="svg-step-text">入口：document-to-skill 上传</text>
+            <text x="200" y="168" text-anchor="middle" class="svg-step-text">贡献：Strategy IR / Workflow</text>
+            <text x="200" y="190" text-anchor="middle" class="svg-step-text">分润：Skill 调用次数分成</text>
+          </g>
+
+          <g>
+            <rect x="740" y="60" width="280" height="150" rx="10" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+            <text x="880" y="92" text-anchor="middle" class="svg-label" fill="#1f5d8c">③ TP 代运营</text>
+            <text x="880" y="116" text-anchor="middle" class="svg-small">SOP 与圈层阈值校准者</text>
+            <text x="880" y="146" text-anchor="middle" class="svg-step-text">入口：SOP 补丁库</text>
+            <text x="880" y="168" text-anchor="middle" class="svg-step-text">贡献：Workflow 补丁 + 阈值</text>
+            <text x="880" y="190" text-anchor="middle" class="svg-step-text">分润：圈层变体调用分成</text>
+          </g>
+
+          <g>
+            <rect x="740" y="510" width="280" height="150" rx="10" fill="#fff" stroke="#1f7a4d" stroke-width="1.6"/>
+            <text x="880" y="542" text-anchor="middle" class="svg-label" fill="#1f7a4d">⑤ 数据服务商 + 平台</text>
+            <text x="880" y="566" text-anchor="middle" class="svg-small">数据供给与圈层切片字段</text>
+            <text x="880" y="596" text-anchor="middle" class="svg-step-text">入口：Data Connector 注册</text>
+            <text x="880" y="618" text-anchor="middle" class="svg-step-text">贡献：Tool Contract 数据源</text>
+            <text x="880" y="640" text-anchor="middle" class="svg-step-text">分润：按调用次数计费</text>
+          </g>
+
+          <g>
+            <rect x="60" y="510" width="280" height="150" rx="10" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+            <text x="200" y="542" text-anchor="middle" class="svg-label" fill="#b46a1f">② 商家</text>
+            <text x="200" y="566" text-anchor="middle" class="svg-small">运行期 evidence 与反馈源</text>
+            <text x="200" y="596" text-anchor="middle" class="svg-step-text">入口：生成 App + 跑业务</text>
+            <text x="200" y="618" text-anchor="middle" class="svg-step-text">贡献：trace / evidence / 反馈</text>
+            <text x="200" y="640" text-anchor="middle" class="svg-step-text">收益：决策准度提升</text>
+          </g>
+
+          <g stroke="#1f5d8c" stroke-width="1.6" fill="none">
+            <path d="M 240 200 Q 360 280 410 320" marker-end="url(#arrow)"/>
+            <path d="M 410 400 Q 360 440 240 510" marker-end="url(#arrow)"/>
+            <path d="M 670 410 Q 760 480 760 510" marker-end="url(#arrow)"/>
+            <path d="M 760 200 Q 760 260 670 320" marker-end="url(#arrow)"/>
+            <path d="M 240 510 Q 360 480 410 410" marker-end="url(#arrow)" stroke-dasharray="4 3"/>
+            <path d="M 670 320 Q 760 280 740 200" marker-end="url(#arrow)" stroke-dasharray="4 3"/>
+          </g>
+
+          <g>
+            <circle cx="345" cy="245" r="14" fill="#6b4ea6"/><text x="345" y="249" text-anchor="middle" class="svg-step">1</text>
+            <circle cx="345" cy="475" r="14" fill="#b46a1f"/><text x="345" y="479" text-anchor="middle" class="svg-step">2</text>
+            <circle cx="715" cy="475" r="14" fill="#1f5d8c"/><text x="715" y="479" text-anchor="middle" class="svg-step">3</text>
+            <circle cx="715" cy="245" r="14" fill="#1f7a4d"/><text x="715" y="249" text-anchor="middle" class="svg-step">5</text>
+            <circle cx="430" cy="500" r="12" fill="#946200"/><text x="430" y="504" text-anchor="middle" class="svg-step">4</text>
+            <circle cx="650" cy="220" r="12" fill="#b43b3b"/><text x="650" y="224" text-anchor="middle" class="svg-step">6</text>
+          </g>
+
+          <text x="540" y="60" text-anchor="middle" class="svg-title">顺时针六圈闭环：每转一圈，下一圈更省力</text>
+          <text x="540" y="700" text-anchor="middle" class="svg-small">虚线：圈层切片细化（4）与新老师入驻（6）的反向拉力——飞轮自我加速的来源</text>
+        </svg>
+      </div>
+      <p class="note">读图：实线（1–3、5）是显性资产贡献；虚线（4、6）是隐性放大效应——切片细化让骨架变出 N 个变体，分润透明吸引更多老师入驻。</p>
+    </section>
+
+    <section class="section">
+      <h2>四角色 × 入口 / 贡献 / 分润</h2>
+      <div class="role-grid">
+        <article class="role-card teacher">
+          <h3>培训老师</h3>
+          <p class="role-sub">方法论骨架作者</p>
+          <dl>
+            <dt>入口</dt>
+            <dd>document-to-skill 编译器（外部 SDK / 上传后台）<span class="meta">把方法论文档编译成 Strategy IR 与 Workflow DAG</span></dd>
+            <dt>贡献</dt>
+            <dd>骨架 Skill 的判断逻辑、节点编排与知识引用<span class="meta">参数留空，由下游角色补</span></dd>
+            <dt>分润机制</dt>
+            <dd>按 Skill 调用次数分成（含派生变体）<span class="meta">骨架被切成 N 个变体后，每个变体仍记原作者份额</span></dd>
+          </dl>
+        </article>
+        <article class="role-card tp">
+          <h3>TP 代运营商</h3>
+          <p class="role-sub">SOP 与圈层阈值校准者</p>
+          <dl>
+            <dt>入口</dt>
+            <dd>SOP 补丁库 / 圈层阈值上传<span class="meta">绑定到某个骨架 Skill 的特定圈层切片</span></dd>
+            <dt>贡献</dt>
+            <dd>Workflow 补丁、节点阈值经验值、节奏 SOP<span class="meta">让 Skill 在该圈层下表现更准</span></dd>
+            <dt>分润机制</dt>
+            <dd>所属圈层变体的调用分成<span class="meta">商家越多落在该圈层、TP 收益越高</span></dd>
+          </dl>
+        </article>
+        <article class="role-card data">
+          <h3>数据服务商 + 平台</h3>
+          <p class="role-sub">数据供给与切片维度</p>
+          <dl>
+            <dt>入口</dt>
+            <dd>Data Connector 注册中心（按 Tool Contract）<span class="meta">声明字段、口径、刷新频率与权限</span></dd>
+            <dt>贡献</dt>
+            <dd>行业大盘、竞品、流量、交易数据 + 圈层切片字段<span class="meta">让"圈层化"成为可能</span></dd>
+            <dt>分润机制</dt>
+            <dd>按 Skill 调用时的数据访问次数计费<span class="meta">数据从"卖一次性看板"变成"按调用收水电费"</span></dd>
+          </dl>
+        </article>
+        <article class="role-card merchant">
+          <h3>商家</h3>
+          <p class="role-sub">运行期 evidence 与反馈末端</p>
+          <dl>
+            <dt>入口</dt>
+            <dd>用生成的 App 跑业务<span class="meta">无需感知 Skill / 工件存在</span></dd>
+            <dt>贡献</dt>
+            <dd>trace、evidence、决策反馈（按 Skill 聚合、匿名化）<span class="meta">反向回灌上游作者校准变体</span></dd>
+            <dt>收益</dt>
+            <dd>免费/低价用上越来越准的 Skill<span class="meta">无需贡献现金，贡献的是匿名运行数据</span></dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>飞轮六圈：每一圈让下一圈更省力</h2>
+      <ol class="flywheel-list" style="padding:0;list-style:none;">
+        <li class="step"><h3>老师入驻 → 骨架 Skill 上架</h3><p>把方法论编译成裸 Skill，参数留空。冷启动靠老师自带的学员/受众，强行启动第一批商家。</p></li>
+        <li class="step"><h3>商家试用 → 运行期 evidence 流出</h3><p>App 跑业务产出 trace / evidence / 反馈，按 Skill 维度聚合并匿名化，成为校准上游的"群体经验"。</p></li>
+        <li class="step"><h3>TP 看到缺口 → SOP 补丁与阈值校准</h3><p>TP 看得懂 evidence，针对评分偏低或漏判的圈层贡献补丁，Skill 准度提升。</p></li>
+        <li class="step"><h3>切片细化 → 一个骨架长出 N 个变体</h3><p>数据维度丰富后，圈层粒度变细（品类 × 客单 × 流量 × 阶段），骨架被复用 N 次，老师复利 N 倍。</p></li>
+        <li class="step"><h3>数据服务商接入 → 按调用收费</h3><p>调用量起来后，数据服务商按 Tool Contract 把数据接进来，让圈层切片字段持续扩充。</p></li>
+        <li class="step"><h3>更多老师入驻 → 回到第 1 圈，起点更高</h3><p>Skill 分润透明、复利可见，吸引更多骨架贡献者；新老师立刻享受现成的数据 / SOP / 切片基础设施。</p></li>
+      </ol>
+    </section>
+
+    <section class="section">
+      <h2>三道叠加的护城河</h2>
+      <div class="moat-grid">
+        <div class="moat">
+          <span class="tag">密度</span>
+          <h3>Skill 密度护城河</h3>
+          <p>骨架 + SOP 补丁越多，可执行业务场景越密。竞品追赶要补齐整张网，不是补一个功能。</p>
+        </div>
+        <div class="moat heavy">
+          <span class="tag">最厚</span>
+          <h3>Eval 校准护城河</h3>
+          <p>每个 Skill 跑越多次，圈层参数校准越准。只能靠时间积累，资金和人力都补不齐。</p>
+        </div>
+        <div class="moat">
+          <span class="tag">粒度</span>
+          <h3>圈层切片护城河</h3>
+          <p>切片越细，变体越多。新入场者只能做"通用版"，打不过"精细版"。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>冷启动卡点：飞轮转起来不能破的三件事</h2>
+      <div class="risk-grid">
+        <div class="risk">
+          <h3>冷启靠老师，不靠商家</h3>
+          <p>商家没动力试用没人背书的裸 Skill。老师自带学员能强行启动第一批，跳过了零调用陷阱。</p>
+        </div>
+        <div class="risk">
+          <h3>evidence 必须按 Skill 聚合 + 匿名化</h3>
+          <p>反馈不回到上游作者，TP 没缺口可补，飞轮第 3 圈卡死。匿名化是数据合规与共享的前提。</p>
+        </div>
+        <div class="risk">
+          <h3>trace 必须资产标签可归属</h3>
+          <p>每次调用要算清楚分润给老师 / TP / 数据服务商各自多少，否则上游不愿贡献。这是分润机制的硬条件。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>架构对位：开放面已经在那儿</h2>
+      <p class="lead" style="font-size:13.5px;margin-bottom:10px;">这套生态不需要重写架构。现有 capability-runtime + Skill 工件链就是开放面，把内部门变成外部门即可。</p>
+      <div class="role-grid" style="grid-template-columns:repeat(2, minmax(0, 1fr));">
+        <div class="moat"><h3>document-to-skill 编译器</h3><p>→ 外部 SDK / 老师上传入口，骨架方法论的注册口</p></div>
+        <div class="moat"><h3>Tool Contract / Data Requirement</h3><p>→ 数据服务商注册中心，统一字段与计费口径</p></div>
+        <div class="moat"><h3>Skill Spec 加圈层切片元数据</h3><p>→ TP 补丁通道，绑定骨架到特定圈层</p></div>
+        <div class="moat"><h3>运行期 trace / evidence</h3><p>→ 按 Skill 聚合的反向回灌通道，校准上游变体</p></div>
+      </div>
+      <p class="note summary">第 0 天每个工件就设计成 schema-first、契约清晰、可回放——生态接口已经预留好，只需要打开。</p>
+    </section>
+
+    <footer style="margin-top:20px;color:var(--muted);font-size:12.5px;">
+      <p>配套文档：<a href="skill-runtime-whitepaper.md" style="color:var(--action);">能力运行时白皮书 · 第 9 节 生态飞轮</a> ｜ 全链路图：<a href="skill-runtime-architecture-v5.html" style="color:var(--action);">v5 架构图</a></p>
+    </footer>
+  </main>
+</body>
+</html>

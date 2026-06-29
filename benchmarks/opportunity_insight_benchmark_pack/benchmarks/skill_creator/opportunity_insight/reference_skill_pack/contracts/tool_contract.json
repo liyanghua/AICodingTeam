@@ -1,0 +1,18 @@
+{
+  "allowed_tools": [
+    "keyword_analyzer",
+    "competitor_analyzer",
+    "content_signal_extractor",
+    "evidence_builder",
+    "opportunity_score_calculator",
+    "task_exporter"
+  ],
+  "forbidden_actions": [
+    "direct_modify_online_product",
+    "direct_change_ad_budget",
+    "store_secret",
+    "unauthorized_platform_scraping"
+  ],
+  "failure_mode_required": true,
+  "mock_mode_supported": true
+}

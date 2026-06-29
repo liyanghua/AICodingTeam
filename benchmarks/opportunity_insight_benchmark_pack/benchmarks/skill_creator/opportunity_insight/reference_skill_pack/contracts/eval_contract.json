@@ -1,0 +1,17 @@
+{
+  "hard_gates": [
+    "must_output_opportunity_cards",
+    "each_card_has_evidence_chain",
+    "each_recommendation_has_evidence",
+    "low_data_coverage_reduces_confidence",
+    "no_strong_claim_without_evidence"
+  ],
+  "scoring_dimensions": {
+    "business_relevance": 0.25,
+    "evidence_grounding": 0.25,
+    "actionability": 0.2,
+    "data_contract_compliance": 0.15,
+    "risk_awareness": 0.1,
+    "output_clarity": 0.05
+  }
+}

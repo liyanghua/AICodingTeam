@@ -1,0 +1,41 @@
+required_outputs:
+  opportunity_cards:
+    description: 可用于运营周会和新品立项讨论的机会卡
+    fields:
+      - title
+      - target_user
+      - demand_scenario
+      - pain_point
+      - keyword_cluster
+      - competitor_evidence
+      - content_evidence
+      - price_band
+      - opportunity_score
+      - confidence
+      - recommended_actions
+      - risk_notes
+
+  evidence_pack:
+    description: 支撑机会判断的证据链
+    rules:
+      - 每个推荐动作至少绑定一条 evidence
+      - 每条 evidence 必须标注 source、metric、value、confidence
+
+  score_breakdown:
+    description: 机会分的解释
+    fields:
+      - demand_strength
+      - competition_intensity
+      - differentiation_space
+      - supply_chain_fit
+      - evidence_quality
+
+  action_recommendations:
+    description: 下一步经营动作
+    allowed_types:
+      - product_planning
+      - main_image_strategy
+      - content_seeding
+      - paid_keyword_test
+      - product_detail_optimization
+      - price_band_test

@@ -1,0 +1,50 @@
+{
+  "required_capabilities": [
+    {
+      "id": "scenario_boundary",
+      "description": "defines when to use and when not to use opportunity insight"
+    },
+    {
+      "id": "data_contract",
+      "description": "defines datasets, fields, meanings and quality rules"
+    },
+    {
+      "id": "knowledge_contract",
+      "description": "includes claims, strategy rules and negative cases"
+    },
+    {
+      "id": "tool_contract",
+      "description": "defines tools, schemas, failure modes and forbidden actions"
+    },
+    {
+      "id": "execution_plan",
+      "description": "ordered steps from validation to opportunity card generation"
+    },
+    {
+      "id": "opportunity_card_schema",
+      "description": "structured opportunity card output schema"
+    },
+    {
+      "id": "evidence_chain",
+      "description": "each recommendation grounded in evidence"
+    },
+    {
+      "id": "eval_contract",
+      "description": "hard gates, scoring dimensions and failure cases"
+    },
+    {
+      "id": "failure_policy",
+      "description": "missing data, low confidence, tool failure and user disagreement"
+    },
+    {
+      "id": "rsi_feedback",
+      "description": "feedback collected and skill update targets defined"
+    }
+  ],
+  "nice_to_have_capabilities": [
+    "platform_specific_rules",
+    "category_extension_points",
+    "app_spec_template",
+    "mcp_tool_mapping"
+  ]
+}

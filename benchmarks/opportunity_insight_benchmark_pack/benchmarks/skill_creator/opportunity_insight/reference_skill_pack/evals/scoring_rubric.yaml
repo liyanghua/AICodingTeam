@@ -1,0 +1,14 @@
+score_total: 100
+dimensions:
+  scenario_fit: {weight: 10, description: 是否准确理解商机洞察的业务场景、使用角色和下游动作}
+  data_contract_quality: {weight: 15, description: 是否清晰定义数据源、字段、指标、质量规则和缺失处理}
+  knowledge_contract_quality: {weight: 15, description: 是否包含有效业务 claims、策略规则、负面案例和判断边界}
+  tool_contract_quality: {weight: 10, description: 是否定义工具用途、输入输出、权限、失败模式和 mock 机制}
+  execution_plan_quality: {weight: 10, description: 是否形成有序、可观察、可重跑的执行步骤}
+  output_schema_quality: {weight: 10, description: 是否定义业务可用的 opportunity card、evidence pack、score breakdown 和 action recommendations}
+  eval_quality: {weight: 10, description: 是否定义 hard gates、评分维度、回归样例和失败类型}
+  rsi_feedback_design: {weight: 10, description: 是否定义用户反馈、业务结果、失败 claim、缺失字段如何回流到 Skill}
+  app_generation_readiness: {weight: 5, description: 是否能被 App Generator 消费，生成可交互应用}
+  clarity_and_reusability: {weight: 5, description: 是否清晰、可复用、可扩展到其他类目或平台}
+pass_threshold: 80
+excellent_threshold: 90

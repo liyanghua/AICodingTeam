@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>从业务需求到应用生成主链路</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --ink: #111820;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.25;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 15px;
+      line-height: 1.25;
+      font-weight: 740;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .lead {
+      max-width: 960px;
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .term-grid,
+    .responsibility-grid,
+    .principle-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .term-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .responsibility-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .principle-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .item {
+      min-height: 124px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .item h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 740;
+      letter-spacing: 0;
+    }
+
+    .item p {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #e8eef3;
+      color: #314455;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .tag.blue {
+      background: #e6eef5;
+      color: var(--action);
+    }
+
+    .tag.green {
+      background: #e5f1eb;
+      color: var(--green);
+    }
+
+    .tag.amber {
+      background: #f4eddf;
+      color: var(--amber);
+    }
+
+    .diagram-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      min-width: 980px;
+      height: auto;
+    }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+    }
+
+    .warning {
+      border-left-color: var(--amber);
+      background: #f6efe3;
+    }
+
+    .code {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink);
+    }
+
+    @media (max-width: 980px) {
+      main {
+        padding: 24px 16px 36px;
+      }
+
+      .term-grid,
+      .responsibility-grid,
+      .principle-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .term-grid,
+      .responsibility-grid,
+      .principle-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .section {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>从业务需求到应用生成主链路</h1>
+      <p class="lead">
+        BRD 先转成 PRD；PRD 再与业务能力、应用规范和评估标准一起编译成 TDS Bundle（Code Agent 输入包），由 Code Agent 生成可验证应用。
+      </p>
+      <div class="tag-row" aria-label="核心链路标签">
+        <span class="tag green">BRD</span>
+        <span class="tag amber">PRD</span>
+        <span class="tag">能力上下文</span>
+        <span class="tag">应用规范</span>
+        <span class="tag">评估规范</span>
+        <span class="tag blue">TDS Bundle（Code Agent 输入包）</span>
+        <span class="tag">Code Agent</span>
+      </div>
+    </header>
+
+    <section class="section" aria-labelledby="diagram-title">
+      <h2 id="diagram-title">极简架构图</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 620" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">从 BRD 到 TDS Bundle（Code Agent 输入包）再到生成应用的主链路</title>
+          <desc id="svg-desc">BRD 转成 PRD，PRD 与 Capability Context、AppSpec、EvalSpec 一起进入 TDS Builder，输出 TDS Bundle（Code Agent 输入包），再由 Code Agent 生成应用。</desc>
+          <defs>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <style>
+              .lane { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; rx: 8; ry: 8; }
+              .box-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .box-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .box-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .box-red { fill: #f7ecec; stroke: #d7a0a0; }
+              .title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow-blue); }
+              .arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#arrow-green); }
+              .arrow-amber { stroke: #946200; stroke-width: 2.2; fill: none; marker-end: url(#arrow-amber); }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="572" rx="12" class="lane"></rect>
+          <text x="48" y="58" class="title">生成输入统一进入 TDS Builder，输出给 Code Agent 的单一输入包</text>
+
+          <rect x="54" y="112" width="142" height="76" class="box box-green"></rect>
+          <text x="82" y="144" class="label">BRD</text>
+          <text x="82" y="168" class="small">业务目标 / 成功指标</text>
+
+          <rect x="258" y="112" width="142" height="76" class="box box-amber"></rect>
+          <text x="286" y="144" class="label">PRD</text>
+          <text x="286" y="168" class="small">产品流程 / 功能验收</text>
+
+          <rect x="54" y="286" width="180" height="74" class="box"></rect>
+          <text x="78" y="318" class="label">Capability Context</text>
+          <text x="78" y="342" class="small">数据 / 知识 / 工具 / 样例</text>
+
+          <rect x="54" y="390" width="180" height="74" class="box box-blue"></rect>
+          <text x="78" y="422" class="label">AppSpec</text>
+          <text x="78" y="446" class="small">模板 / UI / 技术栈 / 功能</text>
+
+          <rect x="54" y="494" width="180" height="74" class="box"></rect>
+          <text x="78" y="526" class="label">EvalSpec</text>
+          <text x="78" y="550" class="small">门禁 / 评分 / 验证 / 风险</text>
+
+          <rect x="322" y="334" width="190" height="112" class="box box-blue"></rect>
+          <text x="352" y="370" class="label">TDS Builder</text>
+          <text x="352" y="396" class="small">统一四类生成输入</text>
+          <text x="352" y="416" class="small">输出单一交付包</text>
+
+          <rect x="604" y="234" width="250" height="244" class="box box-blue"></rect>
+          <text x="634" y="272" class="label">TDS Bundle（Code Agent 输入包）</text>
+          <text x="634" y="300" class="small">product_scope  来自 PRD</text>
+          <text x="634" y="320" class="small">capability_projection  来自 Context</text>
+          <text x="634" y="340" class="small">app_spec  来自 AppSpec</text>
+          <text x="634" y="360" class="small">eval_gates  来自 EvalSpec</text>
+          <text x="634" y="380" class="small">task_decomposition</text>
+          <text x="634" y="400" class="small">acceptance_mapping</text>
+          <text x="634" y="420" class="small">verification_commands</text>
+          <text x="634" y="440" class="small">allowed_paths / risk_boundaries</text>
+
+          <rect x="946" y="286" width="142" height="78" class="box box-red"></rect>
+          <text x="972" y="318" class="label">Code Agent</text>
+          <text x="972" y="342" class="small">唯一应用出口</text>
+
+          <rect x="946" y="424" width="142" height="78" class="box box-green"></rect>
+          <text x="972" y="456" class="label">Generated App</text>
+          <text x="972" y="480" class="small">预览 / 验证 / 迭代</text>
+
+          <path d="M196 150 H258" class="arrow-green"></path>
+          <path d="M329 188 C358 238 384 298 410 334" class="arrow-amber"></path>
+          <path d="M234 323 C278 323 288 364 322 368" class="arrow-blue"></path>
+          <path d="M234 427 H322" class="arrow-blue"></path>
+          <path d="M234 531 C284 531 288 434 322 420" class="arrow-blue"></path>
+          <path d="M512 390 H604" class="arrow-blue"></path>
+          <path d="M854 325 H946" class="arrow-blue"></path>
+          <path d="M1017 364 V424" class="arrow-green"></path>
+
+          <rect x="54" y="80" width="1034" height="1" fill="#dce2e7"></rect>
+          <rect x="54" y="584" width="1034" height="1" fill="#dce2e7"></rect>
+        </svg>
+      </div>
+      <p class="note">
+        主链路只有一个交付包：所有生成输入先进入 TDS Builder，再统一输出 TDS Bundle（Code Agent 输入包）。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="modules-title">
+      <h2 id="modules-title">模块说明</h2>
+      <div class="term-grid">
+        <article class="item">
+          <h3>BRD</h3>
+          <p>业务需求文档。定义业务目标、目标用户、成功指标和业务边界，是产品需求的来源。</p>
+        </article>
+        <article class="item">
+          <h3>PRD</h3>
+          <p>产品需求文档。把 BRD 转成用户流程、功能范围、页面状态和验收标准。</p>
+        </article>
+        <article class="item">
+          <h3>Capability Context</h3>
+          <p>业务能力上下文。补充数据、知识、工具、样例、反例和业务风险。</p>
+        </article>
+        <article class="item">
+          <h3>AppSpec</h3>
+          <p>应用规范。定义模板、UI、技术栈、组件槽位、运行边界和功能设计。</p>
+        </article>
+        <article class="item">
+          <h3>EvalSpec</h3>
+          <p>评估规范。定义 hard gates、评分维度、验证命令、安全规则和质量门禁。</p>
+        </article>
+        <article class="item">
+          <h3>TDS Builder</h3>
+          <p>编译器。把 PRD、Capability Context、AppSpec、EvalSpec 合成 TDS Bundle（Code Agent 输入包）。</p>
+        </article>
+        <article class="item">
+          <h3>TDS Bundle（Code Agent 输入包）</h3>
+          <p>唯一交付包。包含产品范围、能力投影、应用规范、任务拆解、验收映射和验证命令。</p>
+        </article>
+        <article class="item">
+          <h3>Code Agent</h3>
+          <p>应用输出口。只读取 TDS Bundle（Code Agent 输入包），生成应用并返回验证结果和风险。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="principles-title">
+      <h2 id="principles-title">设计原则</h2>
+      <div class="principle-grid">
+        <article class="item">
+          <h3>先产品化</h3>
+          <p>BRD 先变成 PRD，业务语言先转成产品语言。</p>
+        </article>
+        <article class="item">
+          <h3>四类输入</h3>
+          <p>TDS Builder 只接收 PRD、Capability Context、AppSpec、EvalSpec。</p>
+        </article>
+        <article class="item">
+          <h3>单一输入包</h3>
+          <p>Code Agent 只读取 TDS Bundle（Code Agent 输入包）。</p>
+        </article>
+        <article class="item">
+          <h3>AppSpec 前置</h3>
+          <p>模板、UI、技术栈和功能边界先进入 TDS Bundle（Code Agent 输入包）。</p>
+        </article>
+        <article class="item">
+          <h3>EvalSpec 前置</h3>
+          <p>质量门禁先进入 TDS Bundle（Code Agent 输入包），生成结果才可验证。</p>
+        </article>
+      </div>
+      <p class="note warning">
+        最终口径：BRD -> PRD；PRD + Capability Context + AppSpec + EvalSpec -> TDS Builder -> TDS Bundle（Code Agent 输入包） -> Code Agent -> Generated App。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

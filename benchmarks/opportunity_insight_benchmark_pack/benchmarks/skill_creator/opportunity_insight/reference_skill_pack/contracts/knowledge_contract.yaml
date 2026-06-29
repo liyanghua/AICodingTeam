@@ -1,0 +1,14 @@
+claims:
+  - id: high_search_volume_not_sufficient
+    claim: 高搜索量不等于高机会，需要结合竞争强度、付费竞争和差异化空间判断.
+  - id: price_gap_needs_supply_fit
+    claim: 价格带空档必须结合供应链可做性和需求证据判断.
+  - id: repeated_review_pain_is_signal
+    claim: 重复出现且未被竞品解决的评论痛点是高价值机会证据.
+negative_cases:
+  - 只根据搜索量 TOP 词生成机会.
+  - 只根据单个爆款判断新品机会.
+  - 无证据链输出强建议.
+update_rules:
+  - 被业务专家否定的 claim 进入 failed_claims.
+  - 数据不足导致误判时，优先更新 DataSpec.

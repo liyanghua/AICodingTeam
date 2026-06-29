@@ -1,0 +1,18 @@
+constraints:
+  safety:
+    - 不允许保存 secret、token 或平台账号信息
+    - 不允许直接修改线上商品
+    - 不允许直接修改广告预算
+    - 不允许未授权抓取平台数据
+
+  product:
+    - Skill 必须可被 App Generator 消费
+    - Skill 必须可被 Agent Runtime 消费
+    - Skill 必须支持 mock data 模式
+    - Skill 必须支持业务专家反馈回流
+
+  quality:
+    - 不允许无证据强结论
+    - 数据不足时必须降低置信度
+    - 必须显式展示缺失数据和风险
+    - 输出必须可执行，不允许泛泛建议

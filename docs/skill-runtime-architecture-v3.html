@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Code Agent 职责可生长 · 运行期事实执行不可逾越</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --ink: #111820;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px; }
+
+    header { margin-bottom: 24px; }
+
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.25; font-weight: 760; }
+
+    h2 { margin: 0 0 14px; font-size: 15px; line-height: 1.25; font-weight: 740; }
+
+    p { margin: 0; color: var(--muted); }
+
+    .lead { max-width: 980px; color: var(--text); font-size: 15px; }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .responsibility-grid, .principle-grid { display: grid; gap: 12px; }
+    .responsibility-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .principle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .item {
+      min-height: 112px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .item h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.25; font-weight: 740; }
+    .item p { font-size: 13px; color: var(--muted); }
+
+    .item.accent { background: #f6efe3; border-color: #d5bd87; }
+    .item.danger { background: #f7ecec; border-color: #d7a0a0; }
+
+    .diagram-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfd; }
+
+    svg { display: block; width: 100%; min-width: 1040px; height: auto; }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+    }
+
+    .note.summary { border-left-color: var(--green); background: #eaf4ee; font-weight: 600; color: #214d36; }
+
+    @media (max-width: 980px) {
+      main { padding: 24px 16px 36px; }
+      .responsibility-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .principle-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .responsibility-grid, .principle-grid { grid-template-columns: 1fr; }
+      .section { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Code Agent 职责可生长，运行期事实执行不可逾越</h1>
+      <p class="lead">
+        Code Agent 越强，越往上长成「编译 spec / 造模板与端点 / 蒸馏 Skill」的生产者，覆盖生成·编译·沉淀全段；唯独运行期的事实计算与执行，永远落在共享 Runtime，是它不可逾越的禁区。
+      </p>
+    </header>
+
+    <section class="section" aria-labelledby="diagram-title">
+      <h2 id="diagram-title">全链路极简架构图</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 760" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">Code Agent 职责带贯穿生成编译沉淀，运行期设禁区边界</title>
+          <desc id="svg-desc">顶部一条虚线职责带表示 Code Agent 可覆盖编译、造模板与端点、蒸馏 Skill 三段；生成期产出 App 壳，运行期 App 壳调用共享 Runtime；Runtime 上方有一道红色禁区线，表示运行期事实计算与执行不交给 Code Agent。</desc>
+          <defs>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <style>
+              .lane { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .box-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .box-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .box-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .duty { fill: #fbf3e2; stroke: #cda94e; stroke-width: 1.6; stroke-dasharray: 7 5; }
+              .title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .band { fill: #667684; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 1px; }
+              .label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .mono { fill: #314455; font: 12px SFMono-Regular, Consolas, monospace; }
+              .duty-label { fill: #8a5a00; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .duty-step { fill: #8a5a00; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .danger { fill: #b43b3b; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .tagA { fill: #1f7a4d; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .tagB { fill: #1f5d8c; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow-blue); }
+              .arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#arrow-green); }
+              .arrow-amber { stroke: #946200; stroke-width: 2; fill: none; marker-end: url(#arrow-amber); stroke-dasharray: 6 4; }
+              .redline { stroke: #b43b3b; stroke-width: 2.6; fill: none; stroke-dasharray: 8 5; }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="712" rx="12" class="lane"></rect>
+          <text x="48" y="54" class="title">Code Agent 职责带贯穿生成 / 编译 / 沉淀，运行期设禁区</text>
+
+          <rect x="48" y="72" width="1046" height="70" rx="10" class="duty"></rect>
+          <text x="68" y="100" class="duty-label">Code Agent 职责带 · 越强越往上长（生成 / 编译 / 沉淀）</text>
+          <text x="120" y="126" class="duty-step">① 编译 spec → TDS Builder</text>
+          <text x="430" y="126" class="duty-step">② 造模板 / 造服务端点 → 装配器·Runtime</text>
+          <text x="820" y="126" class="duty-step">③ 蒸馏 Skill · 读运行证据 → bundle</text>
+
+          <text x="48" y="176" class="band">生成期 BUILD</text>
+
+          <rect x="48" y="190" width="170" height="140" rx="8" class="box"></rect>
+          <text x="66" y="218" class="label">生成输入</text>
+          <text x="66" y="244" class="small">BRD → PRD</text>
+          <text x="66" y="268" class="small">Capability</text>
+          <text x="66" y="292" class="small">AppSpec</text>
+          <text x="66" y="316" class="small">EvalSpec</text>
+
+          <rect x="256" y="220" width="128" height="88" rx="8" class="box box-blue"></rect>
+          <text x="274" y="258" class="label">TDS Builder</text>
+          <text x="274" y="280" class="small">统一编译</text>
+
+          <rect x="420" y="220" width="128" height="88" rx="8" class="box"></rect>
+          <text x="438" y="258" class="label">TDS Bundle</text>
+          <text x="438" y="280" class="small">单一交付包</text>
+
+          <rect x="584" y="200" width="210" height="128" rx="8" class="box box-amber"></rect>
+          <text x="602" y="230" class="label">应用装配器 · 分流</text>
+          <text x="602" y="258" class="small">模板装配 · 确定结构</text>
+          <text x="602" y="282" class="small">runtime 绑定 · 业务逻辑</text>
+          <text x="602" y="306" class="small">Code Agent · 造件 / 兜底</text>
+
+          <rect x="854" y="220" width="240" height="92" rx="8" class="box box-green"></rect>
+          <text x="872" y="254" class="label">App 壳 <tspan class="tagA">(A)</tspan></text>
+          <text x="872" y="280" class="small">UI / 页面 / 状态机 · 自包含可漂移</text>
+
+          <path d="M218 260 H256" class="arrow-blue"></path>
+          <path d="M384 264 H420" class="arrow-blue"></path>
+          <path d="M548 264 H584" class="arrow-blue"></path>
+          <path d="M794 266 H854" class="arrow-green"></path>
+
+          <path d="M300 142 V220" class="arrow-amber"></path>
+          <path d="M690 142 V200" class="arrow-amber"></path>
+          <path d="M1000 142 C1064 400 1004 604 838 626" class="arrow-amber"></path>
+          <text x="1000" y="432" class="duty-step">③ 离线蒸馏</text>
+
+          <rect x="48" y="356" width="1046" height="1" fill="#dce2e7"></rect>
+          <text x="48" y="380" class="band">运行期 RUN</text>
+
+          <path d="M974 312 C974 384 852 404 836 470" class="arrow-blue"></path>
+          <text x="892" y="404" class="small">调用</text>
+
+          <path d="M560 424 H862" class="redline"></path>
+          <text x="566" y="416" class="danger">✕ 运行期禁区：Code Agent 不实时算事实 / 不替代执行</text>
+
+          <rect x="584" y="440" width="250" height="210" rx="8" class="box box-blue"></rect>
+          <text x="602" y="472" class="label">Runtime 服务 <tspan class="tagB">(B)</tspan></text>
+          <text x="602" y="494" class="small">运行实体共享 · 单一真相</text>
+          <text x="602" y="524" class="label">阶段0  服务能力端点</text>
+          <text x="602" y="546" class="mono">validate / score /</text>
+          <text x="602" y="566" class="mono">build-evidence / cards</text>
+          <text x="602" y="594" class="small">⇩ 升级（离线蒸馏 · app 零改动）</text>
+          <text x="602" y="620" class="label">阶段1  Skill Bundle</text>
+          <text x="602" y="640" class="small">契约 + 知识 + eval + plan</text>
+
+          <rect x="300" y="470" width="200" height="96" rx="8" class="box"></rect>
+          <text x="318" y="504" class="label">evidence / trace</text>
+          <text x="318" y="528" class="small">run record / 回放</text>
+
+          <path d="M584 518 H500" class="arrow-green"></path>
+          <path d="M400 566 C400 662 672 664 682 636" class="arrow-amber"></path>
+          <text x="436" y="602" class="small">rsi_feedback 回写</text>
+
+          <text x="48" y="700" class="small">职责带：Code Agent 越强，覆盖 编译 → 造件 → 蒸馏 越多。红线禁区：运行期事实计算与执行永远落在 Runtime；蒸馏是离线编译，不属运行期执行，故允许产出 Skill Bundle。</text>
+        </svg>
+      </div>
+      <p class="note">
+        Code Agent 的边界不取决于它有多强，而取决于产物是「会被固化复用的资产」还是「被当作事实的一次性结论」。前者越强越该多做，后者再强也不交给它。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="modules-title">
+      <h2 id="modules-title">模块职责</h2>
+      <div class="responsibility-grid">
+        <article class="item">
+          <h3>TDS Builder</h3>
+          <p>把 PRD、Capability、AppSpec、EvalSpec 统一编译成单一交付包 TDS Bundle。</p>
+        </article>
+        <article class="item">
+          <h3>应用装配器</h3>
+          <p>按确定性分流：模板装配做确定结构、runtime 绑定接业务逻辑、Code Agent 造件或兜底。</p>
+        </article>
+        <article class="item">
+          <h3>App 壳 (A)</h3>
+          <p>自包含的 UI / 页面 / 状态机。可漂移、可重生成、可离线预览，不是事实源。</p>
+        </article>
+        <article class="item">
+          <h3>Runtime 服务 (B)</h3>
+          <p>运行实体共享的业务能力，承载执行、证据、回放；先以服务端点上线，再沉淀为 Skill Bundle。</p>
+        </article>
+        <article class="item accent">
+          <h3>Code Agent 职责带</h3>
+          <p>越强越向上生长——编译 spec、造模板与服务端点、蒸馏 Skill，覆盖生成 / 编译 / 沉淀。</p>
+        </article>
+        <article class="item danger">
+          <h3>运行期禁区</h3>
+          <p>运行期的事实计算与执行永远落在 Runtime，不交概率组件；蒸馏属离线编译，为例外。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="principles-title">
+      <h2 id="principles-title">设计原则</h2>
+      <div class="principle-grid">
+        <article class="item">
+          <h3>A/B 切分</h3>
+          <p>壳可漂移，能力单一真相。</p>
+        </article>
+        <article class="item">
+          <h3>多载体装配</h3>
+          <p>确定走模板，逻辑走 runtime，定制才 codegen。</p>
+        </article>
+        <article class="item">
+          <h3>先服务后 Skill</h3>
+          <p>演进而非一次性抽象成 bundle。</p>
+        </article>
+        <article class="item">
+          <h3>契约前置</h3>
+          <p>端点 input/output 有 schema，结论挂 evidence。</p>
+        </article>
+        <article class="item">
+          <h3>闭环沉淀</h3>
+          <p>反馈回写 Runtime，不从代码逆向 distill。</p>
+        </article>
+        <article class="item accent">
+          <h3>可生长 · 有禁区</h3>
+          <p>Code Agent 生成期越强越好，运行期不碰事实执行。</p>
+        </article>
+      </div>
+      <p class="note summary">
+        一句总结：Code Agent 越强，越应成为确定性资产的生产者（编译 / 造件 / 蒸馏），覆盖生成→编译→沉淀全段；唯独运行期的事实执行，是它不可逾越的禁区，永远落在共享 Runtime。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

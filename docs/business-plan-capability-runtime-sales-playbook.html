@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>能力运行时 · 0到1销售作战图</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --ink: #111820;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    header { margin-bottom: 24px; }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.25;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 740;
+      letter-spacing: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    h2 .num {
+      color: var(--action);
+      font-weight: 760;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 740;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0; color: var(--muted); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 10px;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--surface-subtle);
+      color: var(--ink);
+      text-align: left;
+      font-weight: 720;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #eef4f8;
+      color: var(--action);
+      font-size: 12px;
+      font-weight: 680;
+      margin-bottom: 10px;
+    }
+
+    .lead {
+      max-width: 960px;
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      min-height: 118px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .card p,
+    .card li {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .card ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .green {
+      background: #eaf4ee;
+      border-color: #b9d8c5;
+    }
+
+    .green h3,
+    .green p,
+    .green li { color: #214d36; }
+
+    .amber {
+      background: #f6efe3;
+      border-color: #d5bd87;
+    }
+
+    .amber h3,
+    .amber p,
+    .amber li { color: #5a4416; }
+
+    .red {
+      background: #fff7f7;
+      border-color: #f0caca;
+    }
+
+    .red h3,
+    .red p,
+    .red li { color: #6b3232; }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .note.green-note {
+      border-left-color: var(--green);
+      background: #eaf4ee;
+      color: #214d36;
+    }
+
+    .note.red-note {
+      border-left-color: var(--red);
+      background: #fbeaea;
+      color: #6b3232;
+    }
+
+    .metric {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+      font-size: 20px;
+      line-height: 1.25;
+      font-weight: 760;
+    }
+
+    .quote {
+      padding: 12px 14px;
+      background: #111820;
+      color: #eef6f4;
+      border-radius: 8px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .diagram-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      min-width: 980px;
+      height: auto;
+    }
+
+    .svg-title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+    .svg-label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+    .svg-small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+
+    @media (max-width: 980px) {
+      main { padding: 24px 16px 40px; }
+      .grid-3,
+      .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .grid-2,
+      .grid-3,
+      .grid-4 { grid-template-columns: 1fr; }
+      .section { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="kicker">0到1销售作战图 · 不讲生态，先打穿一个场景</span>
+      <h1>只卖一个结果：4 周内把商家的经营机会找出来</h1>
+      <p class="lead">
+        这不是平台战略书，也不是融资故事。它是销售、产品、交付和创始人每天能照着打的作战图：先锁定一个窄 ICP，用一个付费试点证明 Runtime 能稳定产出可解释、可反馈、可复用的经营判断。
+      </p>
+    </header>
+
+    <section class="section">
+      <h2><span class="num">0</span>作战原则</h2>
+      <div class="grid-3">
+        <article class="card red">
+          <h3>不卖平台</h3>
+          <p>不讲生态、Marketplace、Skill Pack、自有模型。客户听不懂，也不会为这些先付钱。</p>
+        </article>
+        <article class="card amber">
+          <h3>不免费 PoC</h3>
+          <p>不愿意为 4 周试点付费，就不是当前 ICP。免费试用会带来低质量反馈。</p>
+        </article>
+        <article class="card green">
+          <h3>只卖一个经营动作</h3>
+          <p>帮商家每周找到优先机会、给出理由和证据，并让下一次判断比上一次更准。</p>
+        </article>
+      </div>
+      <p class="note">
+        对客户的话术：我们不是再给你一个工具，而是把“每周找机会、定优先级、解释为什么”的工作做成一个可运行工作台。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">1</span>第一批只打这个 ICP</h2>
+      <div class="grid-2">
+        <article class="card green">
+          <h3>理想客户</h3>
+          <ul>
+            <li>电商品牌或店铺，月 GMV 100 万到 1000 万。</li>
+            <li>运营团队 3 到 10 人，有稳定上新、投放或客户经营节奏。</li>
+            <li>老板或运营负责人每周都要做“下一步做什么”的判断。</li>
+            <li>能提供基础经营数据导出，愿意每周给一次反馈。</li>
+            <li>愿意为 4 周试点付费。</li>
+          </ul>
+        </article>
+        <article class="card red">
+          <h3>立刻放弃</h3>
+          <ul>
+            <li>只想看看 AI 新东西，不愿意给真实业务数据。</li>
+            <li>没有明确经营负责人，反馈要层层转述。</li>
+            <li>只要自动化页面，不关心业务判断。</li>
+            <li>要求先免费跑完整业务闭环。</li>
+            <li>数据完全拿不到，且短期无法导出样表。</li>
+          </ul>
+        </article>
+      </div>
+      <div class="note red-note">
+        ICP 不是“所有商家”。第一批只找每周都在做经营取舍、愿意拿数据换结果、能快速反馈的人。
+      </div>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">2</span>首个场景：经营机会洞察</h2>
+      <div class="grid-4">
+        <article class="card">
+          <span class="metric">20 条</span>
+          <h3>每周机会清单</h3>
+          <p>从客户、商品、内容、投放或线索数据里找出优先机会。</p>
+        </article>
+        <article class="card">
+          <span class="metric">3 层</span>
+          <h3>理由结构</h3>
+          <p>为什么是机会、需要什么动作、风险在哪里。</p>
+        </article>
+        <article class="card">
+          <span class="metric">100%</span>
+          <h3>证据挂载</h3>
+          <p>每条判断必须能追到数据、知识或策略来源。</p>
+        </article>
+        <article class="card">
+          <span class="metric">1 次/周</span>
+          <h3>反馈回写</h3>
+          <p>客户采纳、修改、否定都进入 Runtime 改进队列。</p>
+        </article>
+      </div>
+      <p class="note">
+        不承诺“直接提升 GMV”。先承诺更可控的结果：减少找机会的时间、让优先级更清楚、让每条建议可解释、让反馈能进入下一轮。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">3</span>4 周付费试点</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 380" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">4 周销售试点作战流程</title>
+          <desc id="svg-desc">从资格判断开始，进入付费试点，收集数据，生成工作台，每周运行，反馈回写，最后决定续费或淘汰。</desc>
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <style>
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .amber { fill: #f6efe3; stroke: #d5bd87; }
+              .red { fill: #f7ecec; stroke: #d7a0a0; }
+              .arrow { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="332" rx="12" fill="#f2f5f7" stroke="#dce2e7"></rect>
+          <text x="48" y="58" class="svg-title">作战流程：先收钱，再交付，再用反馈决定是否续费</text>
+
+          <rect x="54" y="104" width="150" height="104" rx="8" class="box red"></rect>
+          <text x="74" y="136" class="svg-label">资格判断</text>
+          <text x="74" y="162" class="svg-small">有痛点 / 有数据</text>
+          <text x="74" y="184" class="svg-small">有老板 / 愿付费</text>
+
+          <rect x="246" y="104" width="150" height="104" rx="8" class="box amber"></rect>
+          <text x="266" y="136" class="svg-label">收试点费</text>
+          <text x="266" y="162" class="svg-small">4 周 ¥9,800</text>
+          <text x="266" y="184" class="svg-small">签反馈承诺</text>
+
+          <rect x="438" y="104" width="150" height="104" rx="8" class="box"></rect>
+          <text x="458" y="136" class="svg-label">拿输入</text>
+          <text x="458" y="162" class="svg-small">数据样表</text>
+          <text x="458" y="184" class="svg-small">10 个好坏案例</text>
+
+          <rect x="630" y="104" width="150" height="104" rx="8" class="box blue"></rect>
+          <text x="650" y="136" class="svg-label">生成工作台</text>
+          <text x="650" y="162" class="svg-small">上传 / 看板 / 详情</text>
+          <text x="650" y="184" class="svg-small">Runtime 绑定</text>
+
+          <rect x="822" y="104" width="150" height="104" rx="8" class="box green"></rect>
+          <text x="842" y="136" class="svg-label">每周运行</text>
+          <text x="842" y="162" class="svg-small">机会清单</text>
+          <text x="842" y="184" class="svg-small">证据 + 反馈</text>
+
+          <rect x="438" y="252" width="342" height="72" rx="8" class="box green"></rect>
+          <text x="462" y="282" class="svg-label">续费判断</text>
+          <text x="462" y="306" class="svg-small">愿意继续每周用 + 愿意续费 + 下一轮少改 30% = 进入订阅</text>
+
+          <rect x="1014" y="104" width="84" height="104" rx="8" class="box red"></rect>
+          <text x="1032" y="136" class="svg-label">淘汰</text>
+          <text x="1032" y="162" class="svg-small">无反馈</text>
+          <text x="1032" y="184" class="svg-small">不续费</text>
+
+          <path d="M204 156 H246" class="arrow"></path>
+          <path d="M396 156 H438" class="arrow"></path>
+          <path d="M588 156 H630" class="arrow"></path>
+          <path d="M780 156 H822" class="arrow"></path>
+          <path d="M897 208 C884 256 804 288 780 288" class="arrow"></path>
+          <path d="M972 156 H1014" class="arrow"></path>
+        </svg>
+      </div>
+      <div class="grid-4" style="margin-top:12px;">
+        <article class="card"><h3>第 0 周</h3><p>成交、拿数据、确定老板反馈人、定义当前人工流程。</p></article>
+        <article class="card"><h3>第 1 周</h3><p>生成工作台，跑第一批机会清单，记录证据链。</p></article>
+        <article class="card"><h3>第 2-3 周</h3><p>每周运行，收集采纳、修改、否定，回写 Runtime。</p></article>
+        <article class="card"><h3>第 4 周</h3><p>复盘：是否续费、是否扩场景、是否作为案例。</p></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">4</span>报价和成交条件</h2>
+      <div class="grid-3">
+        <article class="card green">
+          <h3>4 周试点</h3>
+          <p><span class="metric">¥9,800</span>包含一次数据接入、一个机会洞察工作台、三次周度运行和一次复盘。</p>
+        </article>
+        <article class="card">
+          <h3>试点转订阅</h3>
+          <p><span class="metric">¥3,000-8,000/月</span>按运行频率、数据源数量、协作人数和报告深度定价。</p>
+        </article>
+        <article class="card amber">
+          <h3>成交前必须确认</h3>
+          <p>客户同意提供数据样表、指定反馈人、每周 30 分钟反馈，并接受“先试点，后订阅”。</p>
+        </article>
+      </div>
+      <p class="note red-note">
+        试点费不是为了赚钱，是为了筛掉只想看热闹的人。愿意付小钱的人，才可能提供真实反馈。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">5</span>销售话术</h2>
+      <div class="grid-2">
+        <article class="card">
+          <h3>开场 30 秒</h3>
+          <div class="quote">我们不是卖一个新 SaaS，也不是让你再学一个工具。
+我们先帮你把“每周找经营机会”这件事做成一个工作台：
+它会读取你的数据，给出优先机会、理由和证据。
+你每周只要判断采纳、修改还是否定。
+4 周后，如果它不能让你少花时间、少拍脑袋，我们就不继续。</div>
+        </article>
+        <article class="card">
+          <h3>四个探针问题</h3>
+          <ul>
+            <li>你们现在每周怎么决定下周优先做什么？</li>
+            <li>这个判断现在靠谁？要花多久？</li>
+            <li>最近一次判断错了，损失是什么？</li>
+            <li>如果有 20 条带证据的机会清单，谁会每周看？</li>
+          </ul>
+        </article>
+      </div>
+      <table style="margin-top:12px;">
+        <thead>
+          <tr>
+            <th style="width:22%">客户说</th>
+            <th>不要这样答</th>
+            <th>这样答</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>你们是不是 AI 报表？</td>
+            <td>讲 Runtime、Skill、RAG。</td>
+            <td>不是报表。报表告诉你发生了什么，我们告诉你下周优先做什么，并解释为什么。</td>
+          </tr>
+          <tr>
+            <td>能不能免费试试？</td>
+            <td>可以先免费跑一版。</td>
+            <td>不建议免费。这个试点需要接真实数据和每周反馈，不付费通常跑不出有效结论。</td>
+          </tr>
+          <tr>
+            <td>你能保证提升 GMV 吗？</td>
+            <td>承诺增长。</td>
+            <td>不承诺直接提升 GMV。我们先承诺减少决策时间、让机会判断有证据、让反馈进入下一轮。</td>
+          </tr>
+          <tr>
+            <td>我们数据很乱。</td>
+            <td>没关系，我们都能接。</td>
+            <td>可以，但先从最小数据表开始。只要能导出客户、商品、订单或投放中的一类，就能跑第一轮。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">6</span>交付输入清单</h2>
+      <div class="grid-3">
+        <article class="card">
+          <h3>必须拿到</h3>
+          <ul>
+            <li>最近 30-90 天经营数据样表。</li>
+            <li>当前每周复盘或经营判断流程。</li>
+            <li>5 个“判断对了”的案例。</li>
+            <li>5 个“判断错了”的案例。</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>最好拿到</h3>
+          <ul>
+            <li>类目、客单、毛利、库存、投放信息。</li>
+            <li>竞品或对标对象。</li>
+            <li>老板对“好机会”的口径。</li>
+            <li>历史运营动作与结果。</li>
+          </ul>
+        </article>
+        <article class="card red">
+          <h3>拿不到就降级</h3>
+          <p>没有全量数据，就用样表；没有 API，就用 CSV；没有历史结果，就先用老板判断做第一版规则。</p>
+        </article>
+      </div>
+      <p class="note">
+        不要让“完美数据接入”卡住第一单。0 到 1 阶段，CSV + 每周反馈比完整 API 更重要。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">7</span>成功指标和淘汰线</h2>
+      <div class="grid-2">
+        <article class="card green">
+          <h3>继续做的信号</h3>
+          <ul>
+            <li>客户每周主动看机会清单。</li>
+            <li>至少 50% 建议被采纳或修改后采纳。</li>
+            <li>每周反馈能稳定回写 Runtime。</li>
+            <li>第二轮比第一轮少改 30%。</li>
+            <li>客户愿意转订阅或介绍同类客户。</li>
+          </ul>
+        </article>
+        <article class="card red">
+          <h3>立刻停的信号</h3>
+          <ul>
+            <li>客户只看演示，不给真实数据。</li>
+            <li>反馈人不是决策者。</li>
+            <li>结论没有证据链，无法复盘。</li>
+            <li>4 周后客户不愿意续费。</li>
+            <li>每家都要大量定制，模板无法复用。</li>
+          </ul>
+        </article>
+      </div>
+      <p class="note red-note">
+        最硬的 kill criteria：10 个付费试点里，如果少于 3 个愿意续费，说明不是销售问题，是价值主张或 ICP 错了。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">8</span>团队分工</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:18%">角色</th>
+            <th>本阶段只做什么</th>
+            <th style="width:30%">不做什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>创始人</strong></td>
+            <td>亲自卖前 10 单，听客户原话，决定 ICP 是否成立。</td>
+            <td>不招生态 BD，不谈平台故事。</td>
+          </tr>
+          <tr>
+            <td><strong>销售</strong></td>
+            <td>筛选客户、收试点费、拿数据和反馈承诺。</td>
+            <td>不卖免费 PoC，不卖全功能平台。</td>
+          </tr>
+          <tr>
+            <td><strong>产品</strong></td>
+            <td>把客户工作流压成上传页、看板页、详情页。</td>
+            <td>不做通用配置后台。</td>
+          </tr>
+          <tr>
+            <td><strong>工程</strong></td>
+            <td>保证 App 壳调用 Runtime，运行结果有 evidence 和 trace。</td>
+            <td>不把业务逻辑写死进 App 代码。</td>
+          </tr>
+          <tr>
+            <td><strong>交付/CS</strong></td>
+            <td>每周收集采纳、修改、否定，整理成可回写反馈。</td>
+            <td>不把反馈留在聊天记录里。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">9</span>30 天作战目标</h2>
+      <div class="grid-4">
+        <article class="card">
+          <span class="metric">30</span>
+          <h3>有效线索</h3>
+          <p>符合 ICP，愿意聊真实经营问题。</p>
+        </article>
+        <article class="card">
+          <span class="metric">10</span>
+          <h3>深访</h3>
+          <p>拿到数据样例和当前判断流程。</p>
+        </article>
+        <article class="card green">
+          <span class="metric">3</span>
+          <h3>付费试点</h3>
+          <p>收款、签试点、明确反馈人。</p>
+        </article>
+        <article class="card amber">
+          <span class="metric">1</span>
+          <h3>可复用模板</h3>
+          <p>上传、看板、详情三页可复制。</p>
+        </article>
+      </div>
+      <p class="note">
+        30 天只看一件事：有没有客户愿意为“经营机会洞察”这个结果付试点费。没有，就不要继续优化平台。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">10</span>进入下一阶段的门槛</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:24%">门槛</th>
+            <th>通过标准</th>
+            <th style="width:28%">通过后才做什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>付费意愿</strong></td>
+            <td>10 个试点里至少 3 个续费。</td>
+            <td>扩充第二个同类场景。</td>
+          </tr>
+          <tr>
+            <td><strong>交付可复用</strong></td>
+            <td>第 5 家客户上线时间比第 1 家减少 50%。</td>
+            <td>沉淀模板和 Runtime 端点。</td>
+          </tr>
+          <tr>
+            <td><strong>反馈可回写</strong></td>
+            <td>每家每周至少产生 10 条结构化反馈。</td>
+            <td>建立 Eval 样本库。</td>
+          </tr>
+          <tr>
+            <td><strong>渠道可放大</strong></td>
+            <td>同一个来源能稳定带来 5 个以上合格线索。</td>
+            <td>再谈社区、TP、数据服务商。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note green-note">
+        生态飞轮不是不要，而是后置。只有当“一个场景应用能稳定收钱、稳定交付、稳定回写”成立，生态角色才值得进场。
+      </p>
+    </section>
+
+    <section class="section">
+      <h2><span class="num">11</span>一页纸总结</h2>
+      <div class="grid-2">
+        <article class="card green">
+          <h3>现在只打一仗</h3>
+          <p>经营机会洞察。一个窄 ICP，一个 4 周付费试点，一个可复用工作台。</p>
+        </article>
+        <article class="card">
+          <h3>现在只卖一个结果</h3>
+          <p>每周帮商家找出优先机会，给出理由和证据，并让反馈进入下一轮。</p>
+        </article>
+        <article class="card">
+          <h3>现在只看一个指标</h3>
+          <p>客户是否愿意付试点费，并在 4 周后续费。</p>
+        </article>
+        <article class="card amber">
+          <h3>现在不要做的事</h3>
+          <p>不要做生态、不要做 marketplace、不要招生态 BD、不要为不付费客户定制。</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>业务需求到应用生成全链路</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --ink: #111820;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.25;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 15px;
+      line-height: 1.25;
+      font-weight: 740;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .lead {
+      max-width: 980px;
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #e8eef3;
+      color: #314455;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .tag.blue {
+      background: #e6eef5;
+      color: var(--action);
+    }
+
+    .tag.green {
+      background: #e5f1eb;
+      color: var(--green);
+    }
+
+    .tag.amber {
+      background: #f4eddf;
+      color: var(--amber);
+    }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .diagram-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      min-width: 1060px;
+      height: auto;
+    }
+
+    .module-grid,
+    .example-grid,
+    .principle-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .module-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .example-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .principle-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .item {
+      min-height: 118px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .item h3 {
+      margin: 0 0 8px;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 740;
+      letter-spacing: 0;
+    }
+
+    .item p {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+    }
+
+    .note.summary {
+      border-left-color: var(--green);
+      background: #eaf4ee;
+      color: #214d36;
+      font-weight: 600;
+    }
+
+    @media (max-width: 980px) {
+      main {
+        padding: 24px 16px 36px;
+      }
+
+      .module-grid,
+      .example-grid,
+      .principle-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .module-grid,
+      .example-grid,
+      .principle-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .section {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>业务需求到应用生成全链路</h1>
+      <p class="lead">
+        业务需求先整理成产品需求，再补充业务能力、应用形态和验收标准，形成 TDS Bundle（应用生成输入包）；应用装配器用模板、Runtime 绑定和 Code Agent 定制生成三种方式产出 App 壳，运行反馈再写回共享 Runtime。
+      </p>
+      <div class="tag-row" aria-label="核心链路标签">
+        <span class="tag green">BRD</span>
+        <span class="tag amber">PRD</span>
+        <span class="tag">Capability Context</span>
+        <span class="tag">AppSpec</span>
+        <span class="tag">EvalSpec</span>
+        <span class="tag blue">TDS Bundle（应用生成输入包）</span>
+        <span class="tag amber">应用装配器</span>
+        <span class="tag green">App 壳 A</span>
+        <span class="tag blue">Runtime B</span>
+      </div>
+    </header>
+
+    <section class="section" aria-labelledby="diagram-title">
+      <h2 id="diagram-title">极简架构图</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 760" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">从 BRD 到 App 壳与共享 Runtime 的主链路</title>
+          <desc id="svg-desc">业务需求先转成产品需求，再与 Capability Context、AppSpec、EvalSpec 一起进入 TDS Builder，输出 TDS Bundle（应用生成输入包）。应用装配器按模板装配、Runtime 绑定和 Code Agent 定制生成三路分流产出 App 壳 A；App 壳运行时调用共享 Runtime B，证据反馈先写回 Runtime，能力稳定后再可选沉淀为 Skill Pack。</desc>
+          <defs>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <style>
+              .lane { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .box-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .box-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .box-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .box-red { fill: #f7ecec; stroke: #d7a0a0; }
+              .title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .band { fill: #667684; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0; }
+              .label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow-blue); }
+              .arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#arrow-green); }
+              .arrow-amber { stroke: #946200; stroke-width: 2.2; fill: none; marker-end: url(#arrow-amber); stroke-dasharray: 5 4; }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="712" rx="12" class="lane"></rect>
+          <text x="48" y="58" class="title">全链路：需求先编译成应用生成输入包，应用再拆成外壳 A 与运行时能力 B</text>
+
+          <text x="48" y="96" class="band">生成期：业务 / 产品 / 技术语言对齐</text>
+
+          <rect x="54" y="120" width="138" height="70" rx="8" class="box box-green"></rect>
+          <text x="82" y="148" class="label">BRD</text>
+          <text x="82" y="172" class="small">业务目标 / 指标</text>
+
+          <rect x="236" y="120" width="138" height="70" rx="8" class="box box-amber"></rect>
+          <text x="264" y="148" class="label">PRD</text>
+          <text x="264" y="172" class="small">产品流程 / 验收</text>
+
+          <rect x="54" y="268" width="190" height="64" rx="8" class="box"></rect>
+          <text x="76" y="294" class="label">Capability Context</text>
+          <text x="76" y="316" class="small">数据 / 知识 / 工具 / 样例</text>
+
+          <rect x="54" y="354" width="190" height="64" rx="8" class="box box-blue"></rect>
+          <text x="76" y="380" class="label">AppSpec</text>
+          <text x="76" y="402" class="small">模板 / UI / 技术栈</text>
+
+          <rect x="54" y="440" width="190" height="64" rx="8" class="box"></rect>
+          <text x="76" y="466" class="label">EvalSpec</text>
+          <text x="76" y="488" class="small">门禁 / 评分 / 风险</text>
+
+          <rect x="318" y="318" width="180" height="104" rx="8" class="box box-blue"></rect>
+          <text x="344" y="354" class="label">TDS Builder</text>
+          <text x="344" y="380" class="small">统一四类输入</text>
+          <text x="344" y="402" class="small">输出单一输入包</text>
+
+          <rect x="554" y="294" width="230" height="152" rx="8" class="box box-blue"></rect>
+          <text x="576" y="328" class="label">TDS Bundle（应用生成输入包）</text>
+          <text x="576" y="356" class="small">产品目标与页面范围</text>
+          <text x="576" y="378" class="small">业务能力与数据字段</text>
+          <text x="576" y="400" class="small">应用规范与验收标准</text>
+          <text x="576" y="422" class="small">任务拆解与验证方式</text>
+
+          <rect x="846" y="250" width="232" height="210" rx="8" class="box box-amber"></rect>
+          <text x="868" y="284" class="label">应用装配器 · 三路分流</text>
+          <text x="868" y="318" class="small">1. 模板装配：确定页面结构</text>
+          <text x="868" y="348" class="small">2. Runtime 绑定：业务逻辑</text>
+          <text x="868" y="378" class="small">3. Code Agent：定制生成</text>
+          <text x="868" y="424" class="small">输出：可预览 App 壳</text>
+
+          <path d="M192 155 H236" class="arrow-green"></path>
+          <path d="M305 190 C342 232 376 280 402 318" class="arrow-amber"></path>
+          <path d="M244 300 C284 300 292 346 318 354" class="arrow-blue"></path>
+          <path d="M244 386 H318" class="arrow-blue"></path>
+          <path d="M244 472 C284 472 292 406 318 392" class="arrow-blue"></path>
+          <path d="M498 370 H554" class="arrow-blue"></path>
+          <path d="M784 370 H846" class="arrow-blue"></path>
+
+          <rect x="54" y="532" width="1040" height="1" fill="#dce2e7"></rect>
+          <text x="48" y="566" class="band">运行期：A 是外壳，B 是共享能力</text>
+
+          <rect x="846" y="594" width="232" height="86" rx="8" class="box box-green"></rect>
+          <text x="868" y="628" class="label">App 壳 (A)</text>
+          <text x="868" y="656" class="small">页面 / 交互 / 状态 / 预览</text>
+
+          <rect x="516" y="590" width="260" height="100" rx="8" class="box box-blue"></rect>
+          <text x="538" y="628" class="label">共享 Runtime (B)</text>
+          <text x="538" y="652" class="small">输入校验 / 规则计算 / 结果生成</text>
+          <text x="538" y="674" class="small">工具调用 / 证据追踪 / 结果回放</text>
+
+          <rect x="242" y="594" width="194" height="86" rx="8" class="box"></rect>
+          <text x="264" y="628" class="label">证据反馈</text>
+          <text x="264" y="656" class="small">trace / eval / 用户修正</text>
+
+          <rect x="54" y="594" width="126" height="86" rx="8" class="box box-red"></rect>
+          <text x="76" y="628" class="label">Skill Pack</text>
+          <text x="76" y="656" class="small">稳定后再抽象</text>
+
+          <path d="M962 460 V594" class="arrow-green"></path>
+          <path d="M846 638 H776" class="arrow-blue"></path>
+          <path d="M516 638 H436" class="arrow-green"></path>
+          <path d="M436 666 C476 714 610 714 636 690" class="arrow-amber"></path>
+          <path d="M242 638 H180" class="arrow-amber"></path>
+          <path d="M646 594 C670 538 838 522 906 460" class="arrow-amber"></path>
+
+          <text x="694" y="556" class="small">Runtime 绑定让 App 壳调用同一套运行时能力</text>
+          <text x="236" y="704" class="small">证据反馈先写回 Runtime；Skill Pack 是能力稳定后的可选沉淀</text>
+        </svg>
+      </div>
+      <p class="note">
+        主线：BRD -> PRD；PRD + Capability Context + AppSpec + EvalSpec -> TDS Builder -> TDS Bundle（应用生成输入包）-> 应用装配器（三路分流）-> App 壳 (A)；运行期 App 壳调用共享 Runtime (B)，证据反馈必须写回 Runtime。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="modules-title">
+      <h2 id="modules-title">模块说明</h2>
+      <div class="module-grid">
+        <article class="item">
+          <h3>BRD / PRD</h3>
+          <p>BRD 定义业务目标和成功指标；PRD 把业务需求产品化为流程、功能范围和验收标准。</p>
+        </article>
+        <article class="item">
+          <h3>Capability Context</h3>
+          <p>业务能力上下文。补充数据、知识、工具、样例、反例和风险，是能力投影的来源。</p>
+        </article>
+        <article class="item">
+          <h3>AppSpec</h3>
+          <p>应用规范。定义模板、UI、技术栈、组件槽位、运行边界和功能设计。</p>
+        </article>
+        <article class="item">
+          <h3>EvalSpec</h3>
+          <p>评估规范。定义质量门禁、评分维度、验证命令、安全规则和风险检查。</p>
+        </article>
+        <article class="item">
+          <h3>TDS Builder</h3>
+          <p>编译器。把 PRD、Capability Context、AppSpec、EvalSpec 合成 TDS Bundle（应用生成输入包）。</p>
+        </article>
+        <article class="item">
+          <h3>TDS Bundle（应用生成输入包）</h3>
+          <p>单一输入包。把产品目标、页面范围、业务能力、数据字段、验收标准和验证方式整理成可执行说明。</p>
+        </article>
+        <article class="item">
+          <h3>应用装配器</h3>
+          <p>应用生成入口。按确定性分流：模板装配做结构，Runtime 绑定接能力，Code Agent 做定制。</p>
+        </article>
+        <article class="item">
+          <h3>App 壳 (A)</h3>
+          <p>用户可见应用。负责页面、交互、状态和预览，可以重生成，不承载长期业务事实。</p>
+        </article>
+        <article class="item">
+          <h3>共享 Runtime (B)</h3>
+          <p>业务能力运行实体。负责输入校验、规则计算、流程执行、工具调用、证据追踪和结果回放。</p>
+        </article>
+        <article class="item">
+          <h3>证据反馈</h3>
+          <p>运行结果、评估记录和用户修正必须写回 Runtime，让能力持续校准并改进后续生成。</p>
+        </article>
+        <article class="item">
+          <h3>Skill Pack</h3>
+          <p>稳定能力的可选沉淀形态。一阶段可以先不抽象成 Skill Pack，等 Runtime 跑稳后再沉淀契约、知识、工具和 eval。</p>
+        </article>
+        <article class="item">
+          <h3>Code Agent</h3>
+          <p>定制生成分支。只处理模板和 Runtime 绑定覆盖不到的特殊交互、特殊集成或代码改造。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="example-title">
+      <h2 id="example-title">商机洞察例子</h2>
+      <div class="example-grid">
+        <article class="item">
+          <h3>需求到产品</h3>
+          <p>BRD 是“销售团队要从客户数据里发现高潜商机”；PRD 落成上传数据、查看机会看板、打开机会详情三类用户流程。</p>
+        </article>
+        <article class="item">
+          <h3>TDS Bundle（应用生成输入包）</h3>
+          <p>写清楚要用哪些字段、生成哪些页面、调用哪些能力、如何验收：样例数据能跑通，每条推荐都有评分理由和证据。</p>
+        </article>
+        <article class="item">
+          <h3>应用装配器</h3>
+          <p>上传页和看板走模板装配；评分、分层、洞察卡片是 Runtime 通用能力在商机场景里的投影；特殊交互再交给 Code Agent。</p>
+        </article>
+        <article class="item">
+          <h3>App 壳 (A) + Runtime (B)</h3>
+          <p>App 壳是商机洞察工作台；Runtime 的输入校验、规则计算、结果生成、证据回放，在这里落成数据清洗、机会评分和洞察理由。</p>
+        </article>
+      </div>
+      <p class="note">
+        换句话说，商机洞察 App 可以重生成；可复用的是 Runtime 里的通用能力结构，以及 Skill Pack 里的场景规则、证据口径和评估用例。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="principles-title">
+      <h2 id="principles-title">设计原则</h2>
+      <div class="principle-grid">
+        <article class="item">
+          <h3>需求先产品化</h3>
+          <p>BRD 先变成 PRD，业务语言先转成产品语言。</p>
+        </article>
+        <article class="item">
+          <h3>输入先编译</h3>
+          <p>PRD、能力、应用和评估先进入 TDS Builder 统一对齐。</p>
+        </article>
+        <article class="item">
+          <h3>生成三路分流</h3>
+          <p>确定结构走模板，业务逻辑走 Runtime，特殊定制才走 Code Agent。</p>
+        </article>
+        <article class="item">
+          <h3>壳与能力分离</h3>
+          <p>App 壳可替换，业务能力在共享 Runtime 中保持一致。</p>
+        </article>
+        <article class="item">
+          <h3>证据回写沉淀</h3>
+          <p>反馈必须先写回 Runtime；是否沉淀为 Skill Pack 可以后置。</p>
+        </article>
+      </div>
+      <p class="note summary">
+        一句话：TDS Bundle（应用生成输入包）统一生成上下文，应用装配器生成 App 壳，Runtime 承载通用能力并接收运行反馈。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

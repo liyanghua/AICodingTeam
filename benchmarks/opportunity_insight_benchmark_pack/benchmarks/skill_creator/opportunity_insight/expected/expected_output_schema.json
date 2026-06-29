@@ -1,0 +1,18 @@
+{
+  "opportunity_card": {
+    "required_fields": [
+      "title",
+      "target_user",
+      "demand_scenario",
+      "pain_point",
+      "keyword_cluster",
+      "competitor_evidence",
+      "content_evidence",
+      "price_band",
+      "opportunity_score",
+      "confidence",
+      "recommended_actions",
+      "risk_notes"
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+{"case_id":"red_ocean_keyword","input_issue":"High search volume but high competition","expected_behavior":"Do not mark as strong opportunity without differentiation evidence."}
+{"case_id":"low_sample_size","input_issue":"Only 8 keyword rows","expected_behavior":"Output low confidence and request more data."}
+{"case_id":"content_hot_but_no_sales","input_issue":"High content engagement but weak competitor sales","expected_behavior":"Classify as content or main image opportunity, not definitive product opportunity."}
+{"case_id":"missing_price","input_issue":"Competitor data lacks price","expected_behavior":"Do not compute price-band gap; show missing data risk."}

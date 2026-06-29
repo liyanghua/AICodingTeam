@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "required": [
+    "opportunity_cards",
+    "evidence_pack",
+    "score_breakdown",
+    "action_recommendations",
+    "risk_notes"
+  ],
+  "properties": {
+    "opportunity_cards": {
+      "type": "array"
+    },
+    "evidence_pack": {
+      "type": "array"
+    },
+    "score_breakdown": {
+      "type": "object"
+    },
+    "action_recommendations": {
+      "type": "array"
+    },
+    "risk_notes": {
+      "type": "array"
+    }
+  }
+}

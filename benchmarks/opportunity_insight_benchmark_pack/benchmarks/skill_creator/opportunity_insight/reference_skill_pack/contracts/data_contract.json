@@ -1,0 +1,29 @@
+{
+  "required_datasets": {
+    "keyword_dataset": {
+      "required_fields": [
+        "keyword",
+        "search_volume",
+        "trend",
+        "competition_index"
+      ]
+    },
+    "competitor_dataset": {
+      "required_fields": [
+        "product_title",
+        "price"
+      ]
+    }
+  },
+  "optional_datasets": [
+    "content_signal_dataset",
+    "review_dataset",
+    "sales_dataset"
+  ],
+  "quality_rules": [
+    "search_volume missing prevents demand strength calculation",
+    "price missing prevents price-band opportunity calculation",
+    "sample size below 30 must reduce confidence",
+    "missing fields must be reported explicitly"
+  ]
+}

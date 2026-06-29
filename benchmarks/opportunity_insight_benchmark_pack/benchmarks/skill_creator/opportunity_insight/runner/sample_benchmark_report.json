@@ -1,0 +1,28 @@
+{
+  "benchmark_id": "opportunity_insight_skill_creator_v0",
+  "generated_skill_path": "generated_skills/ecommerce/opportunity_insight/",
+  "hard_gate_passed": true,
+  "score_total": 86,
+  "dimension_scores": {
+    "scenario_fit": 9,
+    "data_contract_quality": 13,
+    "knowledge_contract_quality": 14,
+    "tool_contract_quality": 8,
+    "execution_plan_quality": 8,
+    "output_schema_quality": 9,
+    "eval_quality": 8,
+    "rsi_feedback_design": 8,
+    "app_generation_readiness": 4,
+    "clarity_and_reusability": 5
+  },
+  "top_gaps": [
+    "Tool failure policy is too generic",
+    "Platform-specific opportunity rules are weak",
+    "Regression cases are insufficient"
+  ],
+  "recommended_next_actions": [
+    "Add xiaohongshu and taobao platform-specific rules",
+    "Add more negative cases for high-search-volume red ocean keywords",
+    "Add app_spec_template for generated opportunity dashboard"
+  ]
+}

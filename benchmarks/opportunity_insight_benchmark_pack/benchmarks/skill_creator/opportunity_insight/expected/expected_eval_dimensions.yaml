@@ -1,0 +1,11 @@
+expected_eval_dimensions:
+  - scenario_fit
+  - data_contract_quality
+  - knowledge_contract_quality
+  - tool_contract_quality
+  - execution_plan_quality
+  - output_schema_quality
+  - eval_quality
+  - rsi_feedback_design
+  - app_generation_readiness
+  - clarity_and_reusability

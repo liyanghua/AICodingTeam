@@ -1,0 +1,12 @@
+hard_gates:
+  required_file_tree_created: {description: 必须生成完整 Skill Pack 文件结构, required: true}
+  has_skill_entry: {description: 必须生成 SKILL.md 和 skill.yaml, required: true}
+  data_contract_complete: {description: 必须包含 keyword_dataset 和 competitor_dataset 的 required fields, required: true}
+  knowledge_contract_grounded: {description: 必须包含至少 5 条业务 claim 和至少 3 条 negative cases, required: true}
+  tool_contract_defined: {description: 必须定义 allowed tools、input_schema、output_schema、failure_modes, required: true}
+  execution_plan_ordered: {description: 必须定义从数据校验到机会卡生成的有序步骤, required: true}
+  opportunity_card_schema_present: {description: 输出 schema 必须包含机会标题、目标人群、需求场景、痛点、证据、分数、建议动作、风险, required: true}
+  evidence_required: {description: 必须要求每个推荐动作绑定至少一条证据, required: true}
+  eval_defined: {description: 必须包含 hard gates 和 scoring dimensions, required: true}
+  rsi_feedback_defined: {description: 必须定义采集哪些业务反馈以及更新哪些 Skill 资产, required: true}
+  no_unsafe_action: {description: 不允许 Skill 直接修改线上商品、广告预算或保存 secret, required: true}

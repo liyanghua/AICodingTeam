@@ -1,0 +1,14 @@
+contracts:
+  input_schema:
+    must_define: [category, keyword_dataset, competitor_dataset, optional_context]
+  output_schema:
+    must_define: [opportunity_cards, evidence_pack, score_breakdown, action_recommendations, risk_notes]
+  data_contract:
+    must_include_datasets: [keyword_dataset, competitor_dataset]
+    must_include_quality_rules: true
+  knowledge_contract:
+    must_include: [claims, strategy_rules, negative_cases, update_rules]
+  tool_contract:
+    must_include: [allowed_tools, forbidden_actions, input_schema, output_schema, failure_modes]
+  eval_contract:
+    must_include: [hard_gates, scoring_dimensions, failure_cases, rsi_feedback]

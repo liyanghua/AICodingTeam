@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>技术架构 × 产品设计 → 生态角色对应一页纸</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--background); color:var(--text); font-family:var(--font); font-size:14px; line-height:1.5; }
+    main { max-width: 1240px; margin: 0 auto; padding: 32px 24px 56px; }
+    header { margin-bottom: 18px; }
+    h1 { margin:0 0 8px; font-size:26px; font-weight:760; line-height:1.2; }
+    h2 { margin:0 0 12px; font-size:16px; font-weight:740; }
+    h3 { margin:0 0 6px; font-size:13.5px; font-weight:700; }
+    p  { margin:0; color: var(--text); }
+    p.lead { max-width: 1080px; color: var(--text); font-size:15px; }
+    p.sub  { color: var(--muted); font-size:13px; }
+
+    .section { margin-top:16px; padding:18px 20px; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 14px rgba(29,37,44,.05); }
+
+    /* legend */
+    .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:var(--muted); margin-top:6px; }
+    .legend span b { color: var(--text); margin-right:4px; }
+
+    /* diagram */
+    .diagram-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:8px; background:#fbfcfd; }
+    svg { display:block; width:100%; min-width:1180px; height:auto; }
+
+    /* matrix table */
+    table.matrix { width:100%; border-collapse: separate; border-spacing:0; font-size:13px; }
+    table.matrix th, table.matrix td { border-bottom:1px solid var(--border); border-right:1px solid var(--border); padding:8px 10px; vertical-align: top; }
+    table.matrix th { background:#eef2f5; font-weight:700; text-align:left; color:#243341; position:sticky; top:0; }
+    table.matrix tr td:first-child, table.matrix tr th:first-child { border-left:1px solid var(--border); }
+    table.matrix tr:first-child th { border-top:1px solid var(--border); }
+    table.matrix tr:nth-child(even) td { background:#fbfcfd; }
+    table.matrix td .sym { display:inline-block; min-width:18px; font-weight:700; }
+    .sym.produce { color: var(--green); }
+    .sym.consume { color: var(--action); }
+    .sym.both    { color: #6a3aa6; }
+    .sym.gov     { color: var(--amber); }
+    .sym.none    { color: #b9c2cb; }
+
+    /* role cards */
+    .roles { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:12px; }
+    .role { padding:12px 14px; background:var(--surface-subtle); border:1px solid var(--border); border-radius:8px; min-height: 240px; display:flex; flex-direction:column; gap:8px; }
+    .role.us  { background:#eaf4ee; border-color:#bcd9c8; }
+    .role.merchant { background:#f6efe3; border-color:#d5bd87; }
+    .role h3 { font-size:14px; }
+    .role .tag { display:inline-block; font-size:11.5px; color:var(--muted); }
+    .role ul { margin:0; padding-left:16px; font-size:12.8px; color:#314455; }
+    .role ul li { margin: 2px 0; }
+    .role .label { font-size:11.5px; color:var(--muted); text-transform: uppercase; letter-spacing:.04em; margin-top:2px; }
+
+    /* invariants */
+    .invariants { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px; }
+    .inv { padding:12px 14px; background:#fff7ec; border:1px solid #f0d9a7; border-radius:8px; }
+    .inv h3 { color:#7a5b00; }
+    .inv p { font-size:12.8px; color:#5a4500; }
+
+    .note { padding:10px 14px; border-left:4px solid var(--action); background:#eef4f8; color:#314455; border-radius:6px; font-size:13px; }
+    .note.green { border-left-color: var(--green); background:#eaf4ee; color:#214d36; }
+    .note.amber { border-left-color: var(--amber); background:#fff7ec; color:#7a5b00; }
+
+    @media (max-width: 1080px) {
+      .roles { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .invariants { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+    @media (max-width: 640px) {
+      .roles { grid-template-columns: 1fr; }
+      .invariants { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>技术架构 × 产品设计 → 生态角色对应一页纸</h1>
+    <p class="lead">
+      把"App 壳 (A) + 能力运行时 (B) + 证据/校准回路"的每一层落到四类生态角色 + 我们自己，明确谁是<strong>主产出</strong>、谁是<strong>主消费</strong>、谁有<strong>权属</strong>。
+      横切的产品设计入口在每张角色卡里给出。规则只有一条：<strong>权属归平台的工件不可外带，能力签名跨阶段不变。</strong>
+    </p>
+    <div class="legend">
+      <span><b class="sym produce">●</b>主产出</span>
+      <span><b class="sym consume">▲</b>主消费</span>
+      <span><b class="sym both">◎</b>产消双向</span>
+      <span><b class="sym gov">◆</b>权属/治理</span>
+      <span><b class="sym none">—</b>不参与</span>
+    </div>
+  </header>
+
+  <!-- 1. 全景图 -->
+  <section class="section">
+    <h2>1. 全景：技术架构层 × 角色着色</h2>
+    <p class="sub">上半生成期、下半运行期；A 壳左、B 能力运行时右；底部为反馈/校准回流。色块颜色 = 该层主要贡献角色。</p>
+    <div class="diagram-wrap" style="margin-top:10px;">
+      <svg viewBox="0 0 1200 740" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="技术架构与生态角色对应全景图">
+        <defs>
+          <marker id="arr-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"/>
+          </marker>
+          <marker id="arr-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"/>
+          </marker>
+          <marker id="arr-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L9,3 z" fill="#946200"/>
+          </marker>
+          <style>
+            .ttl { font: 700 13px Inter, system-ui, sans-serif; fill:#1d252c; }
+            .sub { font: 400 11px Inter, system-ui, sans-serif; fill:#667684; }
+            .role-tag { font: 700 10.5px Inter, system-ui, sans-serif; }
+            .lane-ttl { font: 800 12px Inter, system-ui, sans-serif; fill:#243341; letter-spacing:.05em; }
+            .arrow-lbl { font: 600 10.5px Inter, system-ui, sans-serif; fill:#314455; }
+          </style>
+        </defs>
+
+        <!-- 上半泳道：生成期 -->
+        <rect x="20" y="20" width="1160" height="220" rx="10" fill="#fbfcfd" stroke="#dce2e7"/>
+        <text x="36" y="42" class="lane-ttl">生成期 ｜ 业务文档 → Strategy IR → Skill Spec → 应用装配</text>
+
+        <!-- 业务文档 -->
+        <rect x="40" y="60" width="180" height="80" rx="8" fill="#f3e9f7" stroke="#caa7d9"/>
+        <text x="50" y="80" class="ttl">业务策略文档</text>
+        <text x="50" y="100" class="sub">市场洞察 / 竞品 / 价格带</text>
+        <text x="50" y="122" class="role-tag" fill="#6a3aa6">培训老师 主产出</text>
+
+        <!-- Strategy IR -->
+        <rect x="250" y="60" width="180" height="80" rx="8" fill="#eaf4ee" stroke="#bcd9c8"/>
+        <text x="260" y="80" class="ttl">Strategy IR</text>
+        <text x="260" y="100" class="sub">骨架 / 节点 / 阈值占位</text>
+        <text x="260" y="122" class="role-tag" fill="#1f7a4d">我们 编译 · 老师 校稿</text>
+
+        <!-- Skill Spec -->
+        <rect x="460" y="60" width="180" height="80" rx="8" fill="#eaf4ee" stroke="#bcd9c8"/>
+        <text x="470" y="80" class="ttl">Skill Spec</text>
+        <text x="470" y="100" class="sub">场景应用模板 + 参数化</text>
+        <text x="470" y="122" class="role-tag" fill="#1f7a4d">我们 平台维护</text>
+
+        <!-- AppSpec -->
+        <rect x="670" y="60" width="180" height="80" rx="8" fill="#eef4f8" stroke="#b8cad9"/>
+        <text x="680" y="80" class="ttl">AppSpec / 装配器</text>
+        <text x="680" y="100" class="sub">页面 · 组件 · 文案 · 路由</text>
+        <text x="680" y="122" class="role-tag" fill="#1f5d8c">我们 编译产物</text>
+
+        <!-- Tool Contract / Data Adapter -->
+        <rect x="880" y="60" width="280" height="80" rx="8" fill="#fff4e3" stroke="#e6c688"/>
+        <text x="890" y="80" class="ttl">Tool Contract · Data Adapter</text>
+        <text x="890" y="100" class="sub">字段 / 频次 / 鉴权 / 失败恢复</text>
+        <text x="890" y="122" class="role-tag" fill="#946200">数据服务商 + 平台 接入 · 我们 定契约</text>
+
+        <!-- 连线 -->
+        <path d="M220,100 L250,100" stroke="#6a3aa6" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+        <path d="M430,100 L460,100" stroke="#1f7a4d" stroke-width="1.6" fill="none" marker-end="url(#arr-green)"/>
+        <path d="M640,100 L670,100" stroke="#1f7a4d" stroke-width="1.6" fill="none" marker-end="url(#arr-green)"/>
+        <path d="M850,100 L880,100" stroke="#1f5d8c" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+
+        <!-- 装配三路 -->
+        <text x="540" y="174" class="sub">装配三路 → A 壳 + B 调用 + Trace 通道</text>
+        <path d="M760,140 L760,180 L380,180 L380,260" stroke="#1f5d8c" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+        <path d="M760,140 L760,180 L760,260" stroke="#1f5d8c" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+        <path d="M760,140 L760,180 L1020,180 L1020,260" stroke="#1f5d8c" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+
+        <!-- 下半泳道：运行期 -->
+        <rect x="20" y="260" width="1160" height="280" rx="10" fill="#fbfcfd" stroke="#dce2e7"/>
+        <text x="36" y="282" class="lane-ttl">运行期 ｜ A 壳 → B 能力运行时（内核 + 场景端点）→ Trace/Evidence 回流</text>
+
+        <!-- A 壳 -->
+        <rect x="40" y="300" width="320" height="220" rx="8" fill="#f6efe3" stroke="#d5bd87"/>
+        <text x="56" y="322" class="ttl">A · 应用壳</text>
+        <text x="56" y="340" class="sub">页面 / 卡片 / 表单 / 视图组件</text>
+        <text x="56" y="362" class="sub">在浏览器里运行，不算事实</text>
+        <rect x="60" y="380" width="280" height="32" rx="6" fill="#fff" stroke="#d5bd87"/>
+        <text x="72" y="400" class="sub">"商品机会洞察"应用</text>
+        <rect x="60" y="420" width="280" height="32" rx="6" fill="#fff" stroke="#d5bd87"/>
+        <text x="72" y="440" class="sub">"竞品对标"应用</text>
+        <rect x="60" y="460" width="280" height="32" rx="6" fill="#fff" stroke="#d5bd87"/>
+        <text x="72" y="480" class="sub">…（多场景应用并存）</text>
+        <text x="56" y="510" class="role-tag" fill="#946200">商家 主消费 ｜ TP 协同操作</text>
+
+        <!-- 调用箭头 -->
+        <path d="M360,410 L470,410" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr-blue)"/>
+        <text x="378" y="402" class="arrow-lbl">同签名调用</text>
+
+        <!-- B 能力运行时 -->
+        <rect x="470" y="300" width="690" height="220" rx="8" fill="#eef4f8" stroke="#b8cad9"/>
+        <text x="486" y="322" class="ttl">B · 能力运行时（capability-runtime）</text>
+        <text x="486" y="340" class="sub">运行内核 + 场景端点 / Skill 包，签名跨阶段不变</text>
+
+        <!-- 内核 -->
+        <rect x="486" y="358" width="320" height="80" rx="6" fill="#fff" stroke="#b8cad9"/>
+        <text x="500" y="378" class="ttl">运行内核（场景无关 · 全场景共享）</text>
+        <text x="500" y="396" class="sub">数据 · 知识 · 工具 · 证据 · 评估</text>
+        <text x="500" y="416" class="role-tag" fill="#1f5d8c">我们 维护</text>
+
+        <!-- 场景端点 -->
+        <rect x="820" y="358" width="324" height="80" rx="6" fill="#fff" stroke="#b8cad9"/>
+        <text x="834" y="378" class="ttl">场景端点 / Skill 包</text>
+        <text x="834" y="396" class="sub">机会洞察 · 价格带 · 竞品 · 复购…</text>
+        <text x="834" y="416" class="role-tag" fill="#6a3aa6">培训老师 IR ◎ 我们 编译 ◎ TP 调阈值</text>
+
+        <!-- 内核下：Tool Adapter / Data -->
+        <rect x="486" y="448" width="320" height="62" rx="6" fill="#fff4e3" stroke="#e6c688"/>
+        <text x="500" y="468" class="ttl">Tool Adapter · Data 接入</text>
+        <text x="500" y="486" class="sub">店透视 / 飞瓜 / 平台 API / 内部数仓</text>
+        <text x="500" y="504" class="role-tag" fill="#946200">数据服务商 + 平台 主产出</text>
+
+        <!-- 场景端点下：SOP 阈值 -->
+        <rect x="820" y="448" width="324" height="62" rx="6" fill="#fff4e3" stroke="#e6c688"/>
+        <text x="834" y="468" class="ttl">SOP 参数 / 阈值切片</text>
+        <text x="834" y="486" class="sub">类目 × GMV × 平台 × 阶段</text>
+        <text x="834" y="504" class="role-tag" fill="#946200">TP 校准 · 我们 治理</text>
+
+        <!-- 底部反馈 -->
+        <rect x="20" y="560" width="1160" height="160" rx="10" fill="#fbfcfd" stroke="#dce2e7"/>
+        <text x="36" y="582" class="lane-ttl">反馈/校准 ｜ Trace → Evidence Pack → Eval 校准 → 回写参数</text>
+
+        <rect x="40" y="600" width="220" height="100" rx="8" fill="#f6efe3" stroke="#d5bd87"/>
+        <text x="56" y="622" class="ttl">采纳 / 修改 / 真实结果</text>
+        <text x="56" y="642" class="sub">商家在应用内反馈</text>
+        <text x="56" y="676" class="role-tag" fill="#946200">商家 主产出</text>
+
+        <rect x="290" y="600" width="240" height="100" rx="8" fill="#eef4f8" stroke="#b8cad9"/>
+        <text x="306" y="622" class="ttl">Trace / Evidence Pack</text>
+        <text x="306" y="642" class="sub">节点 trace · 输入 · 工具调用 · 引用</text>
+        <text x="306" y="676" class="role-tag" fill="#1f5d8c">平台留存（权属硬约束）</text>
+
+        <rect x="560" y="600" width="240" height="100" rx="8" fill="#eaf4ee" stroke="#bcd9c8"/>
+        <text x="576" y="622" class="ttl">Eval 校准</text>
+        <text x="576" y="642" class="sub">准确率 / 采纳率 / 切片回归</text>
+        <text x="576" y="676" class="role-tag" fill="#1f7a4d">我们 主产出</text>
+
+        <rect x="830" y="600" width="330" height="100" rx="8" fill="#fff4e3" stroke="#e6c688"/>
+        <text x="846" y="622" class="ttl">回写：场景端点参数 / Skill 版本</text>
+        <text x="846" y="642" class="sub">SOP 阈值更新 · 切片新增 · 旧版本归档</text>
+        <text x="846" y="676" class="role-tag" fill="#946200">我们 治理 · TP 协参</text>
+
+        <path d="M260,650 L290,650" stroke="#946200" stroke-width="1.6" fill="none" marker-end="url(#arr-amber)"/>
+        <path d="M530,650 L560,650" stroke="#1f5d8c" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+        <path d="M800,650 L830,650" stroke="#1f7a4d" stroke-width="1.6" fill="none" marker-end="url(#arr-green)"/>
+        <!-- 回写到上面场景端点 -->
+        <path d="M995,600 L995,540 L982,540" stroke="#946200" stroke-width="1.4" stroke-dasharray="4,3" fill="none" marker-end="url(#arr-amber)"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- 2. 角色 × 工件矩阵 -->
+  <section class="section">
+    <h2>2. 五角色 × 八工件矩阵</h2>
+    <p class="sub">行 = 技术架构 / 产品设计中的工件；列 = 生态角色。每格回答："这块谁产、谁用、谁有治理权"。</p>
+    <div style="overflow-x:auto; margin-top:10px;">
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th style="width:22%">工件层</th>
+          <th>培训老师 / 第三方专家</th>
+          <th>TP 代运营</th>
+          <th>数据服务商 + 平台官方</th>
+          <th>商家</th>
+          <th>我们（runtime 团队）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>业务策略文档</strong><br/><span class="sub">市场洞察 / 竞品 / 价格带…</span></td>
+          <td><span class="sym produce">●</span> 主产出 · 持续更新</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym consume">▲</span> 消费 + 引导写法</td>
+        </tr>
+        <tr>
+          <td><strong>Strategy IR</strong><br/><span class="sub">骨架 / 节点 / 阈值占位</span></td>
+          <td><span class="sym consume">▲</span> 校稿 · 验收</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym produce">●</span> 编译产出</td>
+        </tr>
+        <tr>
+          <td><strong>Skill Spec / 场景应用模板</strong><br/><span class="sub">Workflow + 工具绑定 + 参数化</span></td>
+          <td><span class="sym consume">▲</span> 提供方法论参数</td>
+          <td><span class="sym both">◎</span> 阈值标定 · 增补 SOP 节点</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym produce">●</span><span class="sym gov">◆</span> 主产出 · 权属</td>
+        </tr>
+        <tr>
+          <td><strong>Tool Contract · Data Adapter</strong><br/><span class="sub">字段 · 频次 · 鉴权 · 失败恢复</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym produce">●</span> 接入实现</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym gov">◆</span> 定契约 · 审核</td>
+        </tr>
+        <tr>
+          <td><strong>A · 应用壳 / AppSpec</strong><br/><span class="sub">页面 · 组件 · 文案 · 视图</span></td>
+          <td><span class="sym consume">△</span> 评审应用形态</td>
+          <td><span class="sym consume">△</span> 在应用里执行</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym consume">▲</span> 主消费</td>
+          <td><span class="sym produce">●</span> 编译生成</td>
+        </tr>
+        <tr>
+          <td><strong>B · 能力运行时（内核 + 场景端点）</strong><br/><span class="sub">执行 · 状态 · 工具调度 · 证据</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym consume">△</span> 通过 SOP 参数影响</td>
+          <td><span class="sym consume">△</span> 接入侧消费</td>
+          <td><span class="sym consume">▲</span> 隔层使用</td>
+          <td><span class="sym produce">●</span><span class="sym gov">◆</span> 主产出 · 权属</td>
+        </tr>
+        <tr>
+          <td><strong>Trace / Evidence Pack</strong><br/><span class="sub">节点 trace · 引用 · 计算指标</span></td>
+          <td><span class="sym consume">△</span> 用于方法论复盘</td>
+          <td><span class="sym consume">△</span> 用于运营复盘</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym produce">●</span> 采纳/修改信号</td>
+          <td><span class="sym gov">◆</span> 平台留存 · 不可外带</td>
+        </tr>
+        <tr>
+          <td><strong>Eval 校准 / 圈层切片参数</strong><br/><span class="sub">准确率 · 采纳率 · 类目 × GMV × 平台</span></td>
+          <td><span class="sym consume">△</span> 看自己的方法论得分</td>
+          <td><span class="sym both">◎</span> 协调切片标定</td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym none">—</span></td>
+          <td><span class="sym produce">●</span><span class="sym gov">◆</span> 主产出 · 权属</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="note green" style="margin-top:12px;">
+      读法：<strong>● 集中在我们和老师</strong>（产能侧）；<strong>▲ 集中在商家和 TP</strong>（消费侧）；
+      <strong>◆ 全部归我们</strong>（治理与权属）；<strong>数据服务商只在工具接入这一格 ●</strong>，不接触证据/校准/Skill。
+    </div>
+  </section>
+
+  <!-- 3. 角色卡 -->
+  <section class="section">
+    <h2>3. 五张角色卡：在架构里站哪、产品上点什么</h2>
+    <div class="roles">
+      <div class="role">
+        <h3>培训老师 / 第三方专家</h3>
+        <span class="tag">产能侧 · 方法论资产</span>
+        <div class="label">在架构中</div>
+        <ul>
+          <li>策略文档 → Strategy IR</li>
+          <li>Skill Spec 的方法论参数</li>
+          <li>看 Eval 自己内容的得分</li>
+        </ul>
+        <div class="label">产品入口</div>
+        <ul>
+          <li>策略上传 + IR 校稿台</li>
+          <li>方法论效果看板（采纳/准确率）</li>
+        </ul>
+        <div class="label">权属约束</div>
+        <ul>
+          <li>方法论可带走，Evidence/校准参数不可带走</li>
+        </ul>
+      </div>
+
+      <div class="role">
+        <h3>TP 代运营商</h3>
+        <span class="tag">规模放大 · SOP 落地</span>
+        <div class="label">在架构中</div>
+        <ul>
+          <li>Skill 的 SOP 节点与阈值</li>
+          <li>圈层切片参数标定</li>
+          <li>批量在 A 壳中操作多个商家</li>
+        </ul>
+        <div class="label">产品入口</div>
+        <ul>
+          <li>多店切换 + 批量执行</li>
+          <li>SOP 编辑器（限定参数范围）</li>
+          <li>客户复盘报告</li>
+        </ul>
+        <div class="label">权属约束</div>
+        <ul>
+          <li>SOP 模板可复用，跨客户证据不可见</li>
+        </ul>
+      </div>
+
+      <div class="role">
+        <h3>数据服务商 + 平台官方</h3>
+        <span class="tag">数据底座 · 工具供给</span>
+        <div class="label">在架构中</div>
+        <ul>
+          <li>Tool Adapter / Data 接入</li>
+          <li>按 Tool Contract 实现端点</li>
+        </ul>
+        <div class="label">产品入口</div>
+        <ul>
+          <li>开发者中心（契约 + 调试台）</li>
+          <li>调用计量与配额面板</li>
+        </ul>
+        <div class="label">权属约束</div>
+        <ul>
+          <li>不接触 Skill / 证据 / Eval；按调用结算</li>
+        </ul>
+      </div>
+
+      <div class="role merchant">
+        <h3>商家</h3>
+        <span class="tag">消费侧 · 反馈样本来源</span>
+        <div class="label">在架构中</div>
+        <ul>
+          <li>使用 A 壳里的多个场景应用</li>
+          <li>产生采纳/修改/真实结果</li>
+        </ul>
+        <div class="label">产品入口</div>
+        <ul>
+          <li>场景应用首页 / 工作台</li>
+          <li>结论卡右侧"采纳/修改"按钮</li>
+          <li>月度复盘视图</li>
+        </ul>
+        <div class="label">权属约束</div>
+        <ul>
+          <li>自家数据隔离；反馈样本聚合后归平台</li>
+        </ul>
+      </div>
+
+      <div class="role us">
+        <h3>我们（runtime 团队）</h3>
+        <span class="tag">编译器 · 运行时 · 治理</span>
+        <div class="label">在架构中</div>
+        <ul>
+          <li>document-to-skill 编译器</li>
+          <li>A 壳装配器 + B 能力运行时</li>
+          <li>Eval 与切片治理</li>
+        </ul>
+        <div class="label">产品入口</div>
+        <ul>
+          <li>Skill 注册与版本治理后台</li>
+          <li>切片参数中心 + 回归测试</li>
+        </ul>
+        <div class="label">权属约束</div>
+        <ul>
+          <li>Skill 版本 / 证据池 / 校准参数 = 平台资产</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 不变量 -->
+  <section class="section">
+    <h2>4. 四条不变量：跨阶段不动</h2>
+    <div class="invariants">
+      <div class="inv">
+        <h3>① 能力签名不变</h3>
+        <p>裸服务端点 → Skill 包，调用契约一致；A 壳不感知后端是哪种封装。</p>
+      </div>
+      <div class="inv">
+        <h3>② A/B 物理可合体、逻辑必分离</h3>
+        <p>MVP 1.0 同进程；后续迁出 = 搬迁不是重写。A 共享"定义"、B 共享"执行+状态+证据"。</p>
+      </div>
+      <div class="inv">
+        <h3>③ Trace 不可跳过</h3>
+        <p>每一次场景端点调用都必须落 trace；无 trace 的结论不允许进入 Evidence Pack。</p>
+      </div>
+      <div class="inv">
+        <h3>④ 权属归平台的工件不可外带</h3>
+        <p>方法论可带走，证据 / 校准参数 / 切片样本不可带走。合作社区协议直接写入这一条。</p>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

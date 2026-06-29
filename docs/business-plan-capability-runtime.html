@@ -1,0 +1,1262 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>能力运行时 · 商业策划书：从最小闭环到生态飞轮</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --teacher: #6b4ea6;
+      --tp: #1f5d8c;
+      --data: #1f7a4d;
+      --merchant: #b46a1f;
+      --ink: #111820;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 56px; }
+    header.top { margin-bottom: 24px; }
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.25; font-weight: 760; }
+    h2 { margin: 0 0 14px; font-size: 16px; line-height: 1.25; font-weight: 740; display: flex; align-items: baseline; gap: 10px; }
+    h2 .num { color: var(--action); font-weight: 760; }
+    h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.25; font-weight: 720; }
+    p { margin: 0; color: var(--muted); }
+    .kicker { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #eef4f8; color: var(--action); font-size: 12px; font-weight: 620; margin-bottom: 10px; }
+    .lead { max-width: 980px; color: var(--text); font-size: 15px; }
+    .section { margin-top: 16px; padding: 22px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06); }
+    .three-col, .four-col, .two-col { display: grid; gap: 12px; }
+    .three-col { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .four-col  { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .two-col   { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cell { padding: 14px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; }
+    .cell h3 { font-size: 13.5px; }
+    .cell p { font-size: 12.5px; }
+    .cell.accent { background: #f6efe3; border-color: #d5bd87; }
+    .cell.warn { background: #fff7f7; border-color: #f0caca; }
+    .cell.warn p { color: #6b3232; }
+    .cell.green { background: #eaf4ee; border-color: #b9d8c5; }
+    .cell.green p { color: #214d36; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; vertical-align: top; }
+    th { background: var(--surface-subtle); text-align: left; font-weight: 700; color: var(--ink); }
+    td.muted { color: var(--muted); }
+    .diagram-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfd; padding: 8px; }
+    svg { display: block; width: 100%; min-width: 920px; height: auto; }
+    .svg-label { font-size: 12.5px; font-weight: 680; fill: var(--ink); }
+    .svg-small { font-size: 11px; fill: var(--muted); }
+    .svg-step-text { font-size: 12px; fill: var(--ink); font-weight: 580; }
+    .note { margin-top: 12px; padding: 12px 14px; border-left: 4px solid var(--action); background: #eef4f8; color: #314455; border-radius: 6px; font-size: 13px; }
+    .note.green { border-left-color: var(--green); background: #eaf4ee; color: #214d36; }
+    .note.amber { border-left-color: var(--amber); background: #f9f1dc; color: #5a4416; }
+    .note.red   { border-left-color: var(--red);   background: #fbeaea; color: #6b3232; }
+    /* AGENT_INSERT_STYLE */
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <span class="kicker">商业策划书 · 能力运行时（capability-runtime）</span>
+    <h1>从最小闭环到生态飞轮</h1>
+    <p class="lead">
+      这是一份让公司每个角色都能看懂的策划书。它要回答三个问题：
+      我们到底卖什么？最小可运转的生意长什么样？未来怎么从一门生意长成一个生态。
+    </p>
+  </header>
+
+  <section class="section">
+    <h2><span class="num">0</span>一句话讲清楚我们卖什么</h2>
+    <p class="lead">
+      我们把"商家做生意需要的方法论 + 数据 + 工具 + 经验"打包成<strong>一个个场景应用</strong>，
+      装进一个统一的<strong>能力运行时</strong>里。商家不再装一堆 SaaS，而是用一个个"能直接干活、有数据、有结论、有证据"的经营应用。
+    </p>
+    <div class="three-col" style="margin-top:14px;">
+      <div class="cell"><h3>对商家</h3><p>开箱即用的经营应用。不是工具，是"已经会做这件事的同事"。</p></div>
+      <div class="cell"><h3>对内容方 / 老师</h3><p>方法论第一次能变成可调用、可计费、可复利的资产，不再只是课程和 PPT。</p></div>
+      <div class="cell"><h3>对公司自己</h3><p>每多一个场景应用，跨商家复用；每多一个商家，反哺校准。一份资产，多次收钱。</p></div>
+    </div>
+    <div class="note" style="margin-top:14px;">
+      术语对齐：对外、对客户、对销售、对财务都统一叫<strong>"场景应用"</strong>（一个应用 = 一件能干完的业务事）。
+      内部工程口径里它叫 <strong>Skill</strong>，是同一个东西的工程称呼。本策划书除非讨论工程资产池，否则一律用"场景应用"。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">1</span>反共识：为什么不一上来就做生态</h2>
+    <p class="lead">
+      生态图很漂亮：老师、TP、数据服务商、商家四方齐转。但<strong>四方互为前置</strong>，谁都不肯先进场。
+      做生态的公司，没有一家是"先画飞轮、再填角色"——
+      Salesforce 单边 SaaS 做了 6 年才有 AppExchange，Shopify 做了 3 年才有 App Store，HubSpot 也是先有几万付费客户才开 Academy。
+    </p>
+    <div class="three-col" style="margin-top:14px;">
+      <div class="cell warn">
+        <h3>陷阱 1：四向冷启动死锁</h3>
+        <p>老师等用户，商家等可信策略，TP 等标准化场景，数据方等调用量。四方相互等待。</p>
+      </div>
+      <div class="cell warn">
+        <h3>陷阱 2：放大器先于信号源</h3>
+        <p>TP 和数据服务商是规模化阶段的放大器。先于"商家愿意付费"出现，等于让扩音器先响。</p>
+      </div>
+      <div class="cell warn">
+        <h3>陷阱 3：护城河来自单一回路</h3>
+        <p>真正的壁垒是"商家用 → 反馈 → 场景应用校准"这一环。只要它转起来，其他角色会自己出现。</p>
+      </div>
+    </div>
+    <div class="note amber">
+      因此本策划书的主张是：<strong>最小闭环只激活两个角色（内容方 + 商家）</strong>。生态视图保留为终局图，不作为 MVP 路线图。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">2</span>最小闭环：双边回路</h2>
+    <p class="lead">
+      MVP 只做一件事：让"一个内容方 + 一小批种子商家"围绕<strong>一个场景应用</strong>转起来。
+      数据自取，校准手工，TP 和数据服务商完全不上场。
+    </p>
+
+    <div class="diagram-wrap" style="margin-top:14px;">
+      <svg viewBox="0 0 1080 560" role="img" aria-label="滚动闭环：四步圆环 + 复利累积">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f5d8c"/>
+          </marker>
+          <marker id="arr-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f7a4d"/>
+          </marker>
+        </defs>
+        <rect x="0" y="0" width="1080" height="560" fill="#fbfcfd"/>
+
+        <!-- 左：圆环动作图 -->
+        <text x="60" y="40" class="svg-label">A · 一次服务 = 一圈闭环</text>
+        <text x="60" y="58" class="svg-small">顺时针走完四步，资产留在中心</text>
+
+        <circle cx="310" cy="290" r="140" fill="#fff" stroke="#c9d3dc" stroke-width="1.5"/>
+        <text x="310" y="270" text-anchor="middle" class="svg-label">中心资产</text>
+        <text x="310" y="294" text-anchor="middle" class="svg-small">场景应用模板</text>
+        <text x="310" y="314" text-anchor="middle" class="svg-small">Evidence 数据池</text>
+        <text x="310" y="332" text-anchor="middle" class="svg-small">校准参数</text>
+
+        <!-- N 节点 -->
+        <rect x="200" y="80"  width="220" height="70" rx="10" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+        <text x="310" y="106" text-anchor="middle" class="svg-label" fill="#6b4ea6">① 沉淀</text>
+        <text x="310" y="128" text-anchor="middle" class="svg-step-text">内容方把方法论 + 阈值 +</text>
+        <text x="310" y="144" text-anchor="middle" class="svg-step-text">好坏样本编进场景应用</text>
+
+        <!-- E 节点 -->
+        <rect x="470" y="255" width="140" height="70" rx="10" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+        <text x="540" y="280" text-anchor="middle" class="svg-label">② 编译</text>
+        <text x="540" y="300" text-anchor="middle" class="svg-step-text">能力运行时</text>
+        <text x="540" y="316" text-anchor="middle" class="svg-step-text">把场景应用上线</text>
+
+        <!-- S 节点 -->
+        <rect x="200" y="430" width="220" height="70" rx="10" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+        <text x="310" y="456" text-anchor="middle" class="svg-label" fill="#b46a1f">③ 使用</text>
+        <text x="310" y="478" text-anchor="middle" class="svg-step-text">商家直接用 = 经营动作</text>
+        <text x="310" y="494" text-anchor="middle" class="svg-step-text">+ 付费订阅</text>
+
+        <!-- W 节点 -->
+        <rect x="10"  y="255" width="140" height="70" rx="10" fill="#fff" stroke="#1f7a4d" stroke-width="1.6"/>
+        <text x="80"  y="280" text-anchor="middle" class="svg-label" fill="#1f7a4d">④ 回流</text>
+        <text x="80"  y="300" text-anchor="middle" class="svg-step-text">采纳 / 修改 / 推翻</text>
+        <text x="80"  y="316" text-anchor="middle" class="svg-step-text">→ Evidence 入池</text>
+
+        <!-- 四段顺时针弧线箭头，绕中心 r=200 -->
+        <path d="M 380 175 A 210 210 0 0 1 462 256" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <path d="M 540 326 A 210 210 0 0 1 380 428" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <path d="M 240 432 A 210 210 0 0 1 110 326" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <path d="M 110 257 A 210 210 0 0 1 240 152" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+
+        <text x="310" y="540" text-anchor="middle" class="svg-small">每一圈 = 一次商家服务；走完四步，中心资产 + 1 笔现金 + 一组 Evidence</text>
+
+        <!-- 分隔线 -->
+        <line x1="640" y1="30" x2="640" y2="540" stroke="#dce2e7" stroke-width="1"/>
+
+        <!-- 右：复利累积图 -->
+        <text x="670" y="40" class="svg-label">B · 圈数累积 = 资产复利</text>
+        <text x="670" y="58" class="svg-small">每多转一圈，下一圈更省事、更准</text>
+
+        <!-- 圈 3 顶卡（最宽） -->
+        <rect x="670" y="100" width="400" height="86" rx="10" fill="#eaf4ee" stroke="#1f7a4d" stroke-width="1.6"/>
+        <text x="690" y="124" class="svg-label" fill="#1f7a4d">圈 3 · 第 30 家商家</text>
+        <text x="690" y="146" class="svg-step-text">场景应用模板：2 个（机会洞察 + 新品立项）</text>
+        <text x="690" y="164" class="svg-step-text">Evidence 累积 ≈ 1500 条 · 校准准确率 ≈ 88%</text>
+        <text x="690" y="180" class="svg-small">商家上线成本：1 天 · 校准服务费可降至 50%</text>
+
+        <!-- 圈 2 中卡 -->
+        <rect x="670" y="240" width="320" height="86" rx="10" fill="#f3f6fa" stroke="#1f5d8c" stroke-width="1.6"/>
+        <text x="690" y="264" class="svg-label" fill="#1f5d8c">圈 2 · 第 5 家商家</text>
+        <text x="690" y="286" class="svg-step-text">场景应用模板：1 个</text>
+        <text x="690" y="304" class="svg-step-text">Evidence 累积 ≈ 150 条 · 校准准确率 ≈ 75%</text>
+        <text x="690" y="320" class="svg-small">商家上线成本：3 天</text>
+
+        <!-- 圈 1 底卡（最窄） -->
+        <rect x="670" y="380" width="240" height="86" rx="10" fill="#f6efe3" stroke="#946200" stroke-width="1.6"/>
+        <text x="690" y="404" class="svg-label" fill="#946200">圈 1 · 第 1 家商家</text>
+        <text x="690" y="426" class="svg-step-text">场景应用模板：0 → 1</text>
+        <text x="690" y="444" class="svg-step-text">Evidence 累积 ≈ 20 条 · 准确率 ≈ 60%</text>
+        <text x="690" y="460" class="svg-small">商家上线成本：1–2 周（手工校准）</text>
+
+        <!-- 向上复利箭头 -->
+        <path d="M 1030 470 L 1030 130" stroke="#1f7a4d" stroke-width="2.5" fill="none" marker-end="url(#arr-green)"/>
+        <text x="1050" y="305" class="svg-small" fill="#1f7a4d" transform="rotate(90 1050 305)">资产复利</text>
+
+        <text x="850" y="540" text-anchor="middle" class="svg-small">同一份场景应用，从首位商家到第 30 位，边际服务成本持续下降，准确率持续上升。</text>
+      </svg>
+    </div>
+
+    <div class="three-col" style="margin-top:18px;">
+      <div class="cell">
+        <h3>① 内容方做什么</h3>
+        <p>把一份业务方法论（例：电商机会洞察）编译进一个场景应用——给出步骤、阈值、所需数据、所需工具、好坏样本。</p>
+      </div>
+      <div class="cell">
+        <h3>② 运行时做什么</h3>
+        <p>把场景应用装配成一个真能跑的产品：拉数据、跑工作流、出结论、留证据。商家直接用，不接触底层。</p>
+      </div>
+      <div class="cell">
+        <h3>③ 商家做什么</h3>
+        <p>用，付费，给出"这条结论我信 / 不信、我会改成什么"的反馈。这是场景应用持续校准的唯一原料。</p>
+      </div>
+    </div>
+
+    <div class="note green" style="margin-top:14px;">
+      最小闭环的成功定义：<strong>一个场景应用，5–10 家付费商家，30 天复用率 ≥ 60%，校准能让下一个商家少改 30% 的参数。</strong>
+      这三件事同时达成，才有资格进入下一阶段。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">3</span>商业机制：钱怎么进、怎么分、怎么沉淀</h2>
+    <p class="lead">
+      最小闭环阶段只有两种钱，结构简单。生态阶段再分润给老师、TP、数据方。
+      每条规则都用一句话，让财务、销售、产品都能记住。
+    </p>
+
+    <h3 style="margin-top:14px;">3.1 MVP 阶段：单向计费</h3>
+    <table>
+      <thead><tr><th style="width:18%">收入项</th><th>定义</th><th style="width:22%">单价示意</th><th style="width:22%">谁卖给谁</th></tr></thead>
+      <tbody>
+        <tr><td><strong>场景应用订阅费</strong></td><td>商家按月订阅一个场景应用（如机会洞察）。</td><td>¥ 2k–8k / 月 / 应用</td><td>公司 → 商家</td></tr>
+        <tr><td><strong>上线服务费</strong></td><td>首次接入时的圈层校准 + 老板培训。一次性。</td><td>¥ 5k–20k / 商家</td><td>公司 → 商家</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:8px; font-size:12.5px;">MVP 阶段内容方是自营或合作伙伴包月，<strong>不做按调用分润</strong>。理由：数据样本太小，分润算不准，会消耗信任。</p>
+
+    <h3 style="margin-top:18px;">3.2 生态阶段：三向分润</h3>
+    <table>
+      <thead><tr><th style="width:18%">角色</th><th>贡献物</th><th style="width:22%">分润形式</th><th>触发条件</th></tr></thead>
+      <tbody>
+        <tr><td><strong>老师 / 内容方</strong></td><td>方法论骨架 + 工作流 + 校准规则</td><td>该场景应用订阅收入按比例分成（如 15–25%）</td><td>该场景应用通过校准基线后</td></tr>
+        <tr><td><strong>TP 代运营</strong></td><td>圈层 SOP 补丁、阈值校准、培训交付</td><td>所推荐商家订阅费返点（如 20–30%，前 12 个月）</td><td>商家由该 TP 上线 + 30 天留存</td></tr>
+        <tr><td><strong>数据服务商</strong></td><td>数据源 + 标准接口实现</td><td>调用次数计费 + 平台抽成（如 70/30）</td><td>接口通过质量校验进入注册中心</td></tr>
+        <tr><td><strong>商家</strong></td><td>反馈样本</td><td>非现金：订阅折扣 / 优先功能 / 案例曝光</td><td>反馈被采纳进场景应用校准</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:18px;">3.3 沉淀资产：每一笔交易都长在公司账上</h3>
+    <div class="three-col" style="margin-top:8px;">
+      <div class="cell"><h3>场景应用模板池</h3><p>方法论 + 校准参数。订阅越多越准，越准越好卖。<span style="color:var(--muted);">（工程口径：Skill 资产池）</span></p></div>
+      <div class="cell"><h3>反馈证据池</h3><p>每次运行留下的输入 / 中间结果 / 结论 / 反馈。是校准的唯一原料，也是壁垒。<span style="color:var(--muted);">（工程口径：Evidence Pack）</span></p></div>
+      <div class="cell"><h3>数据接口标准池</h3><p>统一接口。数据服务商和内部工具都按它接入，越多接入越难绕开。<span style="color:var(--muted);">（工程口径：Tool Contract）</span></p></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">4</span>从最小闭环到飞轮：四阶段</h2>
+    <p class="lead">
+      每个阶段都有明确的"进入条件"——上一阶段没达标就不进。这条规则保护团队不被生态愿景拖空现金。
+    </p>
+
+    <div class="diagram-wrap" style="margin-top:14px;">
+      <svg viewBox="0 0 1080 280" role="img" aria-label="四阶段演进">
+        <rect x="0" y="0" width="1080" height="280" fill="#fbfcfd"/>
+        <g font-family="Inter, system-ui, sans-serif">
+          <rect x="40"  y="60" width="220" height="160" rx="10" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+          <text x="150" y="92"  text-anchor="middle" class="svg-label">阶段 0</text>
+          <text x="150" y="118" text-anchor="middle" class="svg-step-text">内容方 + 商家</text>
+          <text x="150" y="142" text-anchor="middle" class="svg-small">验证场景应用模式</text>
+          <text x="150" y="162" text-anchor="middle" class="svg-small">+ 付费意愿</text>
+          <text x="150" y="196" text-anchor="middle" class="svg-small">6–9 个月</text>
+
+          <rect x="300" y="60" width="220" height="160" rx="10" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+          <text x="410" y="92"  text-anchor="middle" class="svg-label">阶段 1</text>
+          <text x="410" y="118" text-anchor="middle" class="svg-step-text">+ TP 代运营</text>
+          <text x="410" y="142" text-anchor="middle" class="svg-small">验证场景应用</text>
+          <text x="410" y="162" text-anchor="middle" class="svg-small">可被外部人调参到 N 圈层</text>
+          <text x="410" y="196" text-anchor="middle" class="svg-small">9–18 个月</text>
+
+          <rect x="560" y="60" width="220" height="160" rx="10" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+          <text x="670" y="92"  text-anchor="middle" class="svg-label">阶段 2</text>
+          <text x="670" y="118" text-anchor="middle" class="svg-step-text">+ 数据服务商</text>
+          <text x="670" y="142" text-anchor="middle" class="svg-small">验证 Tool Contract</text>
+          <text x="670" y="162" text-anchor="middle" class="svg-small">对外开放性</text>
+          <text x="670" y="196" text-anchor="middle" class="svg-small">18–30 个月</text>
+
+          <rect x="820" y="60" width="220" height="160" rx="10" fill="#fff" stroke="#1f7a4d" stroke-width="1.8"/>
+          <text x="930" y="92"  text-anchor="middle" class="svg-label" fill="#1f7a4d">阶段 3</text>
+          <text x="930" y="118" text-anchor="middle" class="svg-step-text">+ 第三方老师</text>
+          <text x="930" y="142" text-anchor="middle" class="svg-small">四角色飞轮自洽</text>
+          <text x="930" y="162" text-anchor="middle" class="svg-small">公司转向平台</text>
+          <text x="930" y="196" text-anchor="middle" class="svg-small">30 个月起</text>
+
+          <path d="M 260 140 L 295 140" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+          <path d="M 520 140 L 555 140" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+          <path d="M 780 140 L 815 140" stroke="#1f5d8c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f5d8c"/>
+            </marker>
+          </defs>
+        </g>
+      </svg>
+    </div>
+
+    <table style="margin-top:14px;">
+      <thead><tr><th style="width:10%">阶段</th><th style="width:25%">关键问题</th><th style="width:30%">核心动作</th><th>进入下一阶段的硬指标</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>0</strong></td>
+          <td>商家会不会为场景应用付费？</td>
+          <td>自营 1 个场景应用，签 5–10 家种子商家，手工校准</td>
+          <td>付费续约率 ≥ 60%；同一应用跨商家复用率 ≥ 60%</td>
+        </tr>
+        <tr>
+          <td><strong>1</strong></td>
+          <td>场景应用能不能被外部人调参？</td>
+          <td>开放 SOP 补丁机制，签 2–3 家 TP，规模化到 30–50 家商家</td>
+          <td>TP 自交付 NPS ≥ 40；非自营圈层校准准确率 ≥ 自营 80%</td>
+        </tr>
+        <tr>
+          <td><strong>2</strong></td>
+          <td>数据接口能不能被第三方实现？</td>
+          <td>开放接口标准注册中心，接 3–5 家数据服务商</td>
+          <td>30% 调用量来自第三方接口；接口失败率 ≤ 2%</td>
+        </tr>
+        <tr>
+          <td><strong>3</strong></td>
+          <td>第三方老师能不能进场赚钱？</td>
+          <td>开放方法论 → 场景应用的编译入口，建立分润、准入、争议机制</td>
+          <td>第三方场景应用 ≥ 公司自营数量；老师月分润 ≥ 50k</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      节奏纪律：<strong>阶段没达标不进下一阶段</strong>。生态故事可以讲给资本，但内部不许跳级——跳级 = 资源被多个未验证假设同时消耗。
+    </div>
+  </section>
+
+  <section class="section">
+  <section class="section">
+    <h2><span class="num">5</span>飞轮演变：从单环到多边网络</h2>
+    <p class="lead">
+      第一个圈跑通后，每加入一个生态角色，"加强的是什么"<strong>不一样</strong>——
+      圈 1→2 加粗原环；圈 2→3 在原环外挂一张单边数据网；圈 3→4 整体升级为双边市场。
+      下图把四种形态画在一起，看清楚每一步多了什么、网络性质变成了什么。
+    </p>
+
+    <div class="diagram-wrap" style="margin-top:14px;">
+      <svg viewBox="0 0 1200 760" role="img" aria-label="飞轮演变：四阶段形态图">
+        <defs>
+          <marker id="arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f5d8c"/>
+          </marker>
+          <marker id="arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b4ea6"/>
+          </marker>
+          <marker id="arr-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#b46a1f"/>
+          </marker>
+          <marker id="arr-green2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f7a4d"/>
+          </marker>
+        </defs>
+        <rect x="0" y="0" width="1200" height="760" fill="#fbfcfd"/>
+
+        <!-- ========== 形态 A：单环 ========== -->
+        <g>
+          <text x="40" y="36" class="svg-label">形态 A · 圈 1：单环复利</text>
+          <text x="40" y="56" class="svg-small">参与方 2 个 · 还不是网络，只是流程闭环</text>
+
+          <circle cx="170" cy="200" r="90" fill="#fff" stroke="#c9d3dc" stroke-width="1.5"/>
+          <text x="170" y="196" text-anchor="middle" class="svg-small">场景应用模板</text>
+          <text x="170" y="212" text-anchor="middle" class="svg-small">+ 反馈证据池</text>
+
+          <circle cx="170" cy="90"  r="34" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+          <text x="170" y="86" text-anchor="middle" class="svg-step-text" fill="#6b4ea6">内容方</text>
+          <text x="170" y="100" text-anchor="middle" class="svg-small">1</text>
+
+          <circle cx="170" cy="310" r="34" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+          <text x="170" y="306" text-anchor="middle" class="svg-step-text" fill="#b46a1f">商家</text>
+          <text x="170" y="320" text-anchor="middle" class="svg-small">5-10</text>
+
+          <path d="M 200 110 A 110 110 0 0 1 200 290" stroke="#1f5d8c" stroke-width="1.6" fill="none" marker-end="url(#arr-blue)"/>
+          <path d="M 140 290 A 110 110 0 0 1 140 110" stroke="#1f7a4d" stroke-width="1.6" fill="none" marker-end="url(#arr-green2)" stroke-dasharray="5 3"/>
+
+          <text x="40" y="370" class="svg-small" style="font-weight:680;fill:#1f5d8c;">加强：流程跑通 + 中心资产首次累积</text>
+        </g>
+
+        <!-- ========== 形态 B：加 TP，原环变粗 + 横向膨胀 ========== -->
+        <g>
+          <text x="340" y="36" class="svg-label">形态 B · 圈 2：原环变粗（TP 进场）</text>
+          <text x="340" y="56" class="svg-small">参与方 +1 = TP · 加强原环本身，还不构成网络效应</text>
+
+          <circle cx="490" cy="200" r="110" fill="#fff" stroke="#c9d3dc" stroke-width="1.5"/>
+          <text x="490" y="184" text-anchor="middle" class="svg-small">模板 + 证据池</text>
+          <text x="490" y="202" text-anchor="middle" class="svg-small">+ 圈层切片</text>
+          <text x="490" y="220" text-anchor="middle" class="svg-small">中心横向膨胀</text>
+
+          <circle cx="490" cy="70" r="34" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+          <text x="490" y="66" text-anchor="middle" class="svg-step-text" fill="#6b4ea6">内容方</text>
+          <text x="490" y="80" text-anchor="middle" class="svg-small">1</text>
+
+          <circle cx="490" cy="330" r="34" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+          <text x="490" y="326" text-anchor="middle" class="svg-step-text" fill="#b46a1f">商家</text>
+          <text x="490" y="340" text-anchor="middle" class="svg-small">30-50</text>
+
+          <circle cx="630" cy="200" r="34" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+          <text x="630" y="196" text-anchor="middle" class="svg-step-text" fill="#1f5d8c">TP</text>
+          <text x="630" y="210" text-anchor="middle" class="svg-small">2-3</text>
+
+          <path d="M 524 92 A 130 130 0 0 1 612 178" stroke="#1f5d8c" stroke-width="1.8" fill="none" marker-end="url(#arr-blue)"/>
+          <path d="M 624 232 A 130 130 0 0 1 510 326" stroke="#1f5d8c" stroke-width="1.8" fill="none" marker-end="url(#arr-blue)"/>
+          <path d="M 456 326 A 130 130 0 0 1 470 92" stroke="#1f7a4d" stroke-width="1.6" fill="none" marker-end="url(#arr-green2)" stroke-dasharray="5 3"/>
+
+          <text x="340" y="370" class="svg-small" style="font-weight:680;fill:#1f5d8c;">加强：销售/校准边变粗 + 圈层切片让中心资产横向膨胀</text>
+        </g>
+
+        <!-- ========== 形态 C：加数据服务商，原环外挂一张单边数据网 ========== -->
+        <g>
+          <text x="710" y="36" class="svg-label">形态 C · 圈 3：单边数据网（数据服务商进场）</text>
+          <text x="710" y="56" class="svg-small">参与方 +1 = 数据服务商 · 第一次出现单边网络效应</text>
+
+          <circle cx="870" cy="200" r="100" fill="#fff" stroke="#c9d3dc" stroke-width="1.5"/>
+          <text x="870" y="186" text-anchor="middle" class="svg-small">模板 + 证据池</text>
+          <text x="870" y="204" text-anchor="middle" class="svg-small">+ 接口标准</text>
+          <text x="870" y="222" text-anchor="middle" class="svg-small">成为集合点</text>
+
+          <circle cx="870" cy="70" r="30" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+          <text x="870" y="74" text-anchor="middle" class="svg-step-text" fill="#6b4ea6">内容方</text>
+
+          <circle cx="870" cy="330" r="30" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+          <text x="870" y="334" text-anchor="middle" class="svg-step-text" fill="#b46a1f">商家</text>
+
+          <circle cx="1000" cy="200" r="30" fill="#fff" stroke="#1f5d8c" stroke-width="1.6"/>
+          <text x="1000" y="204" text-anchor="middle" class="svg-step-text" fill="#1f5d8c">TP</text>
+
+          <!-- 数据服务商集群（多个小圈，体现 N 个） -->
+          <circle cx="755" cy="100" r="20" fill="#fff" stroke="#1f7a4d" stroke-width="1.5"/>
+          <text x="755" y="104" text-anchor="middle" class="svg-small" fill="#1f7a4d">数据</text>
+          <circle cx="730" cy="200" r="20" fill="#fff" stroke="#1f7a4d" stroke-width="1.5"/>
+          <text x="730" y="204" text-anchor="middle" class="svg-small" fill="#1f7a4d">数据</text>
+          <circle cx="755" cy="300" r="20" fill="#fff" stroke="#1f7a4d" stroke-width="1.5"/>
+          <text x="755" y="304" text-anchor="middle" class="svg-small" fill="#1f7a4d">数据</text>
+
+          <!-- 三个数据节点都连到中心资产（接口标准） -->
+          <path d="M 775 100 L 790 150" stroke="#1f7a4d" stroke-width="1.4" fill="none"/>
+          <path d="M 750 200 L 775 200" stroke="#1f7a4d" stroke-width="1.4" fill="none"/>
+          <path d="M 775 300 L 790 250" stroke="#1f7a4d" stroke-width="1.4" fill="none"/>
+
+          <!-- 原环细线保留 -->
+          <path d="M 900 90 A 120 120 0 0 1 985 180" stroke="#1f5d8c" stroke-width="1.4" fill="none" opacity="0.6"/>
+          <path d="M 985 220 A 120 120 0 0 1 895 326" stroke="#1f5d8c" stroke-width="1.4" fill="none" opacity="0.6"/>
+          <path d="M 850 326 A 120 120 0 0 1 850 90" stroke="#1f5d8c" stroke-width="1.4" fill="none" opacity="0.6"/>
+
+          <text x="710" y="370" class="svg-small" style="font-weight:680;fill:#1f7a4d;">加强：调用量 ⇄ 数据方 单边网络（接到 1 个，吸引下一个）</text>
+        </g>
+
+        <!-- ========== 分隔横线 ========== -->
+        <line x1="40" y1="410" x2="1160" y2="410" stroke="#dce2e7" stroke-width="1" stroke-dasharray="6 4"/>
+
+        <!-- ========== 形态 D：双边市场 ========== -->
+        <g>
+          <text x="40" y="446" class="svg-label">形态 D · 圈 4：双边市场（第三方老师进场）</text>
+          <text x="40" y="466" class="svg-small">参与方 +1 = 第三方老师群 · 整体升级为多边网络，三层叠加共存</text>
+
+          <!-- 中心资产（最大） -->
+          <ellipse cx="600" cy="600" rx="180" ry="100" fill="#fff" stroke="#c9d3dc" stroke-width="1.6"/>
+          <text x="600" y="588" text-anchor="middle" class="svg-label">中心资产</text>
+          <text x="600" y="608" text-anchor="middle" class="svg-small">场景应用模板池 + 证据池 + 接口标准</text>
+          <text x="600" y="626" text-anchor="middle" class="svg-small">+ 校准基线（含跨内容方对比）</text>
+
+          <!-- 老师群（左上，多个） -->
+          <circle cx="200" cy="500" r="24" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+          <text x="200" y="504" text-anchor="middle" class="svg-step-text" fill="#6b4ea6">老师</text>
+          <circle cx="160" cy="560" r="24" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+          <text x="160" y="564" text-anchor="middle" class="svg-step-text" fill="#6b4ea6">老师</text>
+          <circle cx="200" cy="620" r="24" fill="#fff" stroke="#6b4ea6" stroke-width="1.6"/>
+          <text x="200" y="624" text-anchor="middle" class="svg-step-text" fill="#6b4ea6">老师</text>
+          <text x="120" y="490" class="svg-small" fill="#6b4ea6" style="font-weight:680;">N 个老师</text>
+
+          <!-- 知识付费社区（产能侧批发商） -->
+          <rect x="40" y="500" width="80" height="42" rx="8" fill="#f6efe3" stroke="#946200" stroke-width="1.4"/>
+          <text x="80" y="518" text-anchor="middle" class="svg-step-text" fill="#946200">付费社区</text>
+          <text x="80" y="534" text-anchor="middle" class="svg-small" fill="#946200">批量老师入口</text>
+          <path d="M 120 521 L 176 510" stroke="#946200" stroke-width="1.3" fill="none" stroke-dasharray="4 3"/>
+          <path d="M 120 530 L 138 555" stroke="#946200" stroke-width="1.3" fill="none" stroke-dasharray="4 3"/>
+
+          <!-- 商家群（右下，多个） -->
+          <circle cx="1000" cy="660" r="24" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+          <text x="1000" y="664" text-anchor="middle" class="svg-step-text" fill="#b46a1f">商家</text>
+          <circle cx="1050" cy="600" r="24" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+          <text x="1050" y="604" text-anchor="middle" class="svg-step-text" fill="#b46a1f">商家</text>
+          <circle cx="1000" cy="540" r="24" fill="#fff" stroke="#b46a1f" stroke-width="1.6"/>
+          <text x="1000" y="544" text-anchor="middle" class="svg-step-text" fill="#b46a1f">商家</text>
+          <text x="990" y="710" class="svg-small" fill="#b46a1f" style="font-weight:680;">M 个商家</text>
+
+          <!-- TP（左下） -->
+          <circle cx="350" cy="700" r="22" fill="#fff" stroke="#1f5d8c" stroke-width="1.5"/>
+          <text x="350" y="704" text-anchor="middle" class="svg-small" fill="#1f5d8c">TP</text>
+          <circle cx="430" cy="710" r="22" fill="#fff" stroke="#1f5d8c" stroke-width="1.5"/>
+          <text x="430" y="714" text-anchor="middle" class="svg-small" fill="#1f5d8c">TP</text>
+
+          <!-- 数据方（右上） -->
+          <circle cx="850" cy="490" r="20" fill="#fff" stroke="#1f7a4d" stroke-width="1.5"/>
+          <text x="850" y="494" text-anchor="middle" class="svg-small" fill="#1f7a4d">数据</text>
+          <circle cx="780" cy="470" r="20" fill="#fff" stroke="#1f7a4d" stroke-width="1.5"/>
+          <text x="780" y="474" text-anchor="middle" class="svg-small" fill="#1f7a4d">数据</text>
+
+          <!-- 老师 → 中心（编译方法论） -->
+          <path d="M 224 500 L 430 580" stroke="#6b4ea6" stroke-width="1.5" fill="none" marker-end="url(#arr-purple)"/>
+          <path d="M 184 560 L 420 600" stroke="#6b4ea6" stroke-width="1.5" fill="none" marker-end="url(#arr-purple)"/>
+          <path d="M 224 620 L 430 620" stroke="#6b4ea6" stroke-width="1.5" fill="none" marker-end="url(#arr-purple)"/>
+
+          <!-- 中心 → 商家（提供应用） -->
+          <path d="M 770 580 L 980 540" stroke="#b46a1f" stroke-width="1.5" fill="none" marker-end="url(#arr-orange)"/>
+          <path d="M 780 600 L 1030 600" stroke="#b46a1f" stroke-width="1.5" fill="none" marker-end="url(#arr-orange)"/>
+          <path d="M 770 620 L 980 660" stroke="#b46a1f" stroke-width="1.5" fill="none" marker-end="url(#arr-orange)"/>
+
+          <!-- 商家 → 中心（证据反馈） -->
+          <path d="M 980 540 Q 880 530 770 560" stroke="#1f7a4d" stroke-width="1.4" fill="none" stroke-dasharray="5 3" marker-end="url(#arr-green2)"/>
+
+          <!-- TP → 中心 -->
+          <path d="M 370 680 L 470 660" stroke="#1f5d8c" stroke-width="1.3" fill="none" marker-end="url(#arr-blue)"/>
+          <path d="M 450 690 L 530 670" stroke="#1f5d8c" stroke-width="1.3" fill="none" marker-end="url(#arr-blue)"/>
+
+          <!-- 数据方 → 中心 -->
+          <path d="M 830 500 L 730 540" stroke="#1f7a4d" stroke-width="1.3" fill="none" marker-end="url(#arr-green2)"/>
+          <path d="M 770 480 L 700 530" stroke="#1f7a4d" stroke-width="1.3" fill="none" marker-end="url(#arr-green2)"/>
+
+          <!-- 三层网络标注（侧栏） -->
+          <g>
+            <rect x="900" y="430" width="270" height="30" rx="6" fill="#f6efe3" stroke="#d5bd87"/>
+            <text x="912" y="450" class="svg-step-text" fill="#946200">L1 单环复利：模板 × 反馈 持续校准</text>
+
+            <rect x="900" y="466" width="270" height="30" rx="6" fill="#eaf4ee" stroke="#b9d8c5"/>
+            <text x="912" y="486" class="svg-step-text" fill="#214d36">L2 单边数据网：调用量 ⇄ 数据方</text>
+
+            <rect x="900" y="502" width="270" height="30" rx="6" fill="#eef4f8" stroke="#c9d3dc"/>
+            <text x="912" y="522" class="svg-step-text" fill="#1f5d8c">L3 双边市场：老师 ⇄ 商家</text>
+
+            <rect x="900" y="538" width="270" height="30" rx="6" fill="#fff7e6" stroke="#d5bd87"/>
+            <text x="912" y="558" class="svg-step-text" fill="#946200">付费社区 = 同侧批发商，不开新轴</text>
+          </g>
+
+          <text x="40" y="730" class="svg-small" style="font-weight:680;fill:#6b4ea6;">加强：网络性质升级 → 老师多 ⇄ 商家多（双边） + 前两层继续在底层运转；社区从老师侧批量送人，不构成新网络层</text>
+        </g>
+      </svg>
+    </div>
+
+    <table style="margin-top:14px;">
+      <thead>
+        <tr>
+          <th style="width:10%">阶段</th>
+          <th style="width:14%">新进角色</th>
+          <th style="width:24%">加强的是什么</th>
+          <th style="width:18%">网络性质</th>
+          <th>关键参与方公式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>圈 1</strong></td>
+          <td>—</td>
+          <td>原环流程跑通 + 中心资产首次累积</td>
+          <td><span style="color:var(--muted);">还不是网络</span></td>
+          <td>1 内容方 × 5–10 商家</td>
+        </tr>
+        <tr>
+          <td><strong>圈 2</strong></td>
+          <td>TP 代运营</td>
+          <td><strong>原环本身变粗</strong>：销售边 + 校准边都变粗；圈层切片让中心资产<strong>横向膨胀</strong></td>
+          <td>规模复利<br/><span style="color:var(--muted);">还不是网络效应</span></td>
+          <td>1 内容方 × 2–3 TP × 30–50 商家</td>
+        </tr>
+        <tr>
+          <td><strong>圈 3</strong></td>
+          <td>数据服务商</td>
+          <td>在原环之外<strong>外挂一张单边数据网</strong>：接口标准成为集合点</td>
+          <td><strong>单边网络效应</strong><br/>调用量 ⇄ 数据方数量</td>
+          <td>+ 3–5 数据服务商</td>
+        </tr>
+        <tr>
+          <td><strong>圈 4</strong></td>
+          <td>第三方老师</td>
+          <td>整体<strong>升级为双边市场</strong>；前三层（单环 + 数据网）作为底座继续运转</td>
+          <td><strong>双边网络效应</strong><br/>老师 ⇄ 商家</td>
+          <td>N 老师 × N 数据方 × N TP × M 商家</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="three-col" style="margin-top:14px;">
+      <div class="cell">
+        <h3>判别：你正在加强的是哪一层？</h3>
+        <p>如果新角色只让"销售量 / 服务量 / 圈层覆盖"变多，那是<strong>加强原环</strong>。如果新角色多了一个，能让所有原有角色受益，那是<strong>网络效应</strong>。两者不要混。</p>
+      </div>
+      <div class="cell">
+        <h3>顺序不能颠倒</h3>
+        <p>原环 → 单边网 → 双边市场。颠倒了就是经典的"先建集市后开店"陷阱：双边市场必须建立在"已经有可被复制的资产 + 已经能跑通的服务流程"之上。</p>
+      </div>
+      <div class="cell">
+        <h3>每一层都不消失</h3>
+        <p>形态 D 不是替代形态 A，是叠加。底层的单环每天还在转——只是上面又多了两层网络在为它加速。</p>
+      </div>
+    </div>
+
+    <div class="note green">
+      给所有团队成员的一句话：<strong>圈 1 验证完成 ≠ 直接进入双边市场。中间隔着"原环变粗"和"挂上单边数据网"两道台阶。每一道都要单独验证，每一道的护城河类型都不一样。</strong>
+    </div>
+
+    <h3 style="margin-top:20px;">5.x 角色判别表：哪些角色到底是哪类网络</h3>
+    <p style="font-size:13px; margin-top:6px;">
+      判别尺子：<strong>一侧每增加一个，是不是让另一侧能做的事情变多？</strong>能 → 双边市场。不能 → 渠道扩张或单边集合点。
+      把这把尺子套在常见的电商生态角色上，结果如下。
+    </p>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th style="width:20%">角色</th>
+          <th style="width:30%">给平台带来什么</th>
+          <th style="width:20%">是否新增"商家能做的事"</th>
+          <th>判定 / 类比</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>老师 / 内容方</strong></td>
+          <td>新的场景应用类型（机会洞察 / 新品立项 / 价格带布局 …）</td>
+          <td><strong style="color:var(--green);">是</strong></td>
+          <td><strong style="color:var(--green);">双边市场一侧</strong>。类比 App Store 开发者 / Substack 写作者</td>
+        </tr>
+        <tr>
+          <td><strong>知识付费社区</strong><br/><span style="color:var(--muted); font-size:12px;">巨量学 / 阿里妈妈学堂 / 生财有术 / 群响 …</span></td>
+          <td>批量打包老师入驻（或批量打包商家导入）</td>
+          <td>否（不开新轴，做的是<strong>同侧批发</strong>）</td>
+          <td><strong style="color:var(--amber);">双边市场的"批发商"</strong>，类比 MCN / 加盟总部。可加速冷启动</td>
+        </tr>
+        <tr>
+          <td><strong>平台官方培训中心</strong><br/><span style="color:var(--muted); font-size:12px;">巨量学 / 阿里妈妈学堂自营内容</span></td>
+          <td>批量官方认证讲师</td>
+          <td>否（同侧批发，且通常自营优先）</td>
+          <td>同上，但需评估竞合关系</td>
+        </tr>
+        <tr>
+          <td><strong>TP 代运营</strong></td>
+          <td>把既有应用调到某圈层的服务产能</td>
+          <td>否（让已有应用<strong>更准</strong>，不开新应用）</td>
+          <td><strong style="color:var(--action);">渠道 / 分销层</strong>。类比 Salesforce SI 伙伴</td>
+        </tr>
+        <tr>
+          <td><strong>ISV / 电商 SaaS 工具商</strong></td>
+          <td>嵌入或代销应用的成熟客户群</td>
+          <td>否（同侧扩张）</td>
+          <td>渠道分销层</td>
+        </tr>
+        <tr>
+          <td><strong>行业协会 / 加盟品牌总部</strong></td>
+          <td>把会员商家批量导入</td>
+          <td>否（同侧批发，需求侧）</td>
+          <td>需求侧批发商</td>
+        </tr>
+        <tr>
+          <td><strong>数据服务商</strong><br/><span style="color:var(--muted); font-size:12px;">店透视 / 飞瓜 / 蝉妈妈 / 自营 BI</span></td>
+          <td>数据源 + 标准接口实现</td>
+          <td>否（让既有应用更准）</td>
+          <td><strong style="color:var(--green);">单边集合点</strong>，类比信用卡-银行清算网</td>
+        </tr>
+        <tr>
+          <td><strong>认证审计 / 资本方 / 媒体</strong></td>
+          <td>信任背书 / 商家推荐 / 品牌曝光</td>
+          <td>否</td>
+          <td><strong style="color:var(--muted);">辅助角色</strong>，不构成网络结构</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="three-col" style="margin-top:14px;">
+      <div class="cell accent">
+        <h3>为什么"老师"才开新轴，TP 不是</h3>
+        <p>多一个老师 = 平台上多一类商家能做的事。多一个 TP = 同一类事多了一个供应商。前者改变了平台的产品边界，后者只改变了交付容量。</p>
+      </div>
+      <div class="cell accent">
+        <h3>付费社区是产能侧批发商</h3>
+        <p>它本身不开新轴，但它能把"老师入驻"从一个一个谈，变成一个社区一批一批接。冷启动期建议优先合作 1–2 个头部社区作为老师 GTM 通道。</p>
+      </div>
+      <div class="cell warn">
+        <h3>合作社区的护城河边界</h3>
+        <p>反馈证据池由平台留存，不开放给社区。否则社区做大后可能反向训练自己的方案。这条要写进合作协议。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">6</span>第一性视角：AI+Agent 时代谁能建生态</h2>
+    <p class="lead">
+      AI+Agent 没有改变生态成立的底层要素，只是改变了实现成本。
+      用第一性原理拆三件事：生态成立靠什么、AI 改了什么没改什么、谁最有机会建起来。
+    </p>
+
+    <h3 style="margin-top:14px;">6.1 生态成立的三个底层要素</h3>
+    <div class="three-col" style="margin-top:8px;">
+      <div class="cell"><h3>可复用的资产</h3><p>某种东西，能从"为 1 人服务"复制到"为 N 人服务"，边际成本递减。</p></div>
+      <div class="cell"><h3>可信的连接</h3><p>两侧角色通过你而非彼此直接连接，且你能持续证明这个连接更划算。</p></div>
+      <div class="cell"><h3>可累积的反馈</h3><p>每次连接都在你这里留下数据，让下一次连接的质量更高。</p></div>
+    </div>
+    <div class="note" style="margin-top:10px;">
+      三者具备，生态就会自己长出来。这条规律不分时代——SaaS 时代、移动时代、AI+Agent 时代都一样。
+    </div>
+
+    <h3 style="margin-top:20px;">6.2 AI+Agent 改变了什么，没改变什么</h3>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:22%">维度</th>
+          <th style="width:39%">传统 SaaS 时代</th>
+          <th>AI+Agent 时代</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>资产复制单元</td><td>代码模块（要工程师写）</td><td><strong>方法论 / Workflow / Prompt</strong>（领域专家就能写）</td></tr>
+        <tr><td>接入新场景成本</td><td>重做 UI + 后端 + 数据接入</td><td><strong>应用生成 + 适配</strong>，按天计</td></tr>
+        <tr><td>谁能造资产</td><td>工程团队</td><td><strong>任何懂业务的人</strong>（编译器替代工程）</td></tr>
+        <tr><td>反馈数据壁垒</td><td>用户行为日志</td><td><strong>结构化执行轨迹 + 结论 + 修正</strong></td></tr>
+        <tr><td>边际服务成本</td><td>人月</td><td>算力 + 校准时间</td></tr>
+        <tr><td>内容方变现</td><td>卖课、卖咨询</td><td><strong>方法论按调用分成</strong></td></tr>
+      </tbody>
+    </table>
+    <div class="note green" style="margin-top:10px;">
+      关键变化一句话：<strong>资产生产从"工程师瓶颈"变成"懂行人瓶颈"，懂行人池子大了 1–2 个数量级。</strong>
+    </div>
+    <div class="note amber" style="margin-top:10px;">
+      没变的：信任建立、付费决策、案例传播、行业 know-how 稀缺性。电商老板该慢还是慢。
+    </div>
+
+    <h3 style="margin-top:20px;">6.3 时间窗口：会缩短，但有下限</h3>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:28%">公司</th>
+          <th style="width:22%">单边 → 双边耗时</th>
+          <th>主要瓶颈</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Salesforce</td><td>6 年</td><td>开发者数量、API 稳定性</td></tr>
+        <tr><td>Shopify</td><td>3 年</td><td>商家密度、应用工程化成本</td></tr>
+        <tr><td>HubSpot</td><td>4–5 年</td><td>内容创作者教育成本</td></tr>
+        <tr><td>Notion</td><td>4 年</td><td>用户教育</td></tr>
+      </tbody>
+    </table>
+    <div class="three-col" style="margin-top:10px;">
+      <div class="cell green"><h3>资产生产</h3><p style="color:#214d36;">从"半年/人"压缩到"两周/人"<br/>砍掉 70–80%</p></div>
+      <div class="cell green"><h3>服务交付</h3><p style="color:#214d36;">从"重实施"压缩到"上线 1 天"<br/>砍掉 60–70%</p></div>
+      <div class="cell warn"><h3>商家决策</h3><p>电商老板付费决策周期没变<br/>这是时间下限</p></div>
+    </div>
+    <div class="note">
+      综合估算：<strong>单边到双边市场的时间从 3–6 年缩短到 12–24 个月</strong>。少于 12 个月不现实——受限于商家决策周期，不是技术周期。
+    </div>
+
+    <h3 style="margin-top:20px;">6.4 七类玩家的概率排序与出发点</h3>
+    <p style="font-size:13px; margin-top:6px;">
+      第一性视角：<strong>谁手里同时握住"资产 + 连接 + 反馈"三者的种子，谁概率最高。</strong>注意"握得多"不等于"握得全"——单维度极强但其他维度为零的玩家，概率反而低。
+    </p>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th style="width:5%">#</th>
+          <th style="width:22%">玩家</th>
+          <th style="width:28%">出发点 / 自然路径</th>
+          <th style="width:22%">手里有什么</th>
+          <th>最大破绽</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="background:#eaf4ee;">
+          <td><strong>1</strong></td>
+          <td><strong>新晋 runtime 团队（我们）</strong></td>
+          <td>占据"方法论 → 可调用资产"的工程缝隙；先内容方 + 商家双边小闭环</td>
+          <td>runtime 工程力 + 编译器 + 已签约种子老师 + 无历史包袱</td>
+          <td>缺商家入口（依赖社区 / TP 合作）</td>
+        </tr>
+        <tr>
+          <td><strong>2</strong></td>
+          <td>头部知识付费社区 / 培训机构<br/><span style="color:var(--muted); font-size:12px;">生财有术 / 群响 / 巨量学 / 阿里妈妈学堂</span></td>
+          <td>把存量内容做"可执行化"，让会员从听课升级到用应用</td>
+          <td>N 个老师 + 几万付费商家 + 品牌信任</td>
+          <td>缺工程化能力（自建 runtime 2–3 年起步）；组织基因偏内容运营</td>
+        </tr>
+        <tr>
+          <td><strong>3</strong></td>
+          <td>电商 SaaS 平台<br/><span style="color:var(--muted); font-size:12px;">有赞 / 微盟 / 聚水潭</span></td>
+          <td>从交易 / 履约 SaaS 向"经营策略层"升级，拉高存量 ARPU</td>
+          <td>几十万付费商家 + 现成数据接入 + 收单能力</td>
+          <td>基因偏交易工具；更可能投资 / 收购而非自建</td>
+        </tr>
+        <tr>
+          <td><strong>4</strong></td>
+          <td>电商平台官方<br/><span style="color:var(--muted); font-size:12px;">淘宝 / 抖音 / 拼多多 / 京东</span></td>
+          <td>把商家经营能力"中台化"，提升 GMV 转化率</td>
+          <td>数据 + 商家全量 + 流量分发 + 半官方培训中心</td>
+          <td>决策慢、跨部门协调难、隐私顾虑大；担心破坏算法分发</td>
+        </tr>
+        <tr>
+          <td><strong>5</strong></td>
+          <td>数据服务商 / 电商 BI<br/><span style="color:var(--muted); font-size:12px;">店透视 / 飞瓜 / 蝉妈妈</span></td>
+          <td>从"卖数据"升级到"卖结论"</td>
+          <td>数据 + 接口能力</td>
+          <td>缺方法论资产 + 缺工程化 runtime；更可能成为参与方而非建设方</td>
+        </tr>
+        <tr>
+          <td><strong>6</strong></td>
+          <td>通用 LLM 平台<br/><span style="color:var(--muted); font-size:12px;">OpenAI / Anthropic / 字节 / 阿里</span></td>
+          <td>通用 Agent 应用商店</td>
+          <td>底层模型 + 算力</td>
+          <td>太通用、不懂电商；更可能是我们的算力供应方</td>
+        </tr>
+        <tr>
+          <td><strong>7</strong></td>
+          <td>TP 代运营 / 头部 MCN</td>
+          <td>把自己的服务标准化、规模化</td>
+          <td>商家执行力 + 行业 know-how</td>
+          <td>基因是"服务交付"，做工具产品历史上几乎全部失败</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:20px;">6.5 对我们的关键启示</h3>
+    <div class="three-col" style="margin-top:8px;">
+      <div class="cell green">
+        <h3>对概率 2（社区）</h3>
+        <p style="color:#214d36;">最适合做 <strong>GTM 合作伙伴</strong>。有人没工程，让他们成为产能侧批发商。</p>
+      </div>
+      <div class="cell">
+        <h3>对概率 3（SaaS）</h3>
+        <p>最适合做<strong>退出路径或集成合作方</strong>。圈 1+2 跑通后，他们是最可能的收购方。</p>
+      </div>
+      <div class="cell warn">
+        <h3>对概率 4（平台官方）</h3>
+        <p>最大不确定性。一旦启动会用"平台规则 + 流量绑定"挤压第三方。<strong>方法论资产要保持平台无关</strong>。</p>
+      </div>
+    </div>
+    <div class="note green" style="margin-top:12px;">
+      时间窗口收窄到 12–24 个月，意味着两件事：
+      <strong>(1) 不能慢</strong>——三年慢慢做 Skill 库，到时候社区/SaaS 已经合作或并购完成生态；
+      <strong>(2) 不能贪</strong>——资源全压在"runtime 工程化 + 场景应用编译器 + 头部社区合作"三件事上。其他都是干扰项。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">7</span>护城河层级与自有模型边界</h2>
+    <p class="lead">
+      经常被问两个问题：<strong>"你们做自有模型吗？"</strong> 和 <strong>"runtime 不是别人也能做吗？"</strong>
+      两个问题指向同一件事——把"技术资产"误当成护城河。这一节把护城河分层排清楚，顺手回答自有模型该摆在哪里。
+    </p>
+
+    <h3 style="margin-top:14px;">7.1 三层护城河：哪层薄，哪层厚</h3>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:8%">层</th>
+          <th style="width:22%">资产形态</th>
+          <th style="width:18%">被追平时间</th>
+          <th style="width:22%">谁能复制</th>
+          <th>厚度判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>底</strong></td>
+          <td>能力运行时工程化<br/><span style="color:var(--muted); font-size:12px;">编排 / Tool 调用 / Trace / Eval 框架</span></td>
+          <td>3–6 个月</td>
+          <td>任何有工程能力的团队、开源框架</td>
+          <td class="" style="color:#9c3a2a;"><strong>薄。</strong>是入场券，不是护城河</td>
+        </tr>
+        <tr>
+          <td><strong>底</strong></td>
+          <td>自有模型 / 微调模型</td>
+          <td>6–12 个月</td>
+          <td>有算力 + 数据的团队、基模供应商持续追平</td>
+          <td class="" style="color:#9c3a2a;"><strong>薄。</strong>基模每 6 个月跳一档，自训会持续掉队</td>
+        </tr>
+        <tr style="background:#fff7ec;">
+          <td><strong>中</strong></td>
+          <td>Skill 密度<br/><span style="color:var(--muted); font-size:12px;">场景应用模板库 + Workflow + Tool Contract</span></td>
+          <td>12–24 个月</td>
+          <td>有领域专家 + 编译器的团队</td>
+          <td style="color:#7a5b00;"><strong>中。</strong>有累积效应但可被有钱玩家压缩</td>
+        </tr>
+        <tr style="background:#eaf4ee;">
+          <td><strong>顶</strong></td>
+          <td>Eval 校准样本<br/><span style="color:#214d36; font-size:12px;">商家结论 × 采纳/修改 × 真实结果</span></td>
+          <td>无法直接复制</td>
+          <td>只有"商家密度 × 时间"能产生</td>
+          <td style="color:#214d36;"><strong>厚。</strong>样本是唯一不可买、不可训的资产</td>
+        </tr>
+        <tr style="background:#eaf4ee;">
+          <td><strong>顶</strong></td>
+          <td>圈层切片<br/><span style="color:#214d36; font-size:12px;">类目 × GMV 段 × 平台 × 经营阶段的参数化</span></td>
+          <td>无法直接复制</td>
+          <td>只有"足够多切片样本"能拟合</td>
+          <td style="color:#214d36;"><strong>厚。</strong>切片质量随样本数指数上升</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note amber" style="margin-top:10px;">
+      <strong>判断标准：</strong>能用钱+时间买到的，都不是护城河。<strong>必须用真实使用产生的反馈样本喂出来的，才是。</strong>
+      底层两项可买可训；中层介于之间；顶层只能"等长出来"。
+    </div>
+
+    <h3 style="margin-top:20px;">7.2 自有模型的真实角色：成本项，不是护城河</h3>
+    <div class="three-col" style="margin-top:8px;">
+      <div class="cell">
+        <h3>正确摆位</h3>
+        <p>把自有模型放在<strong>成本与隐私边界</strong>，不放在差异化叙事。<br/>
+        触发条件：调用量大到 token 费 &gt; 自托管成本；或商家要求数据不出私域。</p>
+      </div>
+      <div class="cell">
+        <h3>什么时候做</h3>
+        <p>阶段 2 之后再考虑。阶段 0/1 用 API 模型把校准样本攒起来，时机到了再做<strong>窄场景蒸馏</strong>（如归因结论生成、SOP 阈值判定）。</p>
+      </div>
+      <div class="cell warn">
+        <h3>什么时候不做</h3>
+        <p>当目的是"让 BP 看上去更硬"、"显得有壁垒"、"对标某竞品"——拒绝。<strong>自训不能产生护城河</strong>，只会把现金流和团队带宽烧在最薄那层。</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:20px;">7.3 runtime 工程化也是同样的位置</h3>
+    <p style="margin-top:6px;">
+      现在能力运行时这套工程化（编排 + Tool Registry + Trace + Eval 框架），<strong>很多团队都能在 3–6 个月内做出可用版本</strong>。
+      开源生态、基模厂商、SaaS 公司都在补这一层。把它当护城河叙事会被很快证伪。
+    </p>
+    <div class="note" style="margin-top:8px;">
+      runtime 工程化的真实价值：<strong>它是"中层和顶层资产能否成立"的基座</strong>。没有它，Skill 跑不起来、Eval 收不到样本、圈层切片无从拟合。
+      所以要做、要做好、要做早——但不要把它写进护城河叙事。
+    </div>
+
+    <h3 style="margin-top:20px;">7.4 这对策略的含义</h3>
+    <div class="three-col" style="margin-top:8px;">
+      <div class="cell green">
+        <h3>资源排序</h3>
+        <p style="color:#214d36;"><strong>顶层 &gt; 中层 &gt; 底层</strong>。<br/>
+        反馈链路与圈层切片的工具化优先级，要高于自训模型和 runtime 性能优化。</p>
+      </div>
+      <div class="cell green">
+        <h3>叙事重点</h3>
+        <p style="color:#214d36;">对外不讲"我们自训了模型"。<br/>
+        讲<strong>"我们有 N 家商家 × M 个月的采纳/修改样本，校准准确率到 X%"</strong>。这是别人 12 个月内追不上的。</p>
+      </div>
+      <div class="cell warn">
+        <h3>合作判别</h3>
+        <p>合作方愿不愿意把<strong>反馈样本沉淀在我们这里</strong>，是评估生态合作的硬指标。
+        样本走了，护城河就跟着走。第 5 章合作社区条款里"反馈证据池由平台留存"就是这个意思。</p>
+      </div>
+    </div>
+    <div class="note green" style="margin-top:12px;">
+      一句话总结：<strong>真正的护城河 = 商家反馈样本 × 圈层切片密度 × 时间。</strong>
+      底层工程和自有模型都是必要项，但都不是答案。把资源压在能让样本最快累积的地方，才是阶段 0–2 的正解。
+    </div>
+
+    <h3 style="margin-top:24px;">7.5 还有一层：组织形状（顶顶层）</h3>
+    <p style="margin-top:6px;">
+      前面四层都假设"我们能持续把样本和方法论灌进来"。这件事能不能持续，取决于<strong>组织本身的形状</strong>——
+      谁是重力中心、谁有 status、谁有决策权、reward 怎么发。<strong>顶层资产是结果，组织形状是原因。</strong>
+    </p>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:18%">层</th>
+          <th style="width:32%">资产形态</th>
+          <th>被追平时间 / 可复制性</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="background:#dfe9f6;">
+          <td><strong>顶顶层</strong></td>
+          <td>组织形状<br/><span style="color:#243341; font-size:12px;">重力中心 · 高 status 岗位 · 决策权分布 · reward 机制</span></td>
+          <td><strong>无法复制。</strong>它决定前四层能不能持续累积</td>
+        </tr>
+        <tr style="background:#eaf4ee;">
+          <td>顶</td><td>Eval 校准样本 + 圈层切片</td><td>无法直接复制</td>
+        </tr>
+        <tr style="background:#fff7ec;">
+          <td>中</td><td>Skill 密度</td><td>12–24 个月</td>
+        </tr>
+        <tr>
+          <td>底</td><td>runtime 工程化 / 自有模型</td><td>3–12 个月</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note" style="margin-top:10px;">
+      展开放在 <strong>§10 组织形状</strong>：重力中心、两个新岗位（业务方法论工程师 / Skill 校准官）、
+      以及对外承诺与组织结构的<strong>emotional ↔ structural 对账表</strong>。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">8</span>风险与边界</h2>
+    <div class="three-col">
+      <div class="cell warn">
+        <h3>风险 A：场景应用不可复用</h3>
+        <p>每家商家都要重做一次。意味着我们卖的不是场景应用，是定制项目。退路：把"圈层切片"作为一等公民，提前埋进方法论骨架。</p>
+      </div>
+      <div class="cell warn">
+        <h3>风险 B：反馈不回来</h3>
+        <p>商家用完不给反馈，Eval 没原料，飞轮断在第一圈。对策：反馈嵌入应用本身（结论右侧"采纳/修改"按钮 + 月度复盘约定）。</p>
+      </div>
+      <div class="cell warn">
+        <h3>风险 C：被平台数据卡脖子</h3>
+        <p>底层数据依赖电商平台 API 或抓取。对策：阶段 0 控制数据面，阶段 2 才开放给数据服务商，期间持续多源化。</p>
+      </div>
+      <div class="cell warn">
+        <h3>风险 D：内容方反水</h3>
+        <p>老师拿走场景应用模板自己卖。对策：分润够厚 + 反馈证据池留在公司 + 校准准确率为护城河（老师没有商家反馈样本就没法迭代）。</p>
+      </div>
+      <div class="cell warn">
+        <h3>风险 E：跳级建生态</h3>
+        <p>因为故事好看就提前招 TP/数据 BD。对策：每季度对照阶段硬指标 review，未达标停止生态侧招聘。</p>
+      </div>
+      <div class="cell warn">
+        <h3>风险 F：LLM 当事实源</h3>
+        <p>结论无证据 = 不可信 = 商家流失。对策：架构上把 Code Agent / LLM 限制在生成期，运行期事实必须经 Tool + Evidence。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">9</span>参照案例：他们怎么从单边走到生态</h2>
+    <table>
+      <thead>
+        <tr><th>公司</th><th>起手姿势</th><th>第一个生态角色何时进场</th><th>对我们的启示</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Salesforce</strong></td>
+          <td>1999 单边 Sales Cloud</td>
+          <td>2005 AppExchange（6 年后）；2014 Trailhead（15 年后）</td>
+          <td>开发者生态是产品成熟后的事，不是起点</td>
+        </tr>
+        <tr>
+          <td><strong>Shopify</strong></td>
+          <td>2006 单边建站 SaaS</td>
+          <td>2009 App Store（3 年后）；2015 Partners</td>
+          <td>头三年只做"商家用得爽"，不谈生态</td>
+        </tr>
+        <tr>
+          <td><strong>HubSpot</strong></td>
+          <td>Marketing Hub 单边</td>
+          <td>Academy / Partners 都是几万付费客户之后</td>
+          <td>"内容方"角色是销售放大器，不是冷启动器</td>
+        </tr>
+        <tr>
+          <td><strong>有赞 / 微盟</strong></td>
+          <td>单边 SaaS</td>
+          <td>TP 代运营网络 3–5 年后才铺开</td>
+          <td>国内电商 TP 生态是 SaaS 密度到一定量级后的自然结果</td>
+        </tr>
+        <tr>
+          <td><strong>阿里生意参谋 + 第三方数据工具</strong></td>
+          <td>平台自营数据产品</td>
+          <td>第三方数据服务商挂在自营调用量之上</td>
+          <td>数据服务商只跟着流量走，自己不带来流量</td>
+        </tr>
+        <tr>
+          <td><strong>Notion</strong></td>
+          <td>4–5 年只做工具本身</td>
+          <td>Consultants / 模板市场是用户自发涌现</td>
+          <td>生态可以"长出来"，不一定要"设计出来"</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note green">
+      共同规律：<strong>没有一家是先画四角色生态图、再去填角色的。</strong>都是单边或双边到了一定密度，生态自己涌现。
+      我们要的是"未来能长成生态的架构"，而不是"现在就长成生态的销售姿势"。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">10</span>组织形状：顶顶层护城河</h2>
+    <p class="lead">
+      技术、模型、Skill 库都会被追平。最后没法抄的是<strong>"组织形状"</strong>——重力中心是什么、谁站在最高 status、决策权在哪、reward 怎么发。
+      这一节回答两件事：<strong>什么形状让前面四层资产能持续灌进来</strong>，以及<strong>对外承诺如何在组织结构里兑现</strong>。
+    </p>
+
+    <h3 style="margin-top:14px;">10.1 重力中心：一句话定义</h3>
+    <div class="note green" style="margin-top:6px;">
+      公司的重力中心 = <strong>"把方法论编译成可运行的应用，让反馈样本回到平台"</strong>。
+      所有岗位、产品、合作、招聘叙事都围绕这一句旋转。<br/>
+      不是"做 Agent 平台"，不是"做 AI 编码工具"，不是"做电商 SaaS"。
+    </div>
+    <div class="three-col" style="margin-top:10px;">
+      <div class="cell">
+        <h3>组织活动按重力分层</h3>
+        <p>编译器 / 校准 / 反馈链路 = 核心；runtime 工程 / 数据接入 = 支撑；销售 / GTM = 放大器。<strong>重力反向 = 团队抄方向。</strong></p>
+      </div>
+      <div class="cell">
+        <h3>对立面要说出来</h3>
+        <p>不做裸 prompt 工具、不做工程师专属 SaaS、不做通用 Agent 商店、不做"模型即产品"。挑边能让对的人立刻识别我们。</p>
+      </div>
+      <div class="cell">
+        <h3>叙事高度对齐 shape</h3>
+        <p>讲<strong>"懂行人第一次能把方法论变成有复利的资产"</strong>。比"做 runtime"高一档，比"重塑电商行业"低一档，刚好匹配现有团队规模。</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:20px;">10.2 两个新岗位：组织形状里的"主角"</h3>
+    <p style="font-size:13px; margin-top:6px;">
+      这两个岗位不是 PM、不是工程师、不是讲师。它们的 status 必须是公司最高一档，否则前面四层护城河没人能持续灌进来——
+      就像 Palantir 的 forward deployer：别处算低 status 的活，在我们这里是中心。
+    </p>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:18%">岗位</th>
+          <th style="width:28%">在架构中位置</th>
+          <th style="width:24%">日常活</th>
+          <th>为什么必须 high status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>业务方法论工程师</strong><br/><span style="color:var(--muted); font-size:12px;">Method Engineer</span></td>
+          <td>document-to-skill 编译器入口；老师内容 → Strategy IR → Skill Spec</td>
+          <td>校稿 IR · 设计参数化 · 与老师共写方法论 · 跑回归</td>
+          <td>没有这岗，方法论灌不进 Skill；中层资产停滞</td>
+        </tr>
+        <tr>
+          <td><strong>Skill 校准官</strong><br/><span style="color:var(--muted); font-size:12px;">Calibration Lead</span></td>
+          <td>能力运行时 Eval 层；驻在老师 / TP / 商家中间</td>
+          <td>看采纳/修改 · 调阈值 · 拟合切片 · 写回归基线</td>
+          <td>没有这岗，反馈样本进不了切片参数；顶层资产停滞</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note amber" style="margin-top:10px;">
+      检验：<strong>招聘 JD、title、薪酬带宽、晋升路径里能不能找到这两类人？</strong>
+      如果他们只是"工程师"或"运营"的下挂角色，组织 shape 就还在旧形状里。
+    </div>
+
+    <h3 style="margin-top:20px;">10.3 emotional ↔ structural 对账表</h3>
+    <p style="font-size:13px; margin-top:4px; color:var(--muted);">
+      原则：每条对外承诺，组织 / 产品 / 合同里都必须有一项结构性兑现。<strong>口头说但结构没兑现就是假承诺，老话叫"画饼"。</strong>
+    </p>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th style="width:32%">我们对外讲什么（emotional）</th>
+          <th style="width:42%">组织 / 产品 / 合同里如何兑现（structural）</th>
+          <th>现状</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>反馈样本是真正的护城河</td>
+          <td>"采纳/修改"按钮是产品里 high-status 入口；反馈工程化负责人直接向 CEO 汇报</td>
+          <td><span style="color:#946200;">待落</span></td>
+        </tr>
+        <tr>
+          <td>圈层切片是无法复制的资产</td>
+          <td>切片治理与核心算法平级；切片版本 / 回归测试有独立 owner 与季度 OKR</td>
+          <td><span style="color:#946200;">待落</span></td>
+        </tr>
+        <tr>
+          <td>Skill 密度是中层资产</td>
+          <td>Skill 注册 / 版本治理 / 老师校稿台是平台一等公民产品入口，不是"内部工具"</td>
+          <td><span style="color:#1f7a4d;">部分落到角色映射页 §3</span></td>
+        </tr>
+        <tr>
+          <td>能力运行时是基座但不是护城河</td>
+          <td>runtime 团队 ownership 高，但叙事重力不放在他们身上；资源分配按"顶 &gt; 中 &gt; 底"</td>
+          <td><span style="color:#1f7a4d;">部分落到 §7.4</span></td>
+        </tr>
+        <tr>
+          <td>权属归平台、证据池不可外带</td>
+          <td>写进商家合同 + 合作社区分润协议；产品上证据池跨租户不可见</td>
+          <td><span style="color:#946200;">条款层未落</span></td>
+        </tr>
+        <tr>
+          <td>我们是"懂行人的资产生产权"</td>
+          <td>招聘 JD 出现"业务方法论工程师 / Skill 校准官"；title 直接体现新岗位</td>
+          <td><span style="color:#9c3a2a;">未落</span></td>
+        </tr>
+        <tr>
+          <td>合作伙伴值得长期合作</td>
+          <td>分润 / Co-publish / 共享数据池等条款写进合作协议（不靠口头）</td>
+          <td><span style="color:#946200;">条款层未落</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:20px;">10.4 时间承诺最危险</h3>
+    <div class="three-col" style="margin-top:8px;">
+      <div class="cell warn">
+        <h3>"以后就大了"</h3>
+        <p>scope / authority / 经济参与全靠"以后"——时间在悄悄走。<strong>对外对内都不靠它</strong>。</p>
+      </div>
+      <div class="cell green">
+        <h3>"现在就给"</h3>
+        <p style="color:#214d36;">能写进 title / 决策权 / 经济条款 / 产品入口的，<strong>当期就写</strong>。这是"被看见"，不是"被选中"。</p>
+      </div>
+      <div class="cell">
+        <h3>对合作方同义</h3>
+        <p>分润比例、证据池归属、续约条款写进合同，不用"长期来看会更好"代替。</p>
+      </div>
+    </div>
+
+    <div class="note green" style="margin-top:14px;">
+      一句话总结：<strong>组织形状决定前四层护城河能不能持续累积。</strong>
+      重力中心 = 把方法论编译成可运行应用 + 让反馈回平台；两个新岗位（方法论工程师 / 校准官）必须是最高 status；
+      所有对外承诺都要有一条对应的结构兑现，否则就是假承诺。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">11</span>一页纸总结</h2>
+    <div class="cell" style="background:#dfe9f6; border-color:#b8cad9; margin-bottom:12px;">
+      <h3 style="color:#1f3a5a;">真正的护城河（顶顶层）</h3>
+      <p style="color:#1f3a5a;">组织形状：重力中心 = 把方法论编译成可运行应用 + 让反馈回平台；业务方法论工程师 / Skill 校准官是最高 status；每条对外承诺必须有结构兑现。</p>
+    </div>
+    <div class="two-col">
+      <div class="cell green">
+        <h3>我们在做什么</h3>
+        <p style="color:#214d36;">把业务方法论 + 数据 + 工具打包成场景应用，装进能力运行时，以"会干活的应用"形式卖给商家。</p>
+      </div>
+      <div class="cell green">
+        <h3>现在做哪一步</h3>
+        <p style="color:#214d36;">阶段 0：1 个场景应用 × 5–10 家种子商家 × 双向反馈。其余角色暂停。</p>
+      </div>
+      <div class="cell green">
+        <h3>钱怎么进</h3>
+        <p style="color:#214d36;">订阅费 + 校准服务费。生态分润进入阶段 1 才打开。</p>
+      </div>
+      <div class="cell green">
+        <h3>护城河长在哪</h3>
+        <p style="color:#214d36;">Evidence 数据池 + Eval 校准准确率。商家越多，下一个商家越准。</p>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "category": "桌布桌垫",
+  "keyword_dataset_ref": "input/sample_inputs/sample_keyword_data.csv",
+  "competitor_dataset_ref": "input/sample_inputs/sample_competitor_data.csv",
+  "content_signal_dataset_ref": "input/sample_inputs/sample_content_signals.csv",
+  "brand_positioning": "中高端家居软装，强调风格、易清洁、家庭场景"
+}

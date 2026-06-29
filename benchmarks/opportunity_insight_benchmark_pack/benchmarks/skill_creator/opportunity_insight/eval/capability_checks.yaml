@@ -1,0 +1,21 @@
+checks:
+  - id: data_contract_has_keyword_dataset
+    type: semantic
+    target_files: [contracts/data_contract.json, contracts/input_schema.json]
+    expected: keyword_dataset is required and has keyword/search_volume/trend/competition_index
+  - id: opportunity_card_output
+    type: semantic
+    target_files: [contracts/output_schema.json, SKILL.md]
+    expected: opportunity card includes score, confidence, evidence and action recommendations
+  - id: no_search_volume_only_rule
+    type: semantic
+    target_files: [knowledge/claim_pack.md, knowledge/strategy_rules.yaml, contracts/knowledge_contract.yaml]
+    expected: Skill explicitly forbids using search volume alone as opportunity signal
+  - id: evidence_grounding
+    type: semantic
+    target_files: [SKILL.md, contracts/eval_contract.json]
+    expected: every recommendation must be grounded by evidence
+  - id: rsi_feedback
+    type: semantic
+    target_files: [skill.yaml, contracts/eval_contract.json]
+    expected: skill collects user edits, acceptance, downstream tasks, business outcome and failed claims

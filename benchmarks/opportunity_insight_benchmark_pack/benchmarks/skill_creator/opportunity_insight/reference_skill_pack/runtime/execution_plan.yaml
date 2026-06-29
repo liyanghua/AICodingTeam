@@ -1,0 +1,11 @@
+steps:
+  - {id: validate_input, output: data_quality_report}
+  - {id: normalize_data, output: normalized_datasets}
+  - {id: classify_demand, output: demand_clusters}
+  - {id: score_demand_strength, output: demand_scores}
+  - {id: score_competition_intensity, output: competition_scores}
+  - {id: detect_price_band_gap, output: price_band_findings}
+  - {id: build_evidence_pack, output: evidence_pack}
+  - {id: generate_opportunity_cards, output: opportunity_cards}
+  - {id: generate_action_recommendations, output: action_recommendations}
+  - {id: run_self_review, output: review_report}

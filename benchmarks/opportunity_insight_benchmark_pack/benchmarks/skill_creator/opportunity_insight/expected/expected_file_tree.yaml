@@ -1,0 +1,29 @@
+root_dir: generated_skills/ecommerce/opportunity_insight/
+required_files:
+  - SKILL.md
+  - skill.yaml
+  - README.md
+  - contracts/input_schema.json
+  - contracts/output_schema.json
+  - contracts/data_contract.json
+  - contracts/tool_contract.json
+  - contracts/knowledge_contract.yaml
+  - contracts/eval_contract.json
+  - knowledge/claim_pack.md
+  - knowledge/strategy_rules.yaml
+  - knowledge/negative_cases.md
+  - prompts/planner.md
+  - prompts/executor.md
+  - prompts/reviewer.md
+  - prompts/failure_triage.md
+  - tools/tool_manifest.yaml
+  - examples/sample_input.json
+  - examples/sample_output.md
+  - evals/scoring_rubric.yaml
+  - runtime/execution_plan.yaml
+  - runtime/error_policy.yaml
+optional_files:
+  - app/app_spec_template.json
+  - app/ui_components.yaml
+  - tools/mcp_mapping.yaml
+  - evals/regression_cases.jsonl

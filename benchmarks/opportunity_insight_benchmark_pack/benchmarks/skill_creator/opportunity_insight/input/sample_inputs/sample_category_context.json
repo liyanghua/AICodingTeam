@@ -1,0 +1,23 @@
+{
+  "category": "桌布桌垫",
+  "brand_positioning": "中高端家居软装，强调风格、易清洁、家庭场景",
+  "target_platforms": [
+    "taobao",
+    "xiaohongshu",
+    "douyin"
+  ],
+  "supply_chain_constraints": {
+    "materials": [
+      "PVC",
+      "TPU",
+      "棉麻",
+      "防水涂层"
+    ],
+    "min_moq": 200,
+    "lead_time_days": 14,
+    "cannot_do": [
+      "复杂刺绣",
+      "超大尺寸定制"
+    ]
+  }
+}

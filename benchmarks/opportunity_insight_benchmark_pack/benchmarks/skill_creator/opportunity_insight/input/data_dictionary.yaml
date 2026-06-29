@@ -1,0 +1,49 @@
+datasets:
+  keyword_dataset:
+    description: 关键词需求和搜索趋势数据
+    required: true
+    fields:
+      keyword: {type: string, required: true, description: 搜索词或需求词}
+      search_volume: {type: number, required: true, description: 搜索量}
+      trend: {type: number, required: true, description: 增长趋势}
+      competition_index: {type: number, required: true, description: 竞争强度指数}
+      paid_competition: {type: number, required: false, description: 付费竞争强度}
+      platform:
+        type: string
+        required: false
+        enum: [taobao, tmall, douyin, xiaohongshu, jd, pdd]
+
+  competitor_dataset:
+    description: 竞品结构数据
+    required: true
+    fields:
+      product_title: {type: string, required: true}
+      price: {type: number, required: true}
+      sales_estimate: {type: number, required: false}
+      review_count: {type: number, required: false}
+      selling_points: {type: array, required: false}
+      main_image_tags: {type: array, required: false}
+
+  content_signal_dataset:
+    description: 内容平台信号
+    required: false
+    fields:
+      topic: {type: string, required: true}
+      engagement: {type: number, required: false}
+      sentiment: {type: string, required: false}
+      pain_points: {type: array, required: false}
+
+  review_dataset:
+    description: 评论痛点数据
+    required: false
+    fields:
+      review_text: {type: string, required: true}
+      sentiment: {type: string, required: false}
+      extracted_pain_points: {type: array, required: false}
+
+quality_rules:
+  - keyword_dataset.search_volume 缺失时不能计算需求强度
+  - competitor_dataset.price 缺失时不能计算价格带机会
+  - 样本数少于 30 条时必须输出低置信度提醒
+  - 字段口径不一致时必须进入 risk_notes
+  - 任何缺失字段不能被静默忽略

@@ -1,0 +1,7 @@
+components:
+  - OpportunityCard
+  - EvidencePanel
+  - ScoreBreakdown
+  - ActionPlanCard
+  - RiskNotes
+  - FieldMappingTable

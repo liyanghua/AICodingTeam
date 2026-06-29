@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": [
+    "benchmark_id",
+    "generated_skill_path",
+    "hard_gate_passed",
+    "score_total",
+    "dimension_scores",
+    "top_gaps",
+    "recommended_next_actions"
+  ]
+}

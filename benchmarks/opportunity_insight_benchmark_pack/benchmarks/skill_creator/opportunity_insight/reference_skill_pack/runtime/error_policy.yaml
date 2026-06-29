@@ -1,0 +1,5 @@
+error_policy:
+  missing_required_data: {action: ask_for_data_or_use_sample_with_warning}
+  low_confidence: {action: output_hypothesis_not_conclusion}
+  tool_failure: {action: fallback_to_partial_report_and_mark_blocker}
+  user_disagrees: {action: create_failure_card_and_propose_skill_patch}
