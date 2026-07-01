@@ -1336,7 +1336,7 @@ node --check dashboard/app_generation.js
 ### 中间过程
 
 1. 新增只读 `CanvasProjection` 聚合层，从 run artifacts 投影业务节点和 `CanvasObject`。
-2. 固定六个业务节点：理解业务目标、编译业务规格、规划应用结构、生成应用原型、验证业务能力、输出可交付版本。
+2. 固定六个 runtime 聚合业务节点：理解业务目标、编译业务规格、规划应用结构、生成应用原型、验证业务能力、输出可交付版本。
 3. 建立 V1 runtime node 到 V2 业务节点的映射表。
 4. 从 `input_prd.md`、`app_contract.json`、`planning/*`、`generated_apps/<slug>/`、`codex/app_runtime_verification.json`、`benchmark_diff.md`、`agqs_score.json`、`adjustment_events.jsonl` 提取对象摘要。
 5. 新增只读 API：`GET /api/app-generation/runs/<run_id>/canvas`。
@@ -1346,7 +1346,7 @@ node --check dashboard/app_generation.js
 ### 输出
 
 - `CanvasObject` 投影 API。
-- 业务节点轨道数据结构。
+- runtime 聚合业务节点数据结构。
 - 前端业务对象 tab / panel。
 - `CanvasSelectionContext` 前端状态。
 
@@ -1377,33 +1377,36 @@ node --check dashboard/app_generation.js
 | T29.0 固化 V2 fixture run | 历史 app generation run、Dingdang benchmark run、成功/失败 repair 样本 | 整理最小 fixture：PRD、contract、planning、codex progress、verification、preview、patch/repair record | 可复用 fixture helper | `python3 -m unittest tests.test_app_generation_canvas -v` | fixture 缺少 implementation、preview 或 repair 主路径 |
 | T29.1 Canvas schema 测试 | V2 体验规范、技术方案、AC-074 到 AC-077 | 先写失败测试，覆盖 projection、business node、object、redaction 和状态枚举 | `tests/test_app_generation_canvas.py` | `python3 -m unittest tests.test_app_generation_canvas -v` | 测试失败原因不是缺实现，而是 fixture 或断言不稳定 |
 | T29.2 `CanvasProjectionBuilder` | run artifacts、preview status、evaluation、adjustment events | 新增只读 builder，聚合、脱敏、路径归一、生成 warning | `CanvasProjection` dict | `python3 -m unittest tests.test_app_generation_canvas -v` | builder 需要写事实源或读取 secret |
-| T29.3 六个业务节点映射 | V1 runtime nodes、`build_app_generation_nodes()` 输出 | 固定中文业务节点，维护 runtime refs、状态、摘要、对象计数、最近事件 | `business_nodes[]` | `python3 -m unittest tests.test_app_generation_canvas -v` | 默认 UI 仍必须展示英文 node id 才能理解状态 |
+| T29.3 六个 runtime 聚合业务节点映射 | V1 runtime nodes、`build_app_generation_nodes()` 输出 | 固定中文业务节点，维护 runtime refs、状态、摘要、对象计数、最近事件 | `business_nodes[]` | `python3 -m unittest tests.test_app_generation_canvas -v` | 默认 UI 仍必须展示英文 node id 才能理解状态 |
 | T29.4 `CanvasObject` 抽取 | PRD、contract、planning、codex、verification、preview、patch、repair artifacts | 抽取业务目标、场景、能力、页面、数据、provider、预览、缺口、修复候选 | `objects[]`、`edges[]` | `python3 -m unittest tests.test_app_generation_canvas -v` | object id 不能稳定重建或对象摘要需要完整源码 |
 | T29.5 对象详情构建 | `object_id`、projection、artifact/evidence refs | 校验当前 run、返回摘要、证据、可编辑字段、allowed actions、受控 preview refs | `CanvasObjectDetail` | `python3 -m unittest tests.test_dashboard -v` | 跨 run object id 无法拒绝 |
 | T29.6 Canvas API | projection builder、run id、object id | 增加只读路由、404/403、path confinement 和 redaction | `/canvas`、`/canvas/objects/<object_id>` | `python3 -m unittest tests.test_dashboard -v` | API 会泄露 `.env`、API key 或未授权路径 |
 | T29.7 V2.0 前端入口 | Canvas API、现有 V1 中间区 | 增加业务对象视图、对象选择状态、详情面板和 V1 降级 | 业务节点轨道 + 对象详情 | `node --check dashboard/app_generation.js` | Canvas API 失败会导致 V1 工作台不可用 |
 
-## T30: V2.1 生成画布主视图与对象化 AgentAction
+## T30: V2.1 Runway Timeline 主视图与步骤/对象化 AgentAction
 
 ### 输入
 
 - T29 的 `CanvasProjection` 和 `CanvasSelectionContext`。
 - `docs/app_generation_agent_bridge_spec.md` 的 V2 AgentIntent / AgentAction。
+- `docs/app_generation_runway_timeline_spec.md` 的 8 步 Runway Timeline 契约。
 - AC-078、AC-080、AC-081。
 
 ### 中间过程
 
-1. 将中间区主视图升级为“业务节点轨道 + 对象画布 + 对象详情”。
-2. 支持对象选中、相关对象跳转、对象状态筛选和证据预览。
-3. AgentBridge 在 `AgentPromptContext` 中注入当前 `CanvasObject` 和 `CanvasSelectionContext`。
-4. 扩展 `intent=auto`：对象选中时优先解析为 `explain_object`、`repair_generated_app`、`verify_capability`、`compare_canvas_objects` 或 `edit_business_object`。
-5. 将 `repair_generated_app` 映射到现有 `patch_app` / `delegate_code_repair`。
-6. 将 `suggest_object_patch` 映射到 user override 或最小业务节点重跑。
-7. 在画布中展示 patch、repair、回滚和规则提升候选事件。
+1. 将中间区主视图升级为“竖向 Runway Timeline + 当前 BusinessStep 详情”。
+2. 新增 `flow_steps[]` 8 步渲染：`prd_entry`、6 个业务步骤、`app_preview`。
+3. 支持步骤选中、对象选中、相关对象跳转、对象状态筛选和证据预览。
+4. AgentBridge 在 `AgentPromptContext` 中注入当前 `BusinessStep` / `CanvasObject` 和 `CanvasSelectionContext`。
+5. 扩展 `intent=auto`：步骤选中时优先解析为 `explain_step`、`explain_step_io`、`inspect_evidence`、`rerun_step` 或 `delegate_code_repair`；对象选中时优先解析为 `explain_object`、`repair_generated_app`、`verify_capability`、`compare_canvas_objects` 或 `edit_business_object`。
+6. 将 `repair_generated_app` 映射到现有 `patch_app` / `delegate_code_repair`。
+7. 将 `suggest_object_patch` 映射到 user override 或最小业务节点重跑。
+8. 在当前步骤详情中展示 patch、repair、回滚和规则提升候选事件。
 
 ### 输出
 
-- 生成画布主视图。
+- Runway Timeline 主视图。
+- `BusinessStep` 详情区。
 - 对象详情区。
 - 对象化 AgentAction 渲染和确认卡。
 - 版本/调优事件轨道。
@@ -1418,6 +1421,7 @@ node --check dashboard/app_generation.js
 验收信号：
 
 - 用户点击能力缺口后询问“修复这个问题”，Agent 生成 `repair_generated_app`，不是泛泛解释节点。
+- 用户点击 `可预览应用` 后描述“生成单张图报 gpt-image-1 not configured”，Agent 生成 `delegate_code_repair` 或受控 `patch_app`，不是解释 `preview_delivery`。
 - 用户点击业务能力后询问“验证一下”，Agent 生成 `verify_capability`。
 - 修改事实源的动作必须出现确认卡。
 - `patch_app` / `delegate_code_repair` 仍走 V1 受控 API 和证据落盘。
@@ -1426,7 +1430,7 @@ node --check dashboard/app_generation.js
 
 - V2 action 绕过 V1 受控 API。
 - Agent 可以直接写 worktree、`codex/` 或 secret 文件。
-- 对象画布无法解释 action 对哪个对象生效。
+- Runway Timeline 无法解释 action 对哪个步骤或对象生效。
 
 ### 可执行子任务
 
@@ -1434,10 +1438,10 @@ node --check dashboard/app_generation.js
 | --- | --- | --- | --- | --- | --- |
 | T30.1 Code Agent 业务进度卡 | `codex/coder_progress*.json`、SSE `node_progress`、`execution_progress` | 将命令/验证/stdout 事件映射为业务文案，增加 30 秒无事件提示 | implementation timeline | `python3 -m unittest tests.test_codex_executor tests.test_dashboard -v` | 进度事件可能泄露完整 prompt、源码或 secret |
 | T30.2 修复进度卡 | `app_repairs/<repair_id>/progress*.json`、delegate repair status | 展示“准备候选 diff / 正在验证 / diff ready / failed” | 右侧 Code Agent 修复进度卡 | `python3 -m unittest tests.test_dashboard -v` | delegate repair 等待期间仍只有静态“执行中” |
-| T30.3 `CanvasSelectionContext` 注入 | selected object、business node、surface、allowed actions | 前端 Agent 请求携带 canvas selection，后端校验 selection 属于当前 run | Agent interaction payload | `python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v` | 可以引用跨 run object 或未授权 object |
-| T30.4 对象化 intent 路由 | selection context、用户消息、provider | `intent=auto` 优先按对象和消息解析，失败再回退 V1 node context | `explain_object`、`repair_generated_app`、`verify_capability` 等 action | `python3 -m unittest tests.test_agent_bridge -v` | “修复这个预览错误”仍被解释成节点说明 |
+| T30.3 `CanvasSelectionContext` 注入 | selected step/object、business node、surface、allowed actions | 前端 Agent 请求携带 canvas selection，后端校验 selection 属于当前 run | Agent interaction payload | `python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v` | 可以引用跨 run step/object 或未授权 object |
+| T30.4 步骤/对象化 intent 路由 | selection context、用户消息、provider | `intent=auto` 优先按步骤/对象和消息解析，失败再回退 V1 node context | `explain_step`、`explain_object`、`repair_generated_app`、`verify_capability` 等 action | `python3 -m unittest tests.test_agent_bridge -v` | “修复这个预览错误”仍被解释成节点说明 |
 | T30.5 CodeAgentExecutor 权威收口 | AgentAction、patch/delegate APIs | 复杂代码修改走 `delegate_code_repair`，简单补丁走受控 `patch_app`，均需确认和证据 | 可确认 repair action | `python3 -m unittest tests.test_agent_bridge tests.test_dashboard -v` | PI-Agent 直接生成并执行代码修改 |
-| T30.6 对象画布主视图 | `business_nodes[]`、`objects[]`、`edges[]` | 渲染对象簇、状态筛选、相关对象跳转、证据入口 | 生成画布主视图 | `node --check dashboard/app_generation.js` | 右侧 Agent 被预览或画布压缩到不可用 |
+| T30.6 Runway Timeline 主视图 | `flow_steps[]`、`business_nodes[]`、`objects[]`、`edges[]` | 渲染竖向业务流程、当前步骤详情、对象列表、证据入口和 app preview 终点 | Runway Timeline 主视图 | `node --check dashboard/app_generation.js` | 右侧 Agent 被预览或中间区压缩到不可用 |
 | T30.7 对象化确认卡 | AgentAction、selected object、diff/verification plan | 展示问题来源、影响对象、最小修改目标、确认/取消/回滚入口 | action card | `python3 -m unittest tests.test_dashboard -v` | 确认前会写文件或确认后无验证证据 |
 
 ## T31: V2.2 ContextObject、版本回放与规则提升候选

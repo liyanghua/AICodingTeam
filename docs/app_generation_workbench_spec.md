@@ -21,6 +21,8 @@
 
 ## 三栏布局
 
+Runway Timeline 是当前工作台升级后的默认主视图，规范见 [`docs/app_generation_runway_timeline_spec.md`](app_generation_runway_timeline_spec.md)。本文档中早期的“节点流”能力仍是事实层和证据层，不再作为默认主流程与 Runway Timeline 并列展示。
+
 ### 左侧：任务和实验列表
 
 左侧只展示 `domain_id=app_generation` 的 run 和 comparison group。
@@ -37,38 +39,38 @@
 
 ### 中间：节点与产区
 
-中间区域展示节点流和当前节点详情。节点区是工作台事实源。
+中间区域展示 Runway Timeline 和当前 BusinessStep 详情。节点区仍是工作台事实源，但默认降级为当前步骤的“工程证据层”。
 
 中间区域内部必须拆成两列：
 
-- 左列：竖排节点流，按 PRD 到应用交付的先后顺序从上到下展示。
-- 右列：当前节点详情、中间产物、可点击文件引用和重跑入口。
+- 左列：竖排 Runway Timeline，按 PRD 输入到可预览应用的先后顺序从上到下展示。
+- 右列：当前 BusinessStep 详情、中间产物、可点击文件引用、应用预览入口和重跑/修复入口。
 
 中间区域的列宽必须支持伸缩。左列节点流和右列详情区都允许在合理范围内拉伸或收缩，但左侧任务列表不得被压缩到影响可读性。右侧 Agent 协作区保持独立固定，不随预览栏打开而向左挤压。文件预览竖栏打开时，应插在中间区与右侧 Agent 之间，优先占用中间区可伸缩空间，不压缩左侧任务列表。
 
-左列节点只展示业务友好的中文标题、业务状态和简短摘要。默认视图不得展示英文 `node_id`、executor、provider、artifact path 或技术解释。内部 `node_id` 只允许出现在调试、复制上下文或开发者详情中。
+左列步骤只展示业务友好的中文标题、业务状态和简短摘要。默认视图不得展示英文 `node_id`、executor、provider、artifact path 或技术解释。内部 `node_id` 只允许出现在当前步骤工程证据、调试、复制上下文或开发者详情中。
 
-右列节点详情必须使用卡片化展示。固定卡片为：
+右列 BusinessStep 详情必须使用卡片化展示。固定卡片为：
 
-- `Skill 路由`
-- `变体与对比`
-- `Project Skills`
 - `输入`
 - `输出`
-- `Tool calls · Usage · Scores · 风险`
+- `执行过程`
+- `你可以让 Agent 做什么`
+- `当前步骤对象`
+- `工程证据`
 
-每个节点必须展示：
+每个步骤必须展示：
 
 - 输入：上游 artifacts、用户 override、选中的 variant。
 - 执行过程：阶段状态、日志摘要、tool calls、risk events、blockers。
 - 输出：本节点 artifacts、diff、报告或预览说明。
-- Project Skills：候选 skill、实际使用 skill、使用原因。
-- usage：token、耗时、估算成本。
-- scores：产品效果、工程可执行性、验收覆盖、风险。
+- 可操作项：解释、查看输入输出、查看证据、重跑、修复或验证。
+- 当前步骤对象：关联 `CanvasObject`、能力缺口、预览会话或修复候选。
+- 工程证据：runtime nodes、Project Skills、usage、scores、tool calls、风险、artifact refs。
 
 `implementation` 节点的执行过程必须支持 Codex 实时进度展示，规范见 [`docs/app_generation_codex_observability_spec.md`](app_generation_codex_observability_spec.md)。执行过程卡片不得只显示“运行中”；当 Codex 已启动但尚未产出最终 diff 时，必须展示最近的 `CodexProgressEvent`，例如“启动 Code Agent”“运行命令”“修改文件”“运行验证”“生成候选 diff”。如果 30 秒没有新事件且最终状态未出现，显示“Code Agent 仍在运行，暂无新输出”。
 
-点击任意节点后，中间区域必须切换到该节点详情，右侧 Agent 区必须同步当前 `NodeContext`。
+点击任意 BusinessStep 后，中间区域必须切换到该步骤详情，右侧 Agent 区必须同步当前 `NodeContext` 和 `CanvasSelectionContext(selection_type="flow_step")`。
 
 点击任意详情卡片或中间产物文件时，右侧 Agent 区还必须同步 `AgentInteractionContext`：
 

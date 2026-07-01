@@ -406,7 +406,6 @@ def _resolve_intent(
 
     if canvas_selection and _is_flow_step_focus(interaction_context):
         step_id = str(canvas_selection.get("step_id") or "")
-        step_type = str(canvas_selection.get("step_type") or "")
         repair_step = step_id in {"app_preview", "prototype_generation", "capability_verification", "delivery_version"}
         if _mentions_app_repair(message) and (repair_step or _is_app_preview_focus(interaction_context)):
             return resolve_flow_step_repair()
@@ -416,7 +415,7 @@ def _resolve_intent(
             return allowed_or_clarify("inspect_evidence")
         if any(token in message for token in ("输入", "输出", "上游", "下游", "产物", "文件")) or "input" in text or "output" in text or "artifact" in text:
             return allowed_or_clarify("explain_step_io")
-        if step_type == "terminal" and _mentions_app_repair(message):
+        if step_id == "app_preview" and _mentions_app_repair(message):
             return allowed_or_clarify("delegate_code_repair")
         return allowed_or_clarify("explain_step")
 

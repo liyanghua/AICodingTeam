@@ -428,14 +428,14 @@ function canvasFlowSteps(projection) {
 
 function initialCanvasProjection() {
   const stepDefs = [
-    ["prd_entry", "PRD 输入", "entry", "ready", ["粘贴 PRD 文本或选择 PRD 文件"], ["选择生成配置并点击启动生成"], ["新的应用生成任务"]],
+    ["prd_entry", "PRD 输入", "ui", "ready", ["粘贴 PRD 文本或选择 PRD 文件"], ["选择生成配置并点击启动生成"], ["新的应用生成任务"]],
     ["business_goal_understanding", "理解业务目标", "business", "not_started", ["PRD 输入"], ["等待生成任务启动"], ["业务目标摘要"]],
     ["business_spec_compilation", "编译业务规格", "business", "not_started", ["业务目标"], ["等待上一步完成"], ["标准化 PRD 与应用契约"]],
     ["app_structure_planning", "规划应用结构", "business", "not_started", ["应用契约"], ["等待规格编译完成"], ["TDD 计划与验收覆盖"]],
     ["prototype_generation", "生成应用原型", "business", "not_started", ["应用结构规划"], ["等待 Code Agent 执行"], ["本地应用原型"]],
     ["capability_verification", "验证业务能力", "business", "not_started", ["生成应用"], ["等待应用生成完成"], ["验证记录与能力缺口"]],
     ["delivery_version", "输出可交付版本", "business", "not_started", ["验证结果"], ["等待验证完成"], ["交付报告"]],
-    ["app_preview", "可预览应用", "terminal", "not_started", ["可交付版本"], ["等待应用生成并发布快照"], ["本地预览 URL"]],
+    ["app_preview", "可预览应用", "ui", "not_started", ["可交付版本"], ["等待应用生成并发布快照"], ["本地预览 URL"]],
   ];
   const flowSteps = stepDefs.map(([id, title, stepType, status, inputSummary, processSummary, outputSummary], index) => ({
     id,
@@ -1155,14 +1155,7 @@ function renderPipelineOverview(nodes) {
 }
 
 function pipelineArrow() {
-  return el("span", { className: "app-generation-pipeline-arrow" }, ["→"]);
-}
-
-function pipelineAnchor(title, role, isEntry) {
-  return el("div", { className: "app-generation-pipeline-anchor" + (isEntry ? " entry" : " terminal") }, [
-    el("span", { className: "app-generation-pipeline-anchor-role" }, [role]),
-    el("span", { className: "app-generation-pipeline-anchor-name" }, [title]),
-  ]);
+  return el("span", { className: "app-generation-pipeline-arrow", "aria-hidden": "true" }, ["↓"]);
 }
 
 function renderBusinessNodeTrack(container, nodes) {
@@ -1198,8 +1191,9 @@ function renderBusinessNodeTrack(container, nodes) {
           (selected ? " selected" : "") +
           (isRunning ? " running" : "") +
           (node.id === currentId ? " current" : "") +
-          (node.step_type === "entry" ? " entry" : "") +
-          (node.step_type === "terminal" ? " terminal" : ""),
+          (node.step_type === "ui" ? " ui-step" : "") +
+          (node.is_entry ? " entry" : "") +
+          (node.is_terminal ? " terminal" : ""),
         onclick: () => selectCanvasBusinessNode(node.id),
       },
       [

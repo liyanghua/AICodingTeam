@@ -1474,10 +1474,21 @@ h3 {
 }
 
 .app-generation-business-node-track {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(112px, 1fr));
-  gap: var(--space-1);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
+}
+
+.app-generation-business-node-track::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 19px;
+  width: 1px;
+  background: var(--color-border);
 }
 
 .app-generation-canvas-toolbar {
@@ -1527,9 +1538,11 @@ h3 {
 
 .app-generation-business-node-card {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px var(--space-1);
+  position: relative;
+  z-index: 1;
 }
 
 .app-generation-business-node-index {
@@ -1553,8 +1566,33 @@ h3 {
 
 .app-generation-business-node-card .mini-status,
 .app-generation-business-node-card .meta {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   justify-self: start;
+}
+
+.app-generation-business-node-oneliner {
+  grid-column: 2 / -1;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  overflow-wrap: anywhere;
+}
+
+.app-generation-business-node-card.ui-step .app-generation-business-node-index {
+  border-color: var(--color-action);
+  color: var(--color-action);
+  background: color-mix(in srgb, var(--color-action) 8%, var(--color-surface));
+}
+
+.app-generation-business-node-card.running .app-generation-business-node-index,
+.app-generation-business-node-card.current .app-generation-business-node-index {
+  border-color: var(--color-status-processing);
+  color: var(--color-status-processing);
+  background: color-mix(in srgb, var(--color-status-processing) 10%, var(--color-surface));
+}
+
+.app-generation-business-node-card.selected {
+  border-color: var(--color-action);
+  box-shadow: 0 0 0 1px var(--color-action) inset;
 }
 
 .app-generation-canvas-grid {
@@ -1711,9 +1749,11 @@ h3 {
 
 .app-generation-business-step-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
   gap: var(--space-2);
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .app-generation-business-step-flow,
@@ -1730,6 +1770,7 @@ h3 {
   justify-content: space-between;
   gap: var(--space-2);
   min-width: 0;
+  max-width: 100%;
 }
 
 .app-generation-step-summary-cards {
@@ -1746,6 +1787,8 @@ h3 {
   background: var(--color-surface);
   padding: var(--space-2);
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 
@@ -1763,6 +1806,35 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-generation-pipeline-arrow {
+  position: relative;
+  z-index: 1;
+  width: 38px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  line-height: 1;
+  user-select: none;
+}
+
+@media (max-width: 1120px) {
+  .app-generation-business-step-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .app-generation-business-node-card {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .app-generation-business-node-card .mini-status {
+    grid-column: 2 / -1;
+  }
 }
 
 .app-generation-pipeline-overview-head {
@@ -1874,7 +1946,6 @@ h3 {
   align-items: center;
   color: var(--color-text-muted);
   font-weight: 700;
-  transform: rotate(90deg);
 }
 
 .app-generation-pipeline-anchor {

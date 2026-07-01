@@ -277,7 +277,7 @@ class CodexProviderTests(unittest.TestCase):
             "canvas_selection": {
                 "selection_type": "flow_step",
                 "step_id": "app_preview",
-                "step_type": "terminal",
+                "step_type": "ui",
                 "title": "可预览应用",
                 "status": "running",
                 "runtime_nodes": [],

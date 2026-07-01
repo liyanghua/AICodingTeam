@@ -93,7 +93,7 @@ BUSINESS_STEP_DETAILS: dict[str, dict[str, list[str]]] = {
 ENTRY_STEP = {
     "id": "prd_entry",
     "title": "PRD 输入",
-    "step_type": "entry",
+    "step_type": "ui",
     "runtime_nodes": [],
     "input_summary": ["用户输入 PRD 文本或上传 PRD 文件"],
     "process_summary": ["选择生成配置并创建 app_generation run"],
@@ -104,7 +104,7 @@ ENTRY_STEP = {
 PREVIEW_STEP = {
     "id": "app_preview",
     "title": "可预览应用",
-    "step_type": "terminal",
+    "step_type": "ui",
     "runtime_nodes": [],
     "input_summary": ["已生成应用原型", "验证记录", "交付报告"],
     "process_summary": ["发布应用快照、启动本地预览进程并检查健康状态"],

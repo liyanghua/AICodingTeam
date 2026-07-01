@@ -96,6 +96,7 @@ For `app_generation`:
 - [`app_generation_prd_to_local_app_spec.md`](app_generation_prd_to_local_app_spec.md): PRD-to-local-app domain contract.
 - [`app_generation_workbench_spec.md`](app_generation_workbench_spec.md): observable workbench specification.
 - [`app_generation_canvas_experience_spec.md`](app_generation_canvas_experience_spec.md): V2 canvas experience direction.
+- [`app_generation_runway_timeline_spec.md`](app_generation_runway_timeline_spec.md): Runway Timeline main workbench experience, aligning PRD input, business steps, app preview, Agent collaboration, and folded engineering evidence.
 - [`app_generation_node_context_contract.md`](app_generation_node_context_contract.md): node and Agent interaction context contracts.
 - [`app_generation_agent_bridge_spec.md`](app_generation_agent_bridge_spec.md): right-side Agent provider and action protocol.
 - [`app_generation_codex_observability_spec.md`](app_generation_codex_observability_spec.md): Code Agent progress visibility.

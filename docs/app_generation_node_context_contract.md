@@ -736,7 +736,7 @@ Agent 转成 `AgentAction` 时的具体 action type（`patch_artifact` / `patch_
 
 ## V2 Canvas Context 扩展
 
-V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_generation_canvas_experience_spec.md)。V2 在 `NodeContext` 之上增加只读画布投影和选中对象上下文。
+V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_generation_canvas_experience_spec.md)，Runway Timeline 主体验规范见 [`docs/app_generation_runway_timeline_spec.md`](app_generation_runway_timeline_spec.md)。V2 在 `NodeContext` 之上增加只读画布投影、选中步骤上下文和选中对象上下文。
 
 ### CanvasObject 摘要
 
@@ -771,7 +771,7 @@ V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_g
 
 ### CanvasSelectionContext
 
-`CanvasSelectionContext` 是 `AgentInteractionContext` 的 V2 扩展，用于描述用户当前选中的业务对象。
+`CanvasSelectionContext` 是 `AgentInteractionContext` 的 V2 扩展，用于描述用户当前选中的 BusinessStep 或业务对象。
 
 ```json
 {
@@ -797,13 +797,46 @@ V2 生成画布规范见 [`docs/app_generation_canvas_experience_spec.md`](app_g
 }
 ```
 
+当用户选中 Runway Timeline 步骤时，`selection_type` 必须是 `flow_step`：
+
+```json
+{
+  "canvas_selection": {
+    "selection_id": "app_preview",
+    "selection_type": "flow_step",
+    "step_id": "app_preview",
+    "step_type": "ui",
+    "title": "可预览应用",
+    "status": "needs_attention",
+    "focus_surface": "step_detail",
+    "runtime_nodes": ["preview_delivery"],
+    "input_summary": [],
+    "process_summary": [],
+    "output_summary": [],
+    "evidence_refs": ["app_publish.json", "preview/preview_run_record.json"],
+    "visible_related_objects": [
+      "preview_session:current",
+      "capability_gap:gpt-image-1-not-configured"
+    ],
+    "allowed_actions": [
+      "explain_step",
+      "explain_step_io",
+      "inspect_evidence",
+      "delegate_code_repair"
+    ]
+  }
+}
+```
+
 规则：
 
 - `CanvasSelectionContext` 不属于节点事实源，焦点变化不写 run artifacts。
-- `selection_id` 必须引用当前 run 的 `CanvasObject`，不得引用跨 run 或未授权对象。
+- `selection_id` 必须引用当前 run 的 `BusinessStep` 或 `CanvasObject`，不得引用跨 run 或未授权对象。
 - `allowed_actions` 必须由 Dashboard 根据对象类型、run 状态、preview 状态和权限计算；Provider 不得自行扩权。
+- 当 `selection_type="flow_step"` 时，右侧 Agent 默认围绕步骤的输入、执行过程、输出、证据和可操作项回答，而不是退回到内部工程 node id 解释。
 - 当 `selection_type="canvas_object"` 时，右侧 Agent 默认围绕对象回答，而不是退回到节点解释。
 - 用户编辑业务对象时，Agent 只能生成 `suggest_object_patch` / `edit_business_object`，确认后进入 user override 或新 run；不能直接覆盖旧 artifact。
+- 用户在 `app_preview` step 报告运行错误、provider/model、生图、按钮、下载或局部迭代问题时，Agent 默认生成 `delegate_code_repair` 或受控 `patch_app`，不得只解释 `preview_delivery` 节点。
 
 ### 与 V1 字段关系
 

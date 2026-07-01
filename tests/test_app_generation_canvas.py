@@ -99,8 +99,10 @@ class AppGenerationCanvasTests(unittest.TestCase):
             ["PRD 输入", "理解业务目标", "编译业务规格", "规划应用结构", "生成应用原型", "验证业务能力", "输出可交付版本", "可预览应用"],
         )
         self.assertEqual(projection["flow_steps"][0]["id"], "prd_entry")
+        self.assertEqual(projection["flow_steps"][0]["step_type"], "ui")
         self.assertEqual(projection["flow_steps"][0]["runtime_nodes"], [])
         self.assertEqual(projection["flow_steps"][-1]["id"], "app_preview")
+        self.assertEqual(projection["flow_steps"][-1]["step_type"], "ui")
         self.assertEqual(projection["flow_steps"][-1]["runtime_nodes"], [])
         for step in projection["flow_steps"]:
             self.assertIn("input_summary", step)

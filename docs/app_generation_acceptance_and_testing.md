@@ -937,13 +937,15 @@ node --check dashboard/app_generation.js
 
 ## V2 生成画布验收标准
 
-### AC-074 V2 业务节点轨道
+### AC-074 Runway Timeline 业务主流程
 
-生成画布默认只展示六个业务节点：理解业务目标、编译业务规格、规划应用结构、生成应用原型、验证业务能力、输出可交付版本。内部 runtime node id 只在开发者详情中出现。
+Dashboard 默认只展示 Runway Timeline 作为主流程，包含 8 个 `BusinessStep`：PRD 输入、理解业务目标、编译业务规格、规划应用结构、生成应用原型、验证业务能力、输出可交付版本、可预览应用。内部 runtime node id 只在当前步骤工程证据或开发者详情中出现。
 
 验证信号：
 
 - UI 默认节点标题为业务中文。
+- `/canvas` 返回 8 个 `flow_steps`。
+- `prd_entry` 和 `app_preview` 是 UI step，不要求 runtime node。
 - 每个业务节点可映射到现有 V1 runtime artifacts。
 - 业务节点卡片展示状态、摘要、对象数量和最近事件。
 - `node_id`、artifact path、raw JSON 不作为默认主文案。
@@ -961,13 +963,14 @@ Dashboard 必须能从 run artifacts、`NodeContext`、preview status、evaluati
 
 ### AC-076 CanvasSelectionContext 注入右侧 Agent
 
-用户点击任意画布对象后，右侧 Agent 请求必须携带 `CanvasSelectionContext`。
+用户点击任意 Runway 步骤或画布对象后，右侧 Agent 请求必须携带 `CanvasSelectionContext`。
 
 验证信号：
 
-- 请求中包含 `selection_id`、`selection_type`、`object_type`、`business_node`、`focus_surface`、`visible_related_objects` 和 `allowed_actions`。
+- 选中步骤时，请求中包含 `selection_type="flow_step"`、`step_id`、`title`、`runtime_nodes`、`focus_surface`、`visible_related_objects` 和 `allowed_actions`。
+- 选中对象时，请求中包含 `selection_type="canvas_object"`、`selection_id`、`object_type`、`business_node`、`focus_surface`、`visible_related_objects` 和 `allowed_actions`。
 - `selection_id` 必须引用当前 run 的对象，不允许跨 run 引用。
-- Agent 回答围绕当前对象和证据，不退化为泛泛解释当前节点。
+- Agent 回答围绕当前步骤/对象和证据，不退化为泛泛解释当前工程节点。
 
 ### AC-077 Code Agent 过程业务化表达
 
@@ -982,7 +985,7 @@ Dashboard 必须能从 run artifacts、`NodeContext`、preview status、evaluati
 
 ### AC-078 对象化 AgentAction
 
-右侧 Agent 必须支持 V2 对象化动作：`explain_object`、`suggest_object_patch`、`repair_generated_app`、`verify_capability`、`compare_canvas_objects`、`promote_to_generation_rule` 和 `rerun_business_node`。
+右侧 Agent 必须支持 Runway 步骤动作和 V2 对象化动作：`explain_step`、`explain_step_io`、`inspect_evidence`、`rerun_step`、`explain_object`、`suggest_object_patch`、`repair_generated_app`、`verify_capability`、`compare_canvas_objects`、`promote_to_generation_rule` 和 `rerun_business_node`。
 
 验证信号：
 
@@ -1039,8 +1042,8 @@ V2 生成画布必须按 V2.0、V2.1、V2.2 分阶段交付，每个阶段都有
 
 验证信号：
 
-- V2.0 至少交付 `CanvasProjectionBuilder`、只读 Canvas API、六个业务节点、对象列表、对象详情和 `CanvasSelectionContext`。
-- V2.1 至少交付对象画布主视图、Code Agent 业务进度卡、对象化 AgentAction、确认卡，以及 `patch_app` / `delegate_code_repair` 映射。
+- V2.0 至少交付 `CanvasProjectionBuilder`、只读 Canvas API、6 个 runtime 聚合业务节点、对象列表、对象详情和 `CanvasSelectionContext`。
+- V2.1 至少交付 Runway Timeline 主视图、8 个 `flow_steps`、Code Agent 业务进度卡、步骤/对象化 AgentAction、确认卡，以及 `patch_app` / `delegate_code_repair` 映射。
 - V2.2 至少交付 `ContextObject`、版本回放、规则提升候选、secret/path 安全回归和端到端验收记录。
 - `docs/app_generation_implementation_task_plan.md` 必须包含 T29.0 到 T31.6 的子任务，每个子任务包含输入、中间过程、输出、验证命令和停止条件。
 - 任何子任务不得要求引入数据库、替换 Team Runtime、绕过人工确认 gate 或直接修改 `codex/` 原始输出。
@@ -1051,9 +1054,9 @@ V2 生成画布必须按 V2.0、V2.1、V2.2 分阶段交付，每个阶段都有
 
 验证信号：
 
-- AC-074 由 T29.3、T29.7 覆盖。
+- AC-074 由 T29.3、T29.7、T30.6 覆盖。
 - AC-075 由 T29.1、T29.2、T29.4、T29.5 覆盖。
-- AC-076 由 T30.3、T30.4 覆盖。
+- AC-076 由 T30.3、T30.4、T30.6 覆盖。
 - AC-077 由 T30.1、T30.2 覆盖。
 - AC-078 由 T30.4、T30.5、T30.7 覆盖。
 - AC-079 由 T31.1、T31.2 覆盖。
@@ -1067,6 +1070,6 @@ V2 生成画布必须按 V2.0、V2.1、V2.2 分阶段交付，每个阶段都有
 文档同步完成后运行：
 
 ```bash
-rg -n "T29.0|T29.7|T30.7|T31.6|CanvasProjectionBuilder|CanvasSelectionContext|ContextObject|业务节点轨道|Code Agent 长过程|规则提升|AC-074|AC-085" docs/app_generation*.md
+rg -n "Runway Timeline|BusinessStep|flow_steps|T29.0|T29.7|T30.7|T31.6|CanvasProjectionBuilder|CanvasSelectionContext|ContextObject|Code Agent 长过程|规则提升|AC-074|AC-085" docs/app_generation*.md
 git diff -- docs/app_generation*.md
 ```
