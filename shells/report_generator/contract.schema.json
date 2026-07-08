@@ -1,0 +1,457 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://growth-dev.internal/schemas/app-config-v1.json",
+  "title": "App Config Schema",
+  "description": "Fixed Shell configuration schema for report_generator",
+  "type": "object",
+  "required": ["schema_version", "app_slug", "shell_kind", "nodes"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "app-config-v1",
+      "description": "Schema version identifier"
+    },
+    "app_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Application slug (kebab-case)"
+    },
+    "shell_kind": {
+      "type": "string",
+      "enum": ["report_generator"],
+      "description": "Shell template type"
+    },
+    "shell_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Shell version (semver)"
+    },
+    "task_ref": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Task title"
+        },
+        "domain": {
+          "type": "string",
+          "description": "Domain identifier"
+        },
+        "skill_id": {
+          "type": "string",
+          "description": "Skill identifier"
+        }
+      }
+    },
+    "data_capability_index": {
+      "type": "object",
+      "properties": {
+        "provider": {"type": "string", "const": "api_doc_index"},
+        "status": {"type": "string"},
+        "build_mode": {"type": "string"},
+        "source_index_ref": {"type": "string"},
+        "runtime_index_ref": {"type": "string"},
+        "default_strategy": {"type": "string"},
+        "coverage_thresholds": {"type": "object"},
+        "stats": {"type": "object"},
+        "sources": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$",
+            "description": "Node identifier (snake_case)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable node name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["form", "data", "compute", "llm", "aggregate"],
+            "description": "Node execution type"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Dependency node IDs"
+          },
+          "data_requirements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required data requirement IDs"
+          },
+          "prompt_ref": {
+            "type": ["string", "null"],
+            "description": "Path to prompt template"
+          },
+          "tool_bindings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool binding IDs"
+          },
+          "output_schema_ref": {
+            "type": "string",
+            "description": "Path to output schema"
+          },
+          "output_field_requirements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["output_id", "field_path", "field_name", "title", "description", "type", "required", "source_schema_ref"],
+              "properties": {
+                "output_id": {"type": "string"},
+                "field_path": {"type": "string"},
+                "field_name": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "type": {"type": "string"},
+                "required": {"type": "boolean"},
+                "source_schema_ref": {"type": "string"},
+                "source": {"type": "string"}
+              }
+            }
+          },
+          "data_mapping_context": {
+            "type": "object",
+            "properties": {
+              "status": {"type": "string"},
+              "business_context_ref": {"type": "string"},
+              "node_execution_view_ref": {"type": "string"},
+              "source_context_refs": {"type": "array", "items": {"type": "object"}},
+              "data_requirement_ids": {"type": "array", "items": {"type": "string"}},
+              "output_ids": {"type": "array", "items": {"type": "string"}},
+              "output_field_count": {"type": "integer"},
+              "output_field_requirements": {"type": "array", "items": {"type": "object"}},
+              "multi_api_mapping": {
+                "type": "object",
+                "properties": {
+                  "enabled": {"type": "boolean"},
+                  "requires_join_review": {"type": "boolean"},
+                  "allowed_fill_modes": {"type": "array", "items": {"type": "string"}}
+                }
+              },
+              "api_doc_matching": {
+                "type": "object",
+                "properties": {
+                  "enabled": {"type": "boolean"},
+                  "provider": {"type": "string"},
+                  "index_ref": {"type": "string"},
+                  "default_strategy": {"type": "string"},
+                  "candidate_strategies": {"type": "array", "items": {"type": "string"}},
+                  "business_query": {"type": "string"},
+                  "field_coverage_thresholds": {"type": "object"},
+                  "derived_field_policy": {"type": "object"}
+                }
+              },
+              "upstream_artifact_node_ids": {"type": "array", "items": {"type": "string"}},
+              "business_query": {"type": "string"},
+              "workflow_title": {"type": "string"}
+            }
+          },
+          "input_model": {
+            "type": "object",
+            "required": ["mode", "required_data", "fields"],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["manual_upload", "form", "derived"]
+              },
+              "required_data": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "output_model": {
+            "type": "object",
+            "required": ["outputs"],
+            "properties": {
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "schema", "summary"],
+                  "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "status": {"type": "string"},
+                    "source": {"type": "string"},
+                    "schema": {"type": "object"},
+                    "summary": {"type": "object"}
+                  }
+                }
+              }
+            }
+          },
+          "execution_model": {
+            "type": "object",
+            "required": ["state_machine", "can_run_when", "degraded_when"],
+            "properties": {
+              "state_machine": {"type": "array", "items": {"type": "string"}},
+              "can_run_when": {"type": "array", "items": {"type": "string"}},
+              "degraded_when": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "evidence_model": {
+            "type": "object",
+            "required": ["contract", "required"],
+            "properties": {
+              "contract": {"type": "object"},
+              "required": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "tool_model": {
+            "type": "object",
+            "required": ["effective_mode", "bindings"],
+            "properties": {
+              "effective_mode": {"type": "string", "const": "manual_upload_only"},
+              "bindings": {"type": "array", "items": {"type": "object"}}
+            }
+          },
+          "source_trace": {
+            "type": "object",
+            "required": ["workflow_ref", "data_requirement_refs", "output_schema_refs", "tool_binding_refs", "evidence_ref"],
+            "properties": {
+              "workflow_ref": {"type": "string"},
+              "data_requirement_refs": {"type": "array", "items": {"type": "string"}},
+              "output_schema_refs": {"type": "array", "items": {"type": "string"}},
+              "tool_binding_refs": {"type": "array", "items": {"type": "string"}},
+              "evidence_ref": {"type": "string"},
+              "strategy_kb_ref": {"type": "string"},
+              "strategy_kb_query": {"type": "string"},
+              "strategy_kb_citation_refs": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "business_context": {
+            "type": "object",
+            "required": ["status", "query", "mode", "results", "warnings"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["available", "missing", "error"]
+              },
+              "query": {"type": "string"},
+              "mode": {"type": "string"},
+              "kb_manifest": {"type": "string"},
+              "collection_id": {"type": "string"},
+              "backend": {"type": "string"},
+              "error": {"type": "string"},
+              "warnings": {"type": "array", "items": {"type": "string"}},
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rank": {"type": "integer"},
+                    "score": {"type": ["number", "integer", "string"]},
+                    "doc_id": {"type": "string"},
+                    "doc_title": {"type": "string"},
+                    "source_path": {"type": "string"},
+                    "kb_page_id": {"type": "string"},
+                    "citation_id": {"type": "string"},
+                    "section": {"type": "string"},
+                    "passage": {"type": "string"},
+                    "matched_terms": {"type": "array", "items": {"type": "string"}},
+                    "page_type": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "node_execution_view": {
+            "type": "object",
+            "required": ["status", "goal", "action", "verification", "artifact", "agent_assist", "source"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["available", "missing", "partial"]
+              },
+              "workflow_no": {"type": "integer"},
+              "workflow_title": {"type": "string"},
+              "goal": {"type": "object"},
+              "action": {"type": "object"},
+              "verification": {"type": "object"},
+              "artifact": {"type": "object"},
+              "agent_assist": {"type": "object"},
+              "source": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Final report title"
+        },
+        "node_id": {
+          "type": "string",
+          "description": "Aggregate node ID"
+        },
+        "template_ref": {
+          "type": "string",
+          "description": "Report template path"
+        }
+      }
+    },
+    "data_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema_ref": {
+            "type": "string"
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["manual_upload", "api", "browser"]
+              },
+              "effective_mode": {
+                "type": "string",
+                "enum": ["manual_upload_only"],
+                "description": "Effective mode after safety constraints"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tool_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "tool_id"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "effective_mode": {
+            "type": "string",
+            "const": "manual_upload_only",
+            "description": "Effective mode after safety constraints"
+          }
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "properties": {
+        "registry": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule_id"],
+            "properties": {
+              "rule_id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "threshold": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "hard_requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Rule IDs that must match"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "schema_ref": {
+          "type": "string",
+          "description": "Path to evidence schema"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "properties": {
+        "llm_forbidden_in": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["numbers", "rule_outputs", "data_sources"]
+          }
+        },
+        "manual_login_only": {
+          "type": "boolean"
+        }
+      }
+    },
+    "customizations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "location", "behavior", "acceptance"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string",
+            "description": "File path or component identifier"
+          },
+          "behavior": {
+            "type": "string",
+            "description": "What should be customized"
+          },
+          "acceptance": {
+            "type": "string",
+            "description": "How to verify the customization"
+          }
+        }
+      }
+    }
+  }
+}

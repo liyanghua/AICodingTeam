@@ -1,0 +1,97 @@
+{
+  "schema_version": "app-config-v1",
+  "app_slug": "market-insight-demo",
+  "shell_kind": "report_generator",
+  "shell_version": "0.1.0",
+  "task_ref": {
+    "title": "市场洞察分析演示",
+    "domain": "market_analysis",
+    "skill_id": "opportunity_insight"
+  },
+  "nodes": [
+    {
+      "id": "form_input",
+      "name": "表单输入",
+      "kind": "form",
+      "depends_on": [],
+      "data_requirements": []
+    },
+    {
+      "id": "data_upload",
+      "name": "数据上传",
+      "kind": "data",
+      "depends_on": ["form_input"],
+      "data_requirements": ["category_data", "product_data"]
+    },
+    {
+      "id": "strong_hot_check",
+      "name": "强热基因检测",
+      "kind": "compute",
+      "depends_on": ["data_upload"],
+      "data_requirements": []
+    },
+    {
+      "id": "opportunity_scoring",
+      "name": "机会评分",
+      "kind": "compute",
+      "depends_on": ["strong_hot_check"],
+      "data_requirements": []
+    },
+    {
+      "id": "final_report",
+      "name": "生成报告",
+      "kind": "aggregate",
+      "depends_on": ["opportunity_scoring"],
+      "data_requirements": []
+    }
+  ],
+  "aggregate": {
+    "title": "市场洞察分析报告",
+    "node_id": "final_report"
+  },
+  "data_requirements": [
+    {
+      "id": "category_data",
+      "name": "品类数据",
+      "description": "包含 GMV、增速、集中度等指标",
+      "source": {
+        "type": "manual_upload",
+        "effective_mode": "manual_upload_only"
+      }
+    },
+    {
+      "id": "product_data",
+      "name": "商品数据",
+      "description": "Top 产品列表及其指标",
+      "source": {
+        "type": "manual_upload",
+        "effective_mode": "manual_upload_only"
+      }
+    }
+  ],
+  "rules": {
+    "registry": [
+      {
+        "rule_id": "strong_hot_gene",
+        "description": "强热基因判定"
+      },
+      {
+        "rule_id": "trend_hot_gene",
+        "description": "趋势热基因判定"
+      },
+      {
+        "rule_id": "differentiated_opportunity_gene",
+        "description": "差异化机会基因判定"
+      },
+      {
+        "rule_id": "opportunity_score",
+        "description": "机会评分"
+      }
+    ],
+    "hard_requirements": ["opportunity_score"]
+  },
+  "safety": {
+    "llm_forbidden_in": ["numbers", "rule_outputs"],
+    "manual_login_only": true
+  }
+}
