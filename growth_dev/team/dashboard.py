@@ -14,6 +14,7 @@ import uuid
 import webbrowser
 from dataclasses import dataclass
 from http import HTTPStatus
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -324,6 +325,7 @@ def build_dashboard_state(run_id: str, *, runs_dir: Path = Path("runs"), repo_ro
         "diff_summary": _diff_summary(run_dir),
         "next_actions": _next_actions(run_id, str(record.get("status", process.get("status", "starting"))), apply_status),
         "risk_events": risk_events,
+        "shell_preview": _build_shell_preview(run_id, run_dir),
     }
     return _redact(state)
 
@@ -469,6 +471,14 @@ def start_dashboard_run(config: DashboardConfig, payload: dict[str, Any]) -> dic
     requirements_env_file = str(payload.get("requirements_env_file") or config.requirements_env_file or "")
     if requirements_env_file:
         command.extend(["--requirements-env-file", requirements_env_file])
+    for flag, key in (
+        ("--task-yaml-path", "task_yaml_path"),
+        ("--domain-yaml-path", "domain_yaml_path"),
+        ("--skill-dir", "skill_dir"),
+    ):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            command.extend([flag, value])
     process_record = {
         "run_id": run_id,
         "pid": 0,
@@ -640,6 +650,7 @@ def build_app_generation_nodes(
                     run_dir,
                     str(inputs.get("app_slug") or contract.get("app_slug") or _slug_from_contract(contract)),
                 ),
+                "shell_preview": _build_shell_preview(run_id, run_dir),
             },
             "provider_statuses": _app_generation_provider_statuses(repo_root=repo_root),
             "nodes": nodes,
@@ -1186,17 +1197,44 @@ def get_app_generation_preview_status(config: DashboardConfig, run_id: str) -> d
             os.kill(pid, 0)
         except (ProcessLookupError, PermissionError):
             status = "stale"
-    
+
+    # Probe Shell /api/health for deep readiness (python_engine, config load)
+    shell_health: dict[str, Any] = {"probed": False}
+    port = record.get("port")
+    if status == "running" and port:
+        try:
+            conn = HTTPConnection("127.0.0.1", int(port), timeout=3)
+            try:
+                conn.request("GET", "/api/health")
+                resp = conn.getresponse()
+                body = resp.read().decode("utf-8", errors="replace")
+                if resp.status == 200:
+                    parsed = json.loads(body)
+                    shell_health = {
+                        "probed": True,
+                        "status": parsed.get("status"),
+                        "python_engine": parsed.get("python_engine"),
+                        "nodes_count": parsed.get("nodes_count"),
+                        "shell_version": parsed.get("shell_version"),
+                    }
+                else:
+                    shell_health = {"probed": True, "status": "http_error", "http_status": resp.status}
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001 - health probe must not break status endpoint.
+            shell_health = {"probed": True, "status": "unreachable", "error": str(exc)}
+
     return _redact({
         "status": status,
         "run_id": record.get("run_id", run_id),
         "app_slug": record.get("app_slug"),
         "pid": pid,
-        "port": record.get("port"),
+        "port": port,
         "url": record.get("url"),
         "health_status": record.get("health_status"),
         "started_at": record.get("started_at"),
         "stopped_at": record.get("stopped_at"),
+        "shell_health": shell_health,
     })
 
 
@@ -2161,8 +2199,8 @@ def start_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -
     )
     app_slug = validate_app_slug(_normalize_app_slug(raw_slug))
 
-    executor = str(payload.get("executor") or config.executor or "codex").strip() or "codex"
-    if executor not in {"codex", "llm", "rule"}:
+    executor = str(payload.get("executor") or config.executor or "deterministic").strip() or "deterministic"
+    if executor not in {"codex", "deterministic"}:
         raise ValueError(f"Unsupported executor: {executor}")
 
     comparison_group_id = str(payload.get("comparison_group_id") or f"cmp-{app_slug}")
@@ -2176,6 +2214,9 @@ def start_app_generation_run(config: DashboardConfig, payload: dict[str, Any]) -
         "executor": executor,
         "model": str(payload.get("model") or config.model),
         "codex_provider": str(payload.get("codex_provider") or config.codex_provider),
+        "task_yaml_path": str(payload.get("task_yaml_path") or ""),
+        "domain_yaml_path": str(payload.get("domain_yaml_path") or ""),
+        "skill_dir": str(payload.get("skill_dir") or ""),
         "inputs_json": {
             "app_slug": app_slug,
             "prd_text": prd_text,
@@ -2364,6 +2405,10 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             try:
+                # Shell proxy route: /api/shells/<run_id>/*
+                if path.startswith("/api/shells/"):
+                    self._proxy_to_shell(path, parsed.query, method="GET")
+                    return
                 if path == "/api/app-generation/runs":
                     self._send_json({"runs": list_app_generation_runs(config.runs_dir)})
                     return
@@ -2386,6 +2431,18 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
             parsed = urlparse(self.path)
+            path = unquote(parsed.path)
+            # Shell proxy route: /api/shells/<run_id>/*
+            if path.startswith("/api/shells/"):
+                try:
+                    self._proxy_to_shell(path, parsed.query, method="POST")
+                except FileNotFoundError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:  # noqa: BLE001 - dashboard should return a visible failure.
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
             parts = [part for part in parsed.path.split("/") if part]
             if len(parts) == 3 and parts[:2] == ["api", "app-generation"] and parts[2] == "runs":
                 try:
@@ -2823,6 +2880,56 @@ def create_dashboard_handler(config: DashboardConfig) -> type[BaseHTTPRequestHan
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _proxy_to_shell(self, path: str, query: str, method: str) -> None:
+            """Proxy requests to Shell server: /api/shells/<run_id>/* -> Shell server."""
+            parts = [p for p in path.split("/") if p]
+            if len(parts) < 3 or parts[:2] != ["api", "shells"]:
+                raise ValueError("Invalid shell proxy path")
+            
+            run_id = parts[2]
+            shell_path = "/" + "/".join(parts[3:]) if len(parts) > 3 else "/"
+            if query:
+                shell_path += f"?{query}"
+            
+            # Read Shell server port from preview record
+            run_dir = config.runs_dir / run_id
+            record_path = run_dir / "preview" / "preview_run_record.json"
+            if not record_path.exists():
+                raise FileNotFoundError(f"Shell preview not running for run: {run_id}")
+            
+            record = read_json(record_path)
+            port = int(record.get("port", 0))
+            if port <= 0:
+                raise ValueError(f"Invalid Shell port in preview record: {port}")
+            
+            # Forward request to Shell server
+            conn = HTTPConnection("127.0.0.1", port, timeout=30)
+            try:
+                headers = {}
+                if method == "POST":
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = self.rfile.read(length) if length > 0 else b""
+                    headers["Content-Length"] = str(len(body))
+                    headers["Content-Type"] = self.headers.get("Content-Type", "application/json")
+                    conn.request(method, shell_path, body=body, headers=headers)
+                else:
+                    conn.request(method, shell_path, headers=headers)
+                
+                response = conn.getresponse()
+                response_body = response.read()
+                
+                # Forward response
+                self.send_response(response.status)
+                for header, value in response.getheaders():
+                    if header.lower() not in ("connection", "transfer-encoding"):
+                        self.send_header(header, value)
+                self.end_headers()
+                self.wfile.write(response_body)
+            except (ConnectionRefusedError, TimeoutError) as exc:
+                raise ValueError(f"Shell server not responding: {exc}") from exc
+            finally:
+                conn.close()
 
         def _send_sse_stream(self, events: Iterable[dict[str, Any]]) -> None:
             """Send a server-sent events stream.
@@ -4625,3 +4732,46 @@ def _redact_text(value: str) -> str:
     text = re.sub(r"sk-[A-Za-z0-9_\-]+", "<redacted>", value)
     text = re.sub(r"(?<!process)\.env\b", "<env-file>", text)
     return text
+
+
+def _build_shell_preview(run_id: str, run_dir: Path) -> dict[str, Any]:
+    """Build Shell preview info if app.config.json indicates shell_kind=report_generator."""
+    app_config_path = run_dir / "app.config.json"
+    preview_record_path = run_dir / "preview" / "preview_run_record.json"
+    
+    if not app_config_path.exists():
+        return {"available": False, "reason": "no_app_config"}
+    
+    try:
+        app_config = read_json(app_config_path)
+        shell_kind = str(app_config.get("shell_kind", ""))
+        
+        if shell_kind != "report_generator":
+            return {"available": False, "reason": "not_report_generator", "shell_kind": shell_kind}
+        
+        if not preview_record_path.exists():
+            return {
+                "available": False,
+                "reason": "preview_not_started",
+                "shell_kind": shell_kind,
+                "message": "Run 'python -m growth_dev.cli app preview start --run-id " + run_id + "' to start Shell server",
+            }
+        
+        preview_record = read_json(preview_record_path)
+        port = int(preview_record.get("port", 0))
+        url = str(preview_record.get("url", ""))
+        
+        if port <= 0 or not url:
+            return {"available": False, "reason": "invalid_preview_record", "shell_kind": shell_kind}
+        
+        return {
+            "available": True,
+            "shell_kind": shell_kind,
+            "url": url,
+            "port": port,
+            "proxy_url": f"/api/shells/{run_id}",
+            "health_url": f"/api/shells/{run_id}/api/health",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "reason": "error", "error": str(exc)}
+

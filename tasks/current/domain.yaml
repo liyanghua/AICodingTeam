@@ -1,53 +1,100 @@
-domain_id: xhs_browser_benchmark
-title: XHS Browser Framework Benchmark
-summary: Compare five browser automation frameworks against the same XHS style collection task using manual login, low frequency execution, shared schemas, and explicit risk gates.
+domain_id: market_insight
+title: 市场分析洞察报告生成器
+summary: 基于 market_insight_skill 编译产物，把 8 项业务问题转换为 10 张结构化报告表、机会评分与链接规划。应用形态为本地报告生成器，不接真实电商 API，所有数据通过 CSV 上传与本地规则计算得到，结论强制绑定 Evidence。
+
+skill_artifact:
+  skill_id: market_insight_skill
+  build_dir: document-to-skill-engineering-package/build/market_insight_skill
+  workflow: workflow.dag.yaml
+  data_requirements: data_requirements.yaml
+  tool_bindings: tool_bindings.yaml
+  output_schemas_dir: output_schemas/
+  eval_rules: eval_rules.yaml
+  evidence_schema: evidence_schema.yaml
+
+method_doc: docs/business_doc_to_prd_method.md
+
+shell_kind: report_generator
+
 input_schema:
-  keyword: string
-  top_n: integer
-  candidate_pool: integer
-  max_comments_per_note: integer
-  mode: string
-  profile_dir: string
-  frameworks: list
+  scope_form:
+    category: string
+    product_line: string
+    shop_stage: enum[new_brand, growing, established]
+    goal: enum[validate_new_line, optimize_existing, expand_price_band]
+    period: string
+    target_price_band: string
+    target_audience: string
+    advantages: string
+  csv_uploads:
+    category_top_products_300: required
+    category_keywords_top300: required
+    competitor_reviews_qa: required
+    price_band_distribution: optional_or_computed
+    competitor_landscape: required
+    cross_platform_trend_signals: optional
+
 output_schema:
-  note_id: string
-  url: string
-  title: string
-  body: string
-  author: object
-  counts: object
-  media: list
-  comments: list
-  extraction_meta: object
-defaults:
-  keyword: 露营
-  top_n: 20
-  candidate_pool: 100
-  max_comments_per_note: 500
-  mode: headed_low_frequency
-  profile_dir: .local/browser-profiles/xhs
-frameworks:
-  - playwright-mcp
-  - stagehand
-  - skyvern
-  - hyperagent
-  - browser-use
-risk_rules:
-  - manual_login_only
-  - no_captcha_bypass
-  - no_fingerprint_spoofing
-  - no_proxy_rotation
-  - no_private_api_reverse_engineering
-  - pause_on_verification_challenge
+  tables:
+    - top_300_product_analysis_table
+    - category_market_analysis_table
+    - keyword_demand_breakdown_table
+    - keyword_root_top20_table
+    - review_qa_painpoint_table
+    - price_band_opportunity_table
+    - competitor_landscape_table
+    - competitor_visual_service_comparison_table
+    - cross_platform_trend_table
+    - product_development_listing_plan
+  derived:
+    - opportunity_scores
+    - listing_plan
+  conclusions:
+    top_300_product_analysis_table: 7
+    keyword_demand_breakdown_table: 8
+  evidence:
+    each_conclusion_must_bind_evidence_ids: true
+
+workflow_ref:
+  source: document-to-skill-engineering-package/build/market_insight_skill/workflow.dag.yaml
+  nodes:
+    - define_scope
+    - collect_top_products
+    - analyze_hot_product_genes
+    - collect_keywords
+    - collect_reviews_qa
+    - analyze_price_band
+    - analyze_competitors
+    - collect_cross_platform_trends
+    - score_opportunities
+    - generate_listing_plan
+
 evaluation_rules:
-  - schema_validity
-  - extraction_completeness
-  - stability_success_rate
-  - risk_event_count
-  - elapsed_time
-  - manual_intervention_count
-  - framework_availability
+  hard_requirements:
+    - required_outputs_present
+    - evidence_required_for_each_conclusion
+    - score_formula_required
+    - no_data_no_strong_claim
+  quality_metrics:
+    workflow_node_success_rate: 0.95
+    data_requirement_coverage: 0.9
+    evidence_completeness: 0.95
+    output_schema_validity: 1.0
+  rule_refs:
+    - strong_hot_gene
+    - trend_hot_gene
+    - differentiated_opportunity_gene
+    - opportunity_score
+
+risk_rules:
+  - no_real_ecommerce_api
+  - no_login_bypass
+  - no_fingerprint_spoofing
+  - llm_must_not_fabricate_metrics
+  - all_metrics_from_csv_or_rule_engine
+  - conclusion_without_evidence_is_blocked
+
 artifact_contract:
   primary_output: final_report.md
-  verifier_mode: xhs_mock_benchmark
-  result_schema: XhsNote
+  verifier_mode: market_insight_local
+  result_schema: MarketInsightReport

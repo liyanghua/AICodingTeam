@@ -2516,6 +2516,32 @@ h3 {
   flex-wrap: wrap;
 }
 
+.app-generation-shell-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.app-generation-shell-link {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  height: var(--component-button-height, 38px);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-action);
+  border-radius: var(--radius-control);
+  color: var(--color-action);
+  font-size: var(--font-size-body, 14px);
+  text-decoration: none;
+}
+
+.app-generation-shell-link:hover {
+  background: color-mix(in srgb, var(--color-action) 8%, var(--color-surface));
+  border-color: var(--color-action-hover);
+  color: var(--color-action-hover);
+}
+
 .app-generation-app-preview-toolbar {
   display: flex;
   gap: var(--space-2);

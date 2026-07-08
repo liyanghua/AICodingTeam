@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>APP-generation · Runway Timeline Prototype</title>
+    <style>
+      /*
+        Assumptions:
+        - This is a design prototype, not production Dashboard code.
+        - Direction C: Runway Timeline, mixed with Direction A's calm operating-console visual language.
+        - Primary audience: business/product users who need to understand progress, preview the generated app,
+          and ask the right-side Agent to repair the current app without understanding raw runtime nodes.
+      */
+      :root {
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --surface-soft: #f2f5f7;
+        --surface-quiet: #fafbfc;
+        --border: #dce2e7;
+        --border-strong: #c9d3dc;
+        --text: #1d252c;
+        --muted: #667684;
+        --action: #1f5d8c;
+        --action-dark: #17496e;
+        --processing: #2764ad;
+        --completed: #1f7a4d;
+        --attention: #b43b3b;
+        --waiting: #946200;
+        --shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+        --radius: 8px;
+        --radius-control: 6px;
+        --mono: SFMono-Regular, Consolas, Menlo, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        background: var(--bg);
+        font-family: var(--sans);
+        line-height: 1.45;
+      }
+
+      button, input, select, textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+      }
+
+      .app-shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .topbar {
+        display: grid;
+        grid-template-columns: minmax(320px, 1fr) auto;
+        gap: 18px;
+        align-items: center;
+        padding: 18px 22px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .eyebrow {
+        margin: 0 0 4px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      h1, h2, h3, h4, p {
+        margin-top: 0;
+      }
+
+      .topbar h1 {
+        margin-bottom: 3px;
+        font-size: 22px;
+        line-height: 1.25;
+      }
+
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .btn {
+        height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 14px;
+        border-radius: var(--radius-control);
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .btn.primary {
+        color: #fff;
+        background: var(--action);
+        border-color: var(--action);
+      }
+
+      .btn.primary:hover {
+        background: var(--action-dark);
+      }
+
+      .btn.ghost {
+        background: var(--surface-soft);
+      }
+
+      .btn:disabled {
+        cursor: not-allowed;
+        color: var(--muted);
+        background: var(--surface-soft);
+      }
+
+      .layout {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 268px minmax(620px, 1fr) 336px;
+        gap: 16px;
+        padding: 16px;
+      }
+
+      .panel {
+        min-width: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .side-panel,
+      .agent-panel {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+      }
+
+      .panel-head {
+        min-height: 58px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .panel-head h2,
+      .panel-head h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .run-list {
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+        overflow: auto;
+      }
+
+      .run-card {
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        cursor: pointer;
+      }
+
+      .run-card.active {
+        border-color: var(--action);
+        background: #f6fafc;
+      }
+
+      .run-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 6px;
+        font-weight: 650;
+        font-size: 13px;
+      }
+
+      .run-meta {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--surface-soft);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .status.running {
+        color: var(--processing);
+        background: #eef5ff;
+      }
+
+      .status.done,
+      .status.published {
+        color: var(--completed);
+        background: #edf8f2;
+      }
+
+      .status.blocked,
+      .status.failed {
+        color: var(--attention);
+        background: #fff1f1;
+      }
+
+      .status.waiting {
+        color: var(--waiting);
+        background: #fff7e5;
+      }
+
+      .main-stage {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        overflow: hidden;
+      }
+
+      .stage-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .scenario-switcher {
+        display: inline-flex;
+        padding: 3px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-control);
+        background: var(--surface-soft);
+      }
+
+      .scenario-switcher button {
+        height: 30px;
+        padding: 0 10px;
+        border-radius: 5px;
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .scenario-switcher button.active {
+        color: var(--text);
+        background: var(--surface);
+        box-shadow: 0 1px 4px rgba(29, 37, 44, 0.08);
+      }
+
+      .workbench {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 286px minmax(0, 1fr);
+        overflow: hidden;
+      }
+
+      .timeline {
+        padding: 16px;
+        border-right: 1px solid var(--border);
+        background: var(--surface-quiet);
+        overflow: auto;
+      }
+
+      .timeline-list {
+        position: relative;
+        display: grid;
+        gap: 8px;
+      }
+
+      .step-card {
+        position: relative;
+        display: grid;
+        grid-template-columns: 30px 1fr;
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid transparent;
+        border-radius: var(--radius);
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .step-card.active {
+        border-color: var(--action);
+        background: var(--surface);
+        box-shadow: 0 2px 10px rgba(29, 37, 44, 0.05);
+      }
+
+      .step-card:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        left: 24px;
+        top: 42px;
+        width: 1px;
+        height: calc(100% - 14px);
+        background: var(--border);
+      }
+
+      .step-index {
+        position: relative;
+        z-index: 1;
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border-radius: 999px;
+        color: var(--muted);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        font-size: 12px;
+        font-family: var(--mono);
+      }
+
+      .step-card.done .step-index {
+        color: #fff;
+        border-color: var(--completed);
+        background: var(--completed);
+      }
+
+      .step-card.running .step-index {
+        color: #fff;
+        border-color: var(--processing);
+        background: var(--processing);
+      }
+
+      .step-name {
+        margin: 0 0 4px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .step-desc {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .detail {
+        min-width: 0;
+        padding: 16px;
+        overflow: auto;
+      }
+
+      .detail-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: start;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .detail-hero h2 {
+        margin-bottom: 6px;
+        font-size: 20px;
+      }
+
+      .detail-summary {
+        margin: 0;
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .heartbeat {
+        margin-top: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--processing);
+        font-size: 12px;
+      }
+
+      .heartbeat::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--processing);
+        animation: pulse 1.4s ease-out infinite;
+      }
+
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(39, 100, 173, 0.35); }
+        100% { box-shadow: 0 0 0 10px rgba(39, 100, 173, 0); }
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .info-card {
+        min-width: 0;
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .info-card h3 {
+        margin-bottom: 10px;
+        font-size: 14px;
+      }
+
+      .info-list {
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+        list-style: none;
+      }
+
+      .info-list li {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 100px minmax(0, 1fr);
+        gap: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--surface-soft);
+        font-size: 13px;
+      }
+
+      .info-list li:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+
+      .label {
+        color: var(--muted);
+      }
+
+      .value {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .process-list {
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 9px;
+        list-style: none;
+      }
+
+      .process-item {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+      }
+
+      .process-dot {
+        width: 10px;
+        height: 10px;
+        margin-top: 5px;
+        border-radius: 999px;
+        background: var(--border-strong);
+      }
+
+      .process-item.done .process-dot {
+        background: var(--completed);
+      }
+
+      .process-item.running .process-dot {
+        background: var(--processing);
+      }
+
+      .process-title {
+        margin: 0 0 2px;
+        font-weight: 650;
+        font-size: 13px;
+      }
+
+      .process-meta {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .object-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .object-card {
+        min-width: 0;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface-quiet);
+      }
+
+      .object-card strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+
+      .object-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .evidence-bar {
+        margin-top: 12px;
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface-soft);
+      }
+
+      .evidence-bar code {
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+
+      .preview-frame {
+        min-height: 260px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: #eef2f5;
+      }
+
+      .browser-chrome {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .traffic {
+        display: inline-flex;
+        gap: 5px;
+      }
+
+      .traffic span {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--border-strong);
+      }
+
+      .url {
+        flex: 1;
+        padding: 6px 10px;
+        border-radius: 999px;
+        color: var(--muted);
+        background: var(--surface-soft);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      .preview-body {
+        padding: 18px;
+        background: linear-gradient(180deg, #f8fafb 0%, #eef2f5 100%);
+      }
+
+      .mini-app {
+        max-width: 520px;
+        margin: 0 auto;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .mini-app h3 {
+        margin-bottom: 10px;
+        font-size: 15px;
+      }
+
+      .mini-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: center;
+        padding: 9px 0;
+        border-top: 1px solid var(--surface-soft);
+        font-size: 12px;
+      }
+
+      .agent-body {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        overflow: hidden;
+      }
+
+      .agent-context {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-quiet);
+      }
+
+      .agent-context dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr);
+        gap: 6px 10px;
+        font-size: 12px;
+      }
+
+      .agent-context dt {
+        color: var(--muted);
+      }
+
+      .agent-context dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .agent-actions {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .action-card {
+        padding: 12px;
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius);
+        background: #fbfcfd;
+      }
+
+      .action-card h4 {
+        margin: 0 0 7px;
+        font-size: 13px;
+      }
+
+      .action-card p {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .action-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .agent-log {
+        min-height: 0;
+        padding: 14px 16px;
+        overflow: auto;
+        display: grid;
+        align-content: start;
+        gap: 10px;
+      }
+
+      .bubble {
+        max-width: 100%;
+        padding: 10px 12px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        background: var(--surface);
+        font-size: 13px;
+      }
+
+      .bubble.user {
+        margin-left: 24px;
+        background: #eef5ff;
+        border-color: #cfe2fb;
+      }
+
+      .bubble.system {
+        color: var(--muted);
+        background: var(--surface-soft);
+      }
+
+      .agent-compose {
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+      }
+
+      .agent-compose textarea {
+        width: 100%;
+        min-height: 76px;
+        resize: none;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-control);
+      }
+
+      .agent-compose .btn {
+        width: 100%;
+        margin-top: 8px;
+      }
+
+      .bottom-evidence {
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+        background: var(--surface-quiet);
+      }
+
+      .bottom-evidence summary {
+        cursor: pointer;
+        font-weight: 650;
+        font-size: 13px;
+      }
+
+      .evidence-grid {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .evidence-chip {
+        min-width: 0;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .evidence-chip code {
+        display: block;
+        margin-top: 5px;
+        overflow-wrap: anywhere;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      @media (max-width: 1200px) {
+        .layout {
+          grid-template-columns: 240px minmax(560px, 1fr);
+        }
+
+        .agent-panel {
+          grid-column: 1 / -1;
+          min-height: 360px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">APP-generation workbench prototype</p>
+          <h1>PRD 生成应用 · Runway Timeline</h1>
+          <p class="subtitle">把「上传 PRD → 生成可预览应用 → 右侧 Agent 修复」表达成一条业务可读的制作流水线。</p>
+        </div>
+        <div class="top-actions">
+          <button class="btn ghost">查看全部工程证据</button>
+          <button class="btn primary">新建任务</button>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="panel side-panel">
+          <div class="panel-head">
+            <h2>任务与对比组</h2>
+            <button class="btn primary" style="height:30px;padding:0 10px;">新建</button>
+          </div>
+          <div class="run-list">
+            <article class="run-card active">
+              <div class="run-title">
+                <span>dingdang-main-image</span>
+                <span class="status running">执行中</span>
+              </div>
+              <p class="run-meta">Codex · aicodemirror · 14:26</p>
+              <p class="run-meta">正在生成应用原型</p>
+            </article>
+            <article class="run-card">
+              <div class="run-title">
+                <span>market-shell-check</span>
+                <span class="status done">完成</span>
+              </div>
+              <p class="run-meta">Rule · report_generator · 12:08</p>
+              <p class="run-meta">已发布，可预览</p>
+            </article>
+            <article class="run-card">
+              <div class="run-title">
+                <span>todo-plain-check</span>
+                <span class="status done">完成</span>
+              </div>
+              <p class="run-meta">PRD-only · native SPA</p>
+              <p class="run-meta">普通应用生成回归样本</p>
+            </article>
+          </div>
+        </aside>
+
+        <section class="panel main-stage">
+          <div class="stage-toolbar">
+            <div>
+              <h2 style="margin:0;font-size:16px;">生成流程</h2>
+              <p class="meta" style="margin:3px 0 0;">当前 Run：dingdang-main-image · 业务流程主视图</p>
+            </div>
+            <div class="scenario-switcher" aria-label="prototype states">
+              <button class="active" data-scenario="new">新建任务</button>
+              <button data-scenario="running">生成中</button>
+              <button data-scenario="ready">待发布</button>
+              <button data-scenario="preview">预览修复</button>
+            </div>
+          </div>
+
+          <div class="workbench">
+            <aside class="timeline">
+              <div class="timeline-list" id="stepList"></div>
+            </aside>
+
+            <section class="detail" id="detail"></section>
+          </div>
+
+          <details class="bottom-evidence">
+            <summary>工程证据层 · 默认折叠，保留原始 runtime 可追溯性</summary>
+            <div class="evidence-grid">
+              <div class="evidence-chip">工程节点<code>implementation</code></div>
+              <div class="evidence-chip">执行过程<code>codex/coder_progress.jsonl</code></div>
+              <div class="evidence-chip">验证记录<code>codex/verification_record.json</code></div>
+              <div class="evidence-chip">变更证据<code>codex/diff.patch</code></div>
+            </div>
+          </details>
+        </section>
+
+        <aside class="panel agent-panel">
+          <div class="panel-head">
+            <h3>右侧 Agent</h3>
+            <span class="status running" id="agentStatus">聚焦当前步骤</span>
+          </div>
+
+          <div class="agent-body">
+            <section class="agent-context">
+              <dl>
+                <dt>焦点</dt>
+                <dd id="agentFocus">生成应用原型</dd>
+                <dt>意图</dt>
+                <dd id="agentIntent">解释 / 修复 / 重跑</dd>
+                <dt>边界</dt>
+                <dd>不重跑完整 PRD，复杂修复委托 Code Agent</dd>
+              </dl>
+            </section>
+
+            <section class="agent-actions">
+              <div class="action-card" id="agentAction">
+                <h4>建议动作：查看当前步骤</h4>
+                <p>Agent 会基于选中的 BusinessStep 解释输入、执行过程、输出和工程证据。</p>
+                <div class="action-row">
+                  <button class="btn ghost">查看证据</button>
+                  <button class="btn primary">询问这一步</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="agent-log" id="agentLog">
+              <div class="bubble user">生成单张图时报 gpt-image-1 not configured。只修当前已发布应用，不重跑完整 PRD。</div>
+              <div class="bubble">我会把它识别为当前预览应用的运行错误。若修复跨多处代码，我会生成 delegate_code_repair 动作，由 Code Agent 读取完整上下文并准备候选 diff。</div>
+              <div class="bubble system">action_request 将在用户确认后执行，并保留 app_repair 证据。</div>
+            </section>
+
+            <form class="agent-compose">
+              <textarea placeholder="问当前步骤、要求查看证据，或描述你在预览应用中遇到的问题。"></textarea>
+              <button type="button" class="btn primary">发送给 Agent</button>
+            </form>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const steps = [
+        ["prd_entry", "PRD 输入", "粘贴或上传 PRD，选择 executor / provider / model。"],
+        ["goal", "理解业务目标", "提炼用户目标、核心路径和验收口径。"],
+        ["spec", "编译业务规格", "生成 AppSpec、DataSpec、ToolSpec 和安全边界。"],
+        ["plan", "规划应用结构", "拆页面、接口、状态和测试路径。"],
+        ["prototype", "生成应用原型", "Code Agent 生成本地可运行应用。"],
+        ["verify", "验证业务能力", "运行 smoke、能力扫描和风险分类。"],
+        ["delivery", "输出可交付版本", "形成报告、预览说明和交付证据。"],
+        ["preview", "可预览应用", "发布快照、启动预览并支持增量修复。"],
+      ];
+
+      const scenarios = {
+        new: {
+          active: "prd_entry",
+          done: [],
+          running: "",
+          heroStatus: "等待输入",
+          title: "PRD 输入",
+          summary: "用户从这里发起一次新的应用生成。PRD 输入属于流程第一步，而不是藏在左侧工具栏。",
+          heartbeat: "",
+          input: [["PRD 文本", "等待用户粘贴"], ["生成配置", "Codex / aicodemirror / gpt-5.5"], ["App Slug", "系统根据标题建议，可手动改"]],
+          process: [["等待 PRD", "粘贴 PRD 或选择 .md 文件", "running"], ["创建 Run", "点击启动生成后才创建真实 run", ""], ["进入业务流程", "成功后自动选中新 run 并订阅进度", ""]],
+          output: [["新 Run", "尚未创建"], ["原始 PRD artifact", "启动后写入 input_prd.md"], ["下一步", "理解业务目标"]],
+          objects: [["PRD Draft", "用户输入的原始需求"], ["Generation Settings", "executor / provider / model"], ["Constraints", "补充生成约束"]],
+        },
+        running: {
+          active: "prototype",
+          done: ["prd_entry", "goal", "spec", "plan"],
+          running: "prototype",
+          heroStatus: "执行中",
+          title: "生成应用原型",
+          summary: "这是等待最久的步骤。页面用业务化进度解释 Code Agent 正在做什么，工程证据仍可展开查看。",
+          heartbeat: "Code Agent 仍在运行 · 18 秒前修改 public/app.js",
+          input: [["应用规格", "app_contract.json"], ["TDD 计划", "planning/tdd_plan.json"], ["上下文包", "context_pack.md"]],
+          process: [["准备上下文", "已读取 PRD、规格、能力边界", "done"], ["设计应用结构", "已确定 Node server + SPA + provider 配置", "done"], ["编写代码", "正在绑定主要按钮与状态流", "running"], ["运行验证", "等待 runtime_smoke.js", ""], ["产出候选版本", "完成后进入业务能力验证", ""]],
+          output: [["生成应用", "generated_apps/dingdang-main-image"], ["运行脚本", "server.js / runtime_smoke.js"], ["候选 diff", "codex/diff.patch"]],
+          objects: [["Server API", "GET /api/health + POST /api/images/generate"], ["Frontend Flow", "四阶段工作流与生成按钮"], ["Runtime Smoke", "首屏初始化验证"]],
+        },
+        ready: {
+          active: "preview",
+          done: ["prd_entry", "goal", "spec", "plan", "prototype", "verify", "delivery"],
+          running: "",
+          heroStatus: "待发布",
+          title: "可预览应用",
+          summary: "生成完成后，用户必须先发布应用快照，再启动预览。发布和预览是同一个终点步骤里的连续动作。",
+          heartbeat: "",
+          input: [["已生成应用", "worktree/generated_apps/dingdang-main-image"], ["验证记录", "codex/verification_record.json"], ["交付报告", "final_report.md"]],
+          process: [["发布快照", "把 worktree 快照复制到 runs/<id>/generated_apps", "running"], ["启动预览", "发布后可启动独立本地进程", ""], ["健康检查", "读取 /api/health 和 preview logs", ""], ["嵌入浏览器", "在右侧预览栏打开 iframe", ""]],
+          output: [["Preview URL", "发布后生成"], ["端口", "用户可指定"], ["日志", "preview logs"]],
+          objects: [["Publish Snapshot", "当前可发布版本"], ["Preview Runner", "独立本地进程"], ["Repair Target", "当前已发布应用"]],
+        },
+        preview: {
+          active: "preview",
+          done: ["prd_entry", "goal", "spec", "plan", "prototype", "verify", "delivery", "preview"],
+          running: "",
+          heroStatus: "已发布 · 运行中",
+          title: "可预览应用",
+          summary: "用户正在真实试用生成应用。右侧 Agent 聚焦预览问题，把反馈转换成 patch_app 或 delegate_code_repair。",
+          heartbeat: "",
+          input: [["发布快照", "runs/<id>/generated_apps/dingdang-main-image"], ["Provider 状态", "OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2"], ["用户反馈", "gpt-image-1 not configured"]],
+          process: [["运行预览", "http://127.0.0.1:8799", "done"], ["发现问题", "单张生图模型配置错误", "done"], ["准备修复", "委托 Code Agent 生成候选 diff", "running"], ["验证修复", "node --check + /api/health", ""]],
+          output: [["Preview URL", "http://127.0.0.1:8799"], ["修复动作", "delegate_code_repair"], ["回滚点", "保留旧发布快照"]],
+          objects: [["Running App", "用户可试用应用"], ["Repair Request", "只修当前应用，不重跑 PRD"], ["Candidate Diff", "等待用户确认"]],
+        },
+      };
+
+      let scenarioKey = "running";
+      let selectedStep = "prototype";
+
+      function statusFor(stepId, data) {
+        if (data.running === stepId) return "running";
+        if (data.done.includes(stepId)) return "done";
+        if (data.active === stepId && data.heroStatus.includes("等待")) return "waiting";
+        return "waiting";
+      }
+
+      function renderSteps() {
+        const data = scenarios[scenarioKey];
+        const list = document.getElementById("stepList");
+        list.innerHTML = "";
+        steps.forEach((step, index) => {
+          const [id, name, desc] = step;
+          const status = statusFor(id, data);
+          const card = document.createElement("button");
+          card.className = `step-card ${status} ${selectedStep === id ? "active" : ""}`;
+          card.innerHTML = `
+            <span class="step-index">${String(index + 1).padStart(2, "0")}</span>
+            <span>
+              <p class="step-name">${name}</p>
+              <p class="step-desc">${desc}</p>
+            </span>
+          `;
+          card.addEventListener("click", () => {
+            selectedStep = id;
+            render();
+          });
+          list.appendChild(card);
+        });
+      }
+
+      function renderDetail() {
+        const data = scenarios[scenarioKey];
+        const isPreview = data.active === "preview" || selectedStep === "preview";
+        const detail = document.getElementById("detail");
+        detail.innerHTML = `
+          <section class="detail-hero">
+            <div>
+              <p class="eyebrow">当前 BusinessStep</p>
+              <h2>${data.title}</h2>
+              <p class="detail-summary">${data.summary}</p>
+              ${data.heartbeat ? `<div class="heartbeat">${data.heartbeat}</div>` : ""}
+            </div>
+            <span class="status ${data.heroStatus.includes("执行") ? "running" : data.heroStatus.includes("已发布") ? "published" : data.heroStatus.includes("待") ? "waiting" : ""}">${data.heroStatus}</span>
+          </section>
+
+          <section class="detail-grid">
+            ${infoCard("输入", data.input)}
+            ${processCard(data.process)}
+            ${infoCard("输出", data.output)}
+            ${actionCard(isPreview)}
+          </section>
+
+          <section class="info-card" style="margin-top:12px;">
+            <h3>当前步骤对象</h3>
+            <div class="object-strip">
+              ${data.objects.map(item => `<div class="object-card"><strong>${item[0]}</strong><p>${item[1]}</p></div>`).join("")}
+            </div>
+          </section>
+
+          ${isPreview ? previewFrame() : evidenceBar()}
+        `;
+      }
+
+      function infoCard(title, rows) {
+        return `
+          <article class="info-card">
+            <h3>${title}</h3>
+            <ul class="info-list">
+              ${rows.map(row => `<li><span class="label">${row[0]}</span><span class="value">${row[1]}</span></li>`).join("")}
+            </ul>
+          </article>
+        `;
+      }
+
+      function processCard(items) {
+        return `
+          <article class="info-card">
+            <h3>执行过程</h3>
+            <ul class="process-list">
+              ${items.map(item => `
+                <li class="process-item ${item[2] || ""}">
+                  <span class="process-dot"></span>
+                  <span>
+                    <p class="process-title">${item[0]}</p>
+                    <p class="process-meta">${item[1]}</p>
+                  </span>
+                </li>
+              `).join("")}
+            </ul>
+          </article>
+        `;
+      }
+
+      function actionCard(isPreview) {
+        return `
+          <article class="info-card">
+            <h3>你可以让 Agent 做什么</h3>
+            <div class="action-row">
+              <button class="btn ghost">解释这一步</button>
+              <button class="btn ghost">查看输入输出</button>
+              <button class="btn ghost">查看工程证据</button>
+              <button class="btn primary">${isPreview ? "修复预览问题" : "从此步骤重跑"}</button>
+            </div>
+          </article>
+        `;
+      }
+
+      function evidenceBar() {
+        return `
+          <div class="evidence-bar">
+            <span>工程证据：<code>implementation · codex/coder_progress.jsonl · diff.patch</code></span>
+            <button class="btn ghost">展开证据层</button>
+          </div>
+        `;
+      }
+
+      function previewFrame() {
+        return `
+          <section class="preview-frame" style="margin-top:12px;">
+            <div class="browser-chrome">
+              <span class="traffic"><span></span><span></span><span></span></span>
+              <span class="url">http://127.0.0.1:8799 · published snapshot</span>
+              <button class="btn ghost" style="height:28px;">外部打开</button>
+            </div>
+            <div class="preview-body">
+              <div class="mini-app">
+                <h3>叮当主图生成 Agent</h3>
+                <div class="mini-row"><span>Provider</span><span class="status published">openrouter</span></div>
+                <div class="mini-row"><span>Model</span><span class="status failed">gpt-image-1 not configured</span></div>
+                <div class="mini-row"><span>Expected</span><span class="status running">openai/gpt-5.4-image-2</span></div>
+                <div class="mini-row"><span>Action</span><button class="btn primary" style="height:30px;">生成单张图</button></div>
+              </div>
+            </div>
+          </section>
+        `;
+      }
+
+      function renderAgent() {
+        const data = scenarios[scenarioKey];
+        document.getElementById("agentFocus").textContent = data.title;
+        const action = document.getElementById("agentAction");
+        if (scenarioKey === "preview") {
+          action.innerHTML = `
+            <h4>建议动作：delegate_code_repair</h4>
+            <p>只修当前已发布应用，让 Code Agent 读取完整 server.js / public/app.js 上下文，生成候选 diff；不重跑完整 PRD。</p>
+            <div class="action-row">
+              <button class="btn ghost">查看候选 diff</button>
+              <button class="btn primary">确认修复</button>
+            </div>
+          `;
+          document.getElementById("agentStatus").textContent = "发现预览问题";
+          document.getElementById("agentStatus").className = "status failed";
+        } else if (scenarioKey === "running") {
+          action.innerHTML = `
+            <h4>建议动作：查看 Code Agent 进度</h4>
+            <p>当前不建议打断。可以查看最近事件、stdout 摘要和正在修改的文件。</p>
+            <div class="action-row">
+              <button class="btn ghost">查看进度</button>
+              <button class="btn primary">询问当前状态</button>
+            </div>
+          `;
+          document.getElementById("agentStatus").textContent = "执行中";
+          document.getElementById("agentStatus").className = "status running";
+        } else {
+          action.innerHTML = `
+            <h4>建议动作：解释当前步骤</h4>
+            <p>Agent 会解释这一步的输入、执行过程、输出和可操作项。</p>
+            <div class="action-row">
+              <button class="btn ghost">查看证据</button>
+              <button class="btn primary">询问这一步</button>
+            </div>
+          `;
+          document.getElementById("agentStatus").textContent = "聚焦当前步骤";
+          document.getElementById("agentStatus").className = "status running";
+        }
+      }
+
+      function render() {
+        renderSteps();
+        renderDetail();
+        renderAgent();
+      }
+
+      document.querySelectorAll(".scenario-switcher button").forEach(button => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".scenario-switcher button").forEach(item => item.classList.remove("active"));
+          button.classList.add("active");
+          scenarioKey = button.dataset.scenario;
+          selectedStep = scenarios[scenarioKey].active;
+          render();
+        });
+      });
+
+      render();
+    </script>
+  </body>
+</html>

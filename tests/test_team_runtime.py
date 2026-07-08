@@ -20,6 +20,12 @@ def _load_specs(temp_dir: Path) -> tuple[Any, Any]:
     return _load_with_model(TeamSpec, team_path), _load_with_model(DomainSpec, domain_path)
 
 
+def _market_skill_fixture() -> str:
+    primary = Path("document-to-skill-engineering-package/build/market_insight_skill")
+    fallback = Path("document-to-skill-engineering-package/build/market_insight_skill_cli_acceptance")
+    return str(primary if primary.exists() else fallback)
+
+
 def _new_runtime(team_spec: Any, domain_spec: Any, runs_dir: Path) -> Any:
     from growth_dev.team.runtime import TeamRuntime
 
@@ -504,6 +510,45 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertEqual(tdd_plan["status"], "passed")
         self.assertTrue(all(case["scenario_id"] for case in tdd_plan["test_cases"]))
         self.assertIn("keyword collection entry or run-keyword command wiring is missing", json.dumps(tdd_plan, ensure_ascii=False))
+
+    def test_app_generation_four_source_acceptance_survives_complex_task_planning(self) -> None:
+        from growth_dev.team.app_generation import validate_app_acceptance
+        from growth_dev.team.complex_task import generate_complex_task_artifacts
+        from growth_dev.team.domain import load_domain_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "run"
+            result = generate_complex_task_artifacts(
+                run_id="market-run",
+                run_dir=run_dir,
+                brief="根据 PRD 生成本地应用：market-insight-report-app",
+                domain=load_domain_spec("app_generation", domains_dir=Path("domains")),
+                inputs={
+                    "app_slug": "market-insight-report-app",
+                    "prd_text": "# 市场分析洞察报告生成器\n\ncustomizations 清单：\n- 位置：aggregate 报告顶部\n- 行为：展示本次分析范围摘要\n- 验收：用户能看到类目与价格带",
+                    "task_yaml_path": "tasks/current/task.yaml",
+                    "domain_yaml_path": "tasks/current/domain.yaml",
+                    "skill_dir": _market_skill_fixture(),
+                    "shell_kind": "report_generator",
+                },
+            )
+
+            acceptance_md = (run_dir / "acceptance_criteria.md").read_text(encoding="utf-8")
+            coverage = json.loads((run_dir / "planning" / "acceptance_coverage_matrix.json").read_text(encoding="utf-8"))
+            quality = json.loads((run_dir / "requirements" / "requirement_quality_report.json").read_text(encoding="utf-8"))
+            acceptance_errors = validate_app_acceptance(run_dir)
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(acceptance_errors, [])
+        self.assertIn("AC-CUSTOM-001", acceptance_md)
+        self.assertIn("AC-RULE-required_outputs_present", acceptance_md)
+        self.assertIn("AC-SAFETY-database", acceptance_md)
+        self.assertIn("AC-NODE-define_scope", acceptance_md)
+        self.assertNotIn("`AC-001`", acceptance_md)
+        coverage_ids = {item["id"] for item in coverage["acceptance_criteria"]}
+        self.assertIn("AC-NODE-generate_listing_plan", coverage_ids)
+        self.assertEqual(quality["status"], "passed")
 
     def test_requirements_model_provider_generates_candidate_without_raw_prompt_artifact(self) -> None:
         from growth_dev.team.models import DomainSpec

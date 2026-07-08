@@ -1,0 +1,139 @@
+schema_version: strategy-kb-collection-v1
+id: marketing-insight-meta-strategy
+title: 市场分析洞察元策略
+description: 淘天电商市场判断、选品判断、产品开发、链接规划、竞品定位、价格带布局和视觉策划的方法论集合。
+domain: ecommerce-market-insight
+entrypoint: main
+root: docs/biz_spec/marketing_insight
+default_slug: marketing-insight-kb-v1
+schema_path: docs/biz_spec/元策略规范.md
+tags:
+  - market-insight
+  - ecommerce
+  - product-selection
+  - strategy-kb
+
+documents:
+  - id: main
+    path: 20260519市场分析洞察元策略.md
+    title: 20260519市场分析洞察元策略
+    role: parent_strategy
+    topics: [market-insight, product-selection, ecommerce, strategy]
+
+  - id: seven-conclusions-flow
+    path: 7个结论的判断详细流程.md
+    title: 7个结论的判断详细流程
+    role: procedure_detail
+    topics: [industry-analysis, conclusion-template, judgement-standard]
+
+  - id: bestseller-gene
+    path: 爆款基因提炼.md
+    title: 爆款基因提炼
+    role: method_detail
+    topics: [bestseller-gene, product-opportunity, feature-analysis]
+
+  - id: keyword-eight-conclusions
+    path: 关键词分析后的 8 个必输出结论与判断标准.md
+    title: 关键词分析后的 8 个必输出结论与判断标准
+    role: judgement_standard
+    topics: [keyword-analysis, demand-analysis, judgement-standard]
+
+  - id: keyword-root-clustering-prompt
+    path: 关键词词根8大需求聚类提示词.md
+    title: 关键词词根8大需求聚类提示词
+    role: prompt_template
+    topics: [keyword-root, demand-clustering, prompt-template]
+
+  - id: review-qa-feedback-standard
+    path: 完整评价 _ 问大家反馈判断标准.md
+    title: 完整评价 / 问大家反馈判断标准
+    role: judgement_standard
+    topics: [review-analysis, customer-feedback, pain-point]
+
+  - id: price-band-standard
+    path: 价格带市场结构判断标准.md
+    title: 价格带市场结构判断标准
+    role: judgement_standard
+    topics: [price-band, market-structure, profit-space]
+
+  - id: competitor-signal-standard
+    path: 竞品现象判断标准.md
+    title: 竞品现象判断标准
+    role: judgement_standard
+    topics: [competitor-analysis, competition, opportunity]
+
+  - id: cross-platform-trend-standard
+    path: 跨平台趋势机会判断标准.md
+    title: 跨平台趋势机会判断标准
+    role: judgement_standard
+    topics: [cross-platform-trend, xiaohongshu, douyin, opportunity]
+
+  - id: opportunity-actionability-standard
+    path: 机会判断可落地判断标准.md
+    title: 机会判断可落地判断标准
+    role: judgement_standard
+    topics: [opportunity-evaluation, actionability, product-innovation]
+
+relations:
+  - from: main
+    to: seven-conclusions-flow
+    type: procedure_detail
+    anchor: 流程2.5 分析结论模板
+    external_url: https://alidocs.dingtalk.com/i/nodes/7dx2rn0JbY0apqaXt2Ll61aBVMGjLRb3
+    supports_fields: [执行步骤, 判断依据/指标, 判断标准, 决策顺序, 建议动作]
+
+  - from: main
+    to: bestseller-gene
+    type: method_detail
+    anchor: 流程3 爆款基因提炼
+    external_url: https://alidocs.dingtalk.com/i/nodes/4lgGw3P8vRqw1ow9spd3PXqr85daZ90D
+    supports_fields: [核心变量, 判断依据/指标, 判断标准, 因果关系, 建议动作]
+
+  - from: main
+    to: keyword-eight-conclusions
+    type: judgement_standard
+    anchor: 流程4 关键词需求分析
+    external_url: https://alidocs.dingtalk.com/i/nodes/G53mjyd80pBgkdgZigdyd27E86zbX04v
+    supports_fields: [问题分类, 核心变量, 判断指标, 判断标准, 建议动作]
+
+  - from: main
+    to: keyword-root-clustering-prompt
+    type: prompt_template
+    anchor: 流程4.4 八大需求分类
+    external_url: https://alidocs.dingtalk.com/i/nodes/7dx2rn0JbY0apqaXt25ra305VMGjLRb3
+    supports_fields: [问题分类, 核心变量, 执行步骤, 工具表单模板]
+
+  - from: main
+    to: review-qa-feedback-standard
+    type: judgement_standard
+    anchor: 流程5 评价与问大家痛点分析
+    external_url: https://alidocs.dingtalk.com/i/nodes/OG9lyrgJPzvLo2LRczByBX43WzN67Mw4
+    supports_fields: [判断依据/指标, 判断标准, 问题解决方法/执行动作, 验证方式, 建议动作]
+
+  - from: main
+    to: price-band-standard
+    type: judgement_standard
+    anchor: 流程6 价格带与利润空间分析
+    external_url: https://alidocs.dingtalk.com/i/nodes/np9zOoBVBYByodygtLGvAy6BW1DK0g6l
+    supports_fields: [判断指标, 判断标准, 执行条件, 例外情况, 建议动作]
+
+  - from: main
+    to: competitor-signal-standard
+    type: judgement_standard
+    anchor: 流程7 竞品与竞店格局分析
+    external_url: https://alidocs.dingtalk.com/i/nodes/7QG4Yx2JpLAO1oOycgYvqyePJ9dEq3XD
+    supports_fields: [问题分类, 判断依据/指标, 判断标准, 问题解决方法/执行动作, 建议动作]
+
+  - from: main
+    to: cross-platform-trend-standard
+    type: judgement_standard
+    anchor: 流程8 跨平台趋势机会分析
+    external_url: https://alidocs.dingtalk.com/i/nodes/0eMKjyp813BMXdMai4dpp6jEVxAZB1Gv
+    supports_fields: [场景, 判断指标, 判断标准, 验证方式, 建议动作]
+
+  - from: main
+    to: opportunity-actionability-standard
+    type: judgement_standard
+    anchor: 流程9 机会判断与产品创新设计
+    external_url: https://alidocs.dingtalk.com/i/nodes/DnRL6jAJMGBNokNmsXDajXmDWyMoPYe1
+    supports_fields: [目标, 因果关系, 决策顺序, 执行条件, 验证方式, 建议动作]

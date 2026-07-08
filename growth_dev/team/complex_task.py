@@ -1060,6 +1060,10 @@ def _acceptance_criteria(
     app_generation_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if app_generation_context:
+        contract = app_generation_context.get("app_contract") if isinstance(app_generation_context.get("app_contract"), dict) else {}
+        derived = contract.get("acceptance_criteria") if isinstance(contract.get("acceptance_criteria"), list) else []
+        if derived:
+            return [item for item in derived if isinstance(item, dict)]
         return app_generation_acceptance_criteria(app_generation_context)
     candidate_criteria = _promotable_candidate_acceptance(candidate)
     if candidate_criteria:
@@ -1429,7 +1433,7 @@ def _requirement_quality_report(
     if analysis.get("blocking_questions"):
         blockers.append("blocking_questions_present")
     for item in acceptance:
-        if not re.fullmatch(r"AC-\d{3}", str(item.get("id", ""))):
+        if not _is_stable_acceptance_id(str(item.get("id", ""))):
             blockers.append(f"invalid_acceptance_id:{item.get('id')}")
         if not item.get("observable") or not item.get("testable"):
             blockers.append(f"untestable_acceptance:{item.get('id')}")
@@ -1488,6 +1492,15 @@ def _requirement_quality_report(
             {"id": "red_team_risks_addressed", "status": red_team_status},
         ],
     }
+
+
+def _is_stable_acceptance_id(value: str) -> bool:
+    return bool(
+        re.fullmatch(
+            r"AC-(?:\d{3}|CUSTOM-\d{3}|RULE-[A-Za-z0-9_.-]+|SAFETY-[A-Za-z0-9_.-]+|NODE-[A-Za-z0-9_.-]+)",
+            value,
+        )
+    )
 
 
 def _candidate_check_status(candidate_source: str, validation_status: str, blockers: list[str], blocker_id: str) -> str:

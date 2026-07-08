@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>App Generation 三条编译链路</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main { max-width: 1320px; margin: 0 auto; padding: 32px 24px 48px; }
+    header { margin-bottom: 20px; }
+    h1 { margin: 0 0 8px; font-size: 28px; line-height: 1.22; font-weight: 780; }
+    h2 { margin: 0 0 14px; font-size: 16px; line-height: 1.25; font-weight: 760; }
+    h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.25; font-weight: 760; }
+    p { margin: 0; color: var(--muted); }
+
+    .lead { max-width: 1040px; color: var(--text); font-size: 15px; }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .diagram-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    svg { display: block; width: 100%; min-width: 1300px; height: auto; }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+    }
+
+    .note.warn { border-left-color: var(--amber); background: #f6efe3; color: #4a3a10; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      min-height: 210px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .card.blue { background: #eef4f8; border-color: #9bb8cb; }
+    .card.green { background: #eaf4ee; border-color: #9fc7b1; }
+    .card.amber { background: #f6efe3; border-color: #d5bd87; }
+    .card.spine { background: #eef1f4; border-color: #7c8b99; }
+
+    .card ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); }
+    .card li { margin: 6px 0; }
+
+    .signal-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .signal {
+      padding: 14px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .signal strong { display: block; margin-bottom: 4px; font-size: 14px; }
+    .signal span { color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 980px) {
+      main { padding: 24px 16px 36px; }
+      .grid { grid-template-columns: 1fr; }
+      .signal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .signal-grid { grid-template-columns: 1fr; }
+      .section { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>App Generation 三条编译链路</h1>
+      <p class="lead">
+        这张图把系统拆成三条可独立建设、又必须通过接口闭合的链路：业务文档编译链路、运行时/节点执行流编译链路、前端 UI 与 Agent 交互链路。三条线并不是三套系统——它们共享同一份<strong>节点契约层</strong>（single source of truth）：文档给出业务真相，节点流给出执行结构，工作台给出可理解、可介入、可修复的操作现场。
+      </p>
+    </header>
+
+    <section class="section" aria-labelledby="diagram-title">
+      <h2 id="diagram-title">总览图：三条编译链路如何协同</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1320 810" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">App Generation 三条编译链路总览</title>
+          <desc id="svg-desc">业务文档编译链路负责解析、索引、查询并产出业务运行资产；运行时/节点执行流编译链路分编译子段与执行子段，编译子段定义节点类型与契约、执行子段负责状态机与人工介入声明；前端 UI 交互链路负责三栏工作台、按契约渲染组件、人工介入实现。三条线共享同一份节点契约层作为单一真相。</desc>
+          <defs>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <marker id="arrow-slate" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#5f6f7d"></path>
+            </marker>
+            <style>
+              .canvas { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .lane { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .lane-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .lane-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .lane-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.2; }
+              .box-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .box-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .box-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .spine { fill: #e9eef3; stroke: #5f6f7d; stroke-width: 1.8; }
+              .divider { stroke: #c9d3dc; stroke-width: 1; }
+              .subdiv { stroke: #9fc7b1; stroke-width: 1; stroke-dasharray: 5 4; }
+              .title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .lane-title { fill: #1d252c; font: 800 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .sub-title { fill: #3a4a55; font: 800 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.4px; }
+              .label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .tiny { fill: #667684; font: 11px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .mono { fill: #314455; font: 12px SFMono-Regular, Consolas, monospace; }
+              .tag { fill: #946200; font: 700 11px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.8px; }
+              .tag-slate { fill: #3a4a55; font: 800 11px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 1px; }
+              .arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow-blue); }
+              .arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#arrow-green); }
+              .arrow-amber { stroke: #946200; stroke-width: 2; fill: none; marker-end: url(#arrow-amber); stroke-dasharray: 6 4; }
+              .arrow-slate { stroke: #5f6f7d; stroke-width: 2; fill: none; marker-end: url(#arrow-slate); stroke-dasharray: 5 4; }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1272" height="762" rx="12" class="canvas"></rect>
+          <text x="48" y="56" class="title">三条链路围绕同一份「节点契约」协同：文档给业务真相，节点流给执行结构，工作台给可介入的操作现场；契约一旦漂移，三条线会同时崩。</text>
+
+          <!-- Lane 1 业务文档编译链路 -->
+          <rect x="48" y="76" width="900" height="150" rx="8" class="lane lane-blue"></rect>
+          <text x="72" y="106" class="lane-title">1. 业务文档编译链路</text>
+          <text x="72" y="126" class="small">把业务策略文档、行业资料、企业数据说明和私有知识，编译成可查询、可引用、可验证的业务运行资产。</text>
+
+          <rect x="72" y="150" width="148" height="60" rx="8" class="box"></rect>
+          <text x="88" y="176" class="label">业务资料集合</text>
+          <text x="88" y="196" class="small">策略 / 数据 / 模型</text>
+
+          <rect x="244" y="150" width="148" height="60" rx="8" class="box"></rect>
+          <text x="260" y="176" class="label">解析与清洗</text>
+          <text x="260" y="196" class="small">结构化段落 / 术语</text>
+
+          <rect x="416" y="150" width="148" height="60" rx="8" class="box"></rect>
+          <text x="432" y="176" class="label">索引与查询</text>
+          <text x="432" y="196" class="small">wiki 化 / 证据引用</text>
+
+          <rect x="612" y="146" width="312" height="72" rx="8" class="box-blue"></rect>
+          <text x="632" y="170" class="label">输出：业务运行资产</text>
+          <text x="632" y="190" class="mono">PRD++ / ScenarioSpec / DataSpec</text>
+          <text x="632" y="208" class="mono">KnowledgeSpec / ToolSpec / EvalSpec / EvidenceSpec</text>
+
+          <path d="M220 180 H244" class="arrow-blue"></path>
+          <path d="M392 180 H416" class="arrow-blue"></path>
+          <path d="M564 180 H612" class="arrow-blue"></path>
+
+          <!-- Lane 2 运行时/节点执行流编译链路 -->
+          <rect x="48" y="258" width="900" height="252" rx="8" class="lane lane-green"></rect>
+          <text x="72" y="288" class="lane-title">2. 运行时 / 节点执行流编译链路</text>
+          <text x="72" y="308" class="small">把业务运行资产编译成可执行的图。分两个生命周期：编译子段定义静态结构，执行子段负责运行实例。</text>
+
+          <line x1="72" y1="418" x2="924" y2="418" class="subdiv"></line>
+          <text x="72" y="334" class="sub-title">编译子段 · 定义结构（静态）</text>
+          <text x="612" y="334" class="sub-title">执行子段 · 运行实例（动态）</text>
+
+          <rect x="72" y="344" width="160" height="58" rx="8" class="box"></rect>
+          <text x="88" y="368" class="label">节点类型系统</text>
+          <text x="88" y="388" class="small">引用共享契约 →</text>
+
+          <rect x="248" y="344" width="160" height="58" rx="8" class="box"></rect>
+          <text x="264" y="368" class="label">I/O 与中间产物</text>
+          <text x="264" y="388" class="small">input / output / artifact</text>
+
+          <rect x="424" y="344" width="160" height="58" rx="8" class="box"></rect>
+          <text x="440" y="368" class="label">依赖关系 · DAG</text>
+          <text x="440" y="388" class="small">deps / 拓扑顺序</text>
+
+          <rect x="72" y="434" width="180" height="60" rx="8" class="box"></rect>
+          <text x="88" y="459" class="label">状态机 · 门禁</text>
+          <text x="88" y="479" class="small">running / blocked / gate</text>
+
+          <rect x="268" y="434" width="196" height="60" rx="8" class="box"></rect>
+          <text x="284" y="459" class="label">人工介入点 · 声明</text>
+          <text x="284" y="479" class="small">HumanGate：哪里 / 何时 / 条件</text>
+
+          <rect x="484" y="432" width="440" height="64" rx="8" class="box-green"></rect>
+          <text x="504" y="456" class="label">输出：Graph Execution Plan</text>
+          <text x="504" y="476" class="mono">BusinessStep[] / NodeSpec[] / ArtifactContract</text>
+          <text x="504" y="492" class="mono">RunState / HumanGate / VerificationGate（含运行证据·单一落点）</text>
+
+          <path d="M232 373 H248" class="arrow-green"></path>
+          <path d="M408 373 H424" class="arrow-green"></path>
+          <path d="M150 402 V434" class="arrow-green"></path>
+          <path d="M252 464 H268" class="arrow-green"></path>
+          <path d="M464 464 H484" class="arrow-green"></path>
+
+          <!-- Lane 3 前端 UI 交互链路 -->
+          <rect x="48" y="542" width="900" height="176" rx="8" class="lane lane-amber"></rect>
+          <text x="72" y="572" class="lane-title">3. 前端 UI 交互链路</text>
+          <text x="72" y="592" class="small">把运行图和中间产物投影成可理解的工作台：三栏布局、按契约渲染组件、右侧 Agent 与中间产物的人机协同。</text>
+
+          <rect x="72" y="616" width="150" height="66" rx="8" class="box"></rect>
+          <text x="88" y="642" class="label">三栏工作台</text>
+          <text x="88" y="662" class="small">任务 / 工作区 / Agent</text>
+
+          <rect x="244" y="616" width="176" height="66" rx="8" class="box"></rect>
+          <text x="260" y="642" class="label">渲染组件 · 按契约匹配</text>
+          <text x="260" y="662" class="small">不自列类型，读共享契约</text>
+
+          <rect x="442" y="616" width="176" height="66" rx="8" class="box"></rect>
+          <text x="458" y="642" class="label">介入实现 · 时机与交互</text>
+          <text x="458" y="662" class="small">解释 / 编辑 / 重跑 / 修复</text>
+
+          <rect x="640" y="600" width="284" height="86" rx="8" class="box-amber"></rect>
+          <text x="660" y="624" class="label">输出：可交互生成工作台</text>
+          <text x="660" y="645" class="mono">Runway Timeline / RendererRegistry</text>
+          <text x="660" y="664" class="mono">CanvasSelectionContext</text>
+          <text x="660" y="682" class="mono">AgentAction / repair / rerun request</text>
+
+          <path d="M222 649 H244" class="arrow-amber"></path>
+          <path d="M420 649 H442" class="arrow-amber"></path>
+          <path d="M618 649 H640" class="arrow-amber"></path>
+
+          <!-- 跨 lane 主数据流 -->
+          <path d="M768 218 V344" class="arrow-green"></path>
+          <text x="774" y="300" class="tiny">业务资产 → 编译输入</text>
+          <path d="M700 496 V616" class="arrow-amber"></path>
+          <text x="706" y="560" class="tiny">运行图 → 工作台</text>
+
+          <!-- 共享节点契约层（横切脊柱） -->
+          <rect x="975" y="146" width="310" height="540" rx="10" class="spine"></rect>
+          <text x="995" y="176" class="lane-title">共享节点契约层</text>
+          <text x="995" y="198" class="mono">NodeSpec / NodeContext</text>
+          <text x="995" y="220" class="tag-slate">SINGLE SOURCE OF TRUTH</text>
+          <line x1="991" y1="234" x2="1269" y2="234" class="divider"></line>
+
+          <text x="995" y="260" class="label">节点类型（唯一定义）</text>
+          <text x="995" y="280" class="small">text · image · calc</text>
+          <text x="995" y="298" class="small">form · preview · evidence</text>
+
+          <text x="995" y="330" class="label">契约字段</text>
+          <text x="995" y="350" class="small">input · output · artifact</text>
+          <text x="995" y="368" class="small">deps · risk · human_gate · verify</text>
+          <line x1="991" y1="388" x2="1269" y2="388" class="divider"></line>
+
+          <text x="995" y="414" class="small">← Lane2 编译子段：定义类型与契约</text>
+          <text x="995" y="438" class="small">← Lane1：供给业务字段 schema</text>
+          <text x="995" y="462" class="small">→ Lane3：按类型消费、驱动渲染</text>
+          <text x="995" y="486" class="small">→ Lane2 执行子段：契约约束实例</text>
+          <text x="995" y="524" class="tag">契约漂移 = 三条线同时崩</text>
+
+          <!-- 三条线与脊柱的短连线 -->
+          <path d="M924 180 H975" class="arrow-slate"></path>
+          <text x="928" y="172" class="tiny">供给 schema</text>
+          <path d="M924 464 H975" class="arrow-green"></path>
+          <text x="928" y="456" class="tiny">定义契约</text>
+          <path d="M975 640 H924" class="arrow-amber"></path>
+          <text x="880" y="632" class="tiny">按契约渲染</text>
+
+          <!-- HITL：声明 ↔ 实现 -->
+          <path d="M366 494 C366 552 530 548 530 616" class="arrow-slate"></path>
+          <text x="360" y="536" class="tag-slate">同一 HITL：声明 ↔ 实现</text>
+          <text x="278" y="512" class="tiny">Lane2 声明 where/when</text>
+          <text x="486" y="600" class="tiny">Lane3 实现 how</text>
+
+          <!-- 反馈回写（左侧 gutter，目标层已对齐） -->
+          <path d="M72 649 C48 649 48 464 72 464" class="arrow-amber"></path>
+          <text x="42" y="470" class="tiny" transform="rotate(-90 42 470)">用户反馈 → 运行证据（单一落点）</text>
+          <path d="M72 668 C30 668 30 180 72 180" class="arrow-amber"></path>
+          <text x="26" y="200" class="tiny" transform="rotate(-90 26 200)">新知识 / 规则 → 知识索引候选</text>
+
+          <text x="48" y="742" class="small">读图：Lane1 解决“资料如何变可执行资产”，Lane2 解决“资产如何变可执行图（先定义后执行）”，Lane3 解决“图与产物如何被理解、介入、修复”；脊柱保证三条线的节点类型只定义一次。</text>
+          <text x="48" y="762" class="small">反馈闭环：人工介入统一沉淀为运行证据（Lane2 执行子段），可复用的新知识回写到 Lane1 索引，避免证据双写与规则散落。</text>
+        </svg>
+      </div>
+      <p class="note">
+        与旧版相比的四处结构修正：① 抽出贯穿三条线的<strong>共享节点契约层</strong>，节点类型只定义一次，Lane3 渲染组件改为“按契约消费”而非自列清单；② Lane2 拆成<strong>编译子段（定义结构）</strong>与<strong>执行子段（运行实例）</strong>两个生命周期；③ 把 human-in-the-loop 标成<strong>声明（Lane2 HumanGate）↔ 实现（Lane3 交互）</strong>的对应关系；④ 运行证据收敛到<strong>单一落点</strong>（Lane2 执行子段），回写线目标层各自明确。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="lane-detail-title">
+      <h2 id="lane-detail-title">三条链路的职责边界</h2>
+      <div class="grid">
+        <article class="card blue">
+          <h3>1. 业务文档编译链路</h3>
+          <p>把业务资料变成可靠的业务语义资产，重点不是“总结文档”，而是形成可查询、可引用、可验证的业务上下文。</p>
+          <ul>
+            <li>解析：策略文档、行业资料、企业数据说明、私有模型说明。</li>
+            <li>索引：段落、术语、证据、口径、来源。</li>
+            <li>查询：wiki 化问答、证据引用、业务假设回溯。</li>
+            <li>输出：PRD++、ScenarioSpec、DataSpec、KnowledgeSpec、ToolSpec、EvalSpec、EvidenceSpec（证据定义）。</li>
+          </ul>
+        </article>
+
+        <article class="card green">
+          <h3>2. 运行时 / 节点执行流编译链路</h3>
+          <p>分两个生命周期：编译子段定义静态结构，执行子段负责动态运行实例，两段边界不能混。</p>
+          <ul>
+            <li>编译子段：节点类型（引用共享契约）、I/O 与中间产物、依赖 DAG。</li>
+            <li>执行子段：状态机、门禁、失败分类、<strong>人工介入点声明</strong>（HumanGate 哪里/何时）。</li>
+            <li>运行证据的<strong>单一落点</strong>：run artifacts 由执行子段产出，不与文档层证据定义混同。</li>
+            <li>输出：BusinessStep、NodeSpec、ArtifactContract、RunState、VerificationGate。</li>
+          </ul>
+        </article>
+
+        <article class="card amber">
+          <h3>3. 前端 UI 与 Agent 交互链路</h3>
+          <p>把执行图和中间产物变成可理解、可操作的工作台，重点是按契约渲染与 human-in-the-loop 的实现。</p>
+          <ul>
+            <li>页面结构：左侧任务、中间工作区、右侧 Agent。</li>
+            <li>组件匹配：读<strong>共享契约</strong>按节点类型选渲染器，不再自列类型清单。</li>
+            <li>介入实现：把 Lane2 声明的 HumanGate 落成具体交互时机与操作方式。</li>
+            <li>协议：CanvasSelectionContext、AgentAction、repair request、rerun request。</li>
+          </ul>
+        </article>
+      </div>
+      <p class="note warn">
+        <strong>共享节点契约层</strong>是三条线的公共依赖，不属于任何单独一条：Lane1 供给业务字段 schema、Lane2 编译子段定义类型与契约、Lane3 按契约消费渲染。它一旦漂移，三条线会同时失效——因此节点类型与契约字段必须只有一处定义。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="signals-title">
+      <h2 id="signals-title">判别信号：这三条链路是否真的跑通</h2>
+      <div class="signal-grid">
+        <div class="signal">
+          <strong>业务资料可查询</strong>
+          <span>用户问“这个判断来自哪里”，系统能回到原始文档、数据口径和证据。</span>
+        </div>
+        <div class="signal">
+          <strong>契约只定义一次</strong>
+          <span>新增一种节点类型，只改共享契约层，Lane2 执行与 Lane3 渲染自动对齐，无需两处同步。</span>
+        </div>
+        <div class="signal">
+          <strong>编译与执行分离</strong>
+          <span>节点结构在编译子段确定，运行状态与人工门禁在执行子段实例化，两者互不越界。</span>
+        </div>
+        <div class="signal">
+          <strong>HITL 声明即实现</strong>
+          <span>Lane2 声明某节点需人工介入，Lane3 就能自动给出对应交互入口，证据统一回写。</span>
+        </div>
+      </div>
+      <p class="note">
+        MVP 可以先人工整理业务资料和确认业务口径，但三条链路的接口必须产品化：文档资产要能被节点消费，节点契约要能被前端渲染，前端反馈要能回写为运行证据（单一落点）和知识索引候选。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

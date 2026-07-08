@@ -206,6 +206,278 @@ class DeterministicGeneratorTests(unittest.TestCase):
             self.assertEqual(len(code_record["files_changed"]), 5)
             self.assertTrue(all(path.startswith("generated_apps/todo/") for path in code_record["files_changed"]))
 
+    def test_report_generator_shell_config_instantiates_shell_app(self) -> None:
+        from growth_dev.team.app_generation import generate_deterministic_app_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "run"
+            run_dir.mkdir()
+            output_schema = {
+                "id": "top_products_table",
+                "status": "available",
+                "source": "test",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "rows": {"type": "array", "items": {"type": "object"}},
+                        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "summary": {
+                    "id": "top_products_table",
+                    "status": "available",
+                    "source": "test",
+                    "title": "TOP 商品表",
+                    "description": "测试产物",
+                    "properties": ["evidence_ids", "rows"],
+                    "required": [],
+                },
+            }
+            output_model = {
+                "outputs": [
+                    {
+                        "id": "top_products_table",
+                        "title": "TOP 商品表",
+                        "description": "测试产物",
+                        "status": "available",
+                        "source": "test",
+                        "schema": output_schema["schema"],
+                        "summary": output_schema["summary"],
+                    }
+                ]
+            }
+            required_data = {
+                "id": "top_products_csv",
+                "status": "available",
+                "description": "TOP 商品 CSV",
+                "required_fields": ["rank", "product_url"],
+                "freshness": "30d",
+                "effective_mode": "manual_upload_only",
+                "evidence_required": ["source_name"],
+                "preferred_sources": ["internal_dw.top_products"],
+                "fallback_sources": ["manual_upload.top_products_csv"],
+                "tool_binding": {
+                    "data_requirement_id": "top_products_csv",
+                    "declared_primary_tool": "internal_dw.top_products",
+                    "declared_fallback_tools": ["manual_upload.top_products_csv"],
+                    "effective_mode": "manual_upload_only",
+                    "status": "available",
+                },
+            }
+            view_model = {
+                "input_model": {"mode": "manual_upload", "required_data": [required_data], "fields": []},
+                "output_model": output_model,
+                "execution_model": {
+                    "state_machine": ["idle", "waiting_input", "running", "done", "degraded", "failed"],
+                    "can_run_when": ["required_data_uploaded"],
+                    "degraded_when": ["missing_data"],
+                },
+                "evidence_model": {"contract": {"required": ["source_data"]}, "required": ["source_data"]},
+                "tool_model": {"effective_mode": "manual_upload_only", "bindings": [required_data["tool_binding"]]},
+                "source_trace": {
+                    "workflow_ref": "skill_snapshot/workflow.dag.yaml",
+                    "data_requirement_refs": ["skill_snapshot/data_requirements.yaml#top_products_csv"],
+                    "output_schema_refs": ["skill_snapshot/output_schemas/top_products_table.json"],
+                    "tool_binding_refs": ["skill_snapshot/tool_bindings.yaml#top_products_csv"],
+                    "evidence_ref": "skill_snapshot/evidence_schema.yaml",
+                },
+                "business_context": {
+                    "status": "missing",
+                    "query": "流程1:上传 TOP 商品的具体内容",
+                    "mode": "local-skills.strategy_kb_search",
+                    "kb_manifest": "",
+                    "collection_id": "",
+                    "backend": "",
+                    "results": [],
+                    "warnings": ["strategy_kb_not_configured"],
+                },
+                "node_execution_view": {
+                    "status": "missing",
+                    "workflow_no": 1,
+                    "workflow_title": "上传 TOP 商品",
+                    "goal": {"title": "目的", "markdown": ""},
+                    "action": {"title": "执行动作", "markdown": "", "steps": [], "fields": []},
+                    "verification": {"title": "验证标准", "markdown": "", "checks": []},
+                    "artifact": {"title": "TOP 商品表", "markdown": "", "outputs": output_model["outputs"]},
+                    "agent_assist": {"mode": "context_only", "prompt": "辅助用户完成节点。", "suggested_questions": []},
+                    "source": {"doc_id": "", "doc_title": "", "source_path": "", "kb_page_id": "", "citation_id": ""},
+                },
+            }
+            app_config = {
+                "schema_version": "app-config-v1",
+                "app_slug": "market-insight",
+                "shell_kind": "report_generator",
+                "shell_version": "0.1.0",
+                "data_capability_index": {
+                    "provider": "api_doc_index",
+                    "status": "available",
+                    "source_index_ref": "data_capability/api_doc_index.json",
+                    "runtime_index_ref": "data/api_doc_index.json",
+                    "default_strategy": "field_coverage_rerank",
+                    "stats": {"api_count": 1, "field_count": 2},
+                    "sources": [],
+                },
+                "skill_ref": {"skill_id": "market_insight_skill", "snapshot_dir": "skill_snapshot"},
+                "task_ref": {"task_id": "market-insight", "title": "市场洞察报告"},
+                "scope_form": {"fields": []},
+                "nodes": [
+                    {
+                        "id": "top_products",
+                        "name": "上传 TOP 商品",
+                        "kind": "data",
+                        "depends_on": [],
+                        "data_requirements": ["top_products_csv"],
+                        "outputs": ["top_products_table"],
+                        "output_schema": [output_schema],
+                        "state_machine": ["idle", "waiting_input", "running", "done", "degraded", "failed"],
+                        **view_model,
+                    },
+                ],
+                "aggregate": {"node_id": "final_report"},
+                "data_requirements": [{"id": "top_products_csv", "title": "TOP 商品 CSV"}],
+                "rules": {"hard_requirements": [], "registry": []},
+                "tool_bindings": [{"data_requirement_id": "top_products_csv", "effective_mode": "manual_upload_only"}],
+                "evidence": {"schema": {}},
+                "safety": {"forbidden": ["database"]},
+                "customizations": [],
+            }
+            ensure_index_dir = run_dir / "data_capability"
+            ensure_index_dir.mkdir()
+            (ensure_index_dir / "api_doc_index.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "api-doc-index-v1",
+                        "apis": [
+                            {
+                                "api_id": "top300_product_analysis",
+                                "source_seq": 1,
+                                "name": "类目前300商品分析",
+                                "module": "fixture",
+                                "business_module": "商品分析",
+                                "analysis_domain": "商品域",
+                                "method": "POST",
+                                "path": "/top300_product_analysis",
+                                "verified_status": "success",
+                                "request_params": [{"name": "deal_date", "type": "string", "required": True, "description": "交易日期"}],
+                                "request_headers": [],
+                                "response_fields": [
+                                    {"path": "data.result[].rank", "name": "rank", "type": "number", "description": "排名"},
+                                    {"path": "data.result[].product_url", "name": "product_url", "type": "string", "description": "商品链接"},
+                                ],
+                                "source_refs": {},
+                                "parse_warnings": [],
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "app.config.json").write_text(json.dumps(app_config), encoding="utf-8")
+            contract = {
+                "app_slug": "market-insight",
+                "generated_app_dir": "generated_apps/market-insight",
+                "shell_kind": "report_generator",
+                "app_config_ref": "app.config.json",
+                "preview": {"url": "http://127.0.0.1:8788", "command": "node server.js"},
+            }
+
+            files_changed = generate_deterministic_app_files(
+                run_dir=run_dir,
+                app_slug="market-insight",
+                prd_text="# 市场洞察报告",
+                contract=contract,
+                repo_root=run_dir,
+            )
+
+            app_dir = run_dir / "generated_apps" / "market-insight"
+            server_js = (app_dir / "server.js").read_text(encoding="utf-8")
+            app_js = (app_dir / "public" / "app.js").read_text(encoding="utf-8")
+            copied_config = json.loads((app_dir / "app.config.json").read_text(encoding="utf-8"))
+            generated_files_exist = {
+                "index": (app_dir / "public" / "index.html").exists(),
+                "styles": (app_dir / "public" / "styles.css").exists(),
+                "db_worker": (app_dir / "db_archaeologist_worker.mjs").exists(),
+                "engine": (app_dir / "engine" / "rules.py").exists(),
+                "runtime_smoke": (app_dir / "runtime_smoke.js").exists(),
+                "api_doc_index": (app_dir / "data" / "api_doc_index.json").exists(),
+                "fixture_artifacts": (app_dir / "artifacts" / "fixture_outputs.json").exists(),
+                "evidence_pack": (app_dir / "evidence" / "evidence_pack.json").exists(),
+                "final_report": (app_dir / "final_report.md").exists(),
+            }
+            fixture_artifacts = json.loads((app_dir / "artifacts" / "fixture_outputs.json").read_text(encoding="utf-8"))
+            evidence_pack = json.loads((app_dir / "evidence" / "evidence_pack.json").read_text(encoding="utf-8"))
+            final_report = (app_dir / "final_report.md").read_text(encoding="utf-8")
+            runtime_smoke = (app_dir / "runtime_smoke.js").read_text(encoding="utf-8")
+
+        self.assertIn("api/config", server_js)
+        self.assertIn("/api/db-agent/status", server_js)
+        self.assertIn("/api/db-agent/query", server_js)
+        self.assertIn("renderNodeList", app_js)
+        self.assertIn("renderInputModel", app_js)
+        self.assertIn("renderOutputModel", app_js)
+        self.assertIn("renderExecutionView", app_js)
+        self.assertIn("renderGapAgentPanel", app_js)
+        self.assertIn("缺口助手", app_js)
+        self.assertIn("nodeDrafts", app_js)
+        self.assertIn("Source Trace", app_js)
+        self.assertEqual(copied_config["shell_kind"], "report_generator")
+        self.assertEqual(copied_config["data_capability_index"]["runtime_index_ref"], "data/api_doc_index.json")
+        self.assertEqual(copied_config["data_capability_index"]["provider"], "api_doc_index")
+        self.assertIn("input_model", copied_config["nodes"][0])
+        self.assertTrue(copied_config["nodes"][0]["input_model"]["required_data"])
+        nodes_with_field_requirements = [
+            node for node in copied_config["nodes"]
+            if node.get("output_field_requirements")
+        ]
+        self.assertTrue(nodes_with_field_requirements)
+        first_requirement = nodes_with_field_requirements[0]["output_field_requirements"][0]
+        for field in ["output_id", "field_path", "field_name", "title", "description", "type", "required", "source_schema_ref"]:
+            self.assertIn(field, first_requirement)
+        self.assertIn("data_mapping_context", nodes_with_field_requirements[0])
+        self.assertTrue(generated_files_exist["index"])
+        self.assertTrue(generated_files_exist["styles"])
+        self.assertTrue(generated_files_exist["db_worker"])
+        self.assertTrue(generated_files_exist["engine"])
+        self.assertTrue(generated_files_exist["runtime_smoke"])
+        self.assertTrue(generated_files_exist["api_doc_index"])
+        self.assertTrue(generated_files_exist["fixture_artifacts"])
+        self.assertTrue(generated_files_exist["evidence_pack"])
+        self.assertTrue(generated_files_exist["final_report"])
+        self.assertEqual(fixture_artifacts["schema_version"], 1)
+        self.assertEqual(evidence_pack["schema_version"], 1)
+        self.assertIn("final_report", final_report)
+        self.assertIn("assertNodeViewModel", runtime_smoke)
+        self.assertIn("output_model", runtime_smoke)
+        self.assertIn("required_data", runtime_smoke)
+        self.assertIn("node_execution_view", runtime_smoke)
+        self.assertIn("buildSmokeArtifact", runtime_smoke)
+        self.assertIn("assertUpstreamPropagation", runtime_smoke)
+        self.assertIn("upstream_artifacts", runtime_smoke)
+        self.assertIn("assertDbAgentStatus", runtime_smoke)
+        self.assertIn("assertDataCapabilityIndex", runtime_smoke)
+        self.assertIn("api_doc_index", runtime_smoke)
+        self.assertIn("assertOutputFieldRequirements", runtime_smoke)
+        self.assertIn("output_field_requirements", runtime_smoke)
+        self.assertIn("asset_card", runtime_smoke)
+        self.assertIn("/api/db-agent/status", runtime_smoke)
+        self.assertIn("data_mapping_contract", runtime_smoke)
+        self.assertIn("data-mapping-contract-v2", runtime_smoke)
+        self.assertIn("suggest_multi_api_mapping", runtime_smoke)
+        self.assertIn("field_coverage_plan", runtime_smoke)
+        self.assertIn("assertPiAgentAdvice", runtime_smoke)
+        self.assertIn("pi-data-mapping-advice-v1", runtime_smoke)
+        self.assertIn("/api/pi-agent/query", runtime_smoke)
+        self.assertIn("missing-pi-runtime-smoke", runtime_smoke)
+        self.assertIn("generated_apps/market-insight/app.config.json", files_changed)
+        self.assertIn("generated_apps/market-insight/db_archaeologist_worker.mjs", files_changed)
+        self.assertIn("generated_apps/market-insight/shell_version.txt", files_changed)
+        self.assertIn("generated_apps/market-insight/runtime_smoke.js", files_changed)
+        self.assertIn("generated_apps/market-insight/data/api_doc_index.json", files_changed)
+        self.assertIn("generated_apps/market-insight/artifacts/fixture_outputs.json", files_changed)
+        self.assertIn("generated_apps/market-insight/evidence/evidence_pack.json", files_changed)
+        self.assertIn("generated_apps/market-insight/final_report.md", files_changed)
+
 
 if __name__ == "__main__":
     unittest.main()

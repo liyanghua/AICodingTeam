@@ -589,6 +589,36 @@ function renderPreviewControls() {
     else if (isPublished) status.textContent = publishStatus.published_at ? `已发布：${publishStatus.app_slug || "-"} · ${publishStatus.published_at}` : "已发布，可以启动预览。";
     else status.textContent = publishStatus.message || "未发布，请先点击「发布应用快照」。";
   }
+  renderShellPreviewLink();
+}
+
+function renderShellPreviewLink() {
+  const container = document.getElementById("app-generation-shell-preview");
+  if (!container) return;
+  clear(container);
+  const shellPreview = state.selectedRun && state.selectedRun.shell_preview;
+  if (!shellPreview || typeof shellPreview !== "object") return;
+  if (shellPreview.shell_kind && shellPreview.shell_kind !== "report_generator") return;
+
+  if (shellPreview.available) {
+    const link = el("a", {
+      className: "app-generation-shell-link",
+      href: shellPreview.url || "#",
+      target: "_blank",
+      rel: "noopener noreferrer",
+    }, [`打开报告应用（端口 ${shellPreview.port || "-"}）`]);
+    const proxyHint = el("span", { className: "meta" }, [
+      `代理入口：${shellPreview.proxy_url || "-"}`,
+    ]);
+    container.appendChild(link);
+    container.appendChild(proxyHint);
+  } else if (shellPreview.reason === "preview_not_started") {
+    container.appendChild(el("p", { className: "meta" }, [
+      "报告应用已就绪，点击「启动应用预览」后可在此打开。",
+    ]));
+  } else if (shellPreview.reason === "not_report_generator") {
+    // 非报告类应用不显示 Shell 链接
+  }
 }
 
 function enterNewTaskMode() {
@@ -3120,7 +3150,7 @@ async function uploadPrd(event) {
     if (status) status.textContent = "请粘贴 PRD 内容或选择 .md 文件后再启动。";
     return;
   }
-  const executor = (executorSelect && executorSelect.value) || "codex";
+  const executor = (executorSelect && executorSelect.value) || "deterministic";
   const codexProvider = (providerSelect && providerSelect.value) || state.uploadProvider || "default";
   const model = (modelSelect && modelSelect.value) || state.uploadModel || COMMON_CODEX_MODELS[0];
   state.uploadProvider = codexProvider;

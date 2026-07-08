@@ -1533,6 +1533,9 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 
 def _allowed_paths(context: Any) -> list[str]:
+    app_shell_paths = _app_generation_shell_allowed_paths(context)
+    if app_shell_paths:
+        return app_shell_paths
     inputs = getattr(context, "inputs", {}) or {}
     domain = getattr(context, "domain", None)
     metadata = getattr(domain, "metadata", {}) or {}
@@ -1542,6 +1545,36 @@ def _allowed_paths(context: Any) -> list[str]:
     if not base_paths:
         base_paths = list(DEFAULT_ALLOWED_PATHS)
     return _dedupe(base_paths + _task_level_allowed_paths(context) + _slice_declared_allowed_paths(context))
+
+
+def _app_generation_shell_allowed_paths(context: Any) -> list[str]:
+    domain = getattr(context, "domain", None)
+    if getattr(domain, "domain_id", "") != "app_generation":
+        return []
+    config = _read_app_generation_shell_config(context)
+    if not config:
+        return []
+    app_slug = str(config.get("app_slug") or (getattr(context, "inputs", {}) or {}).get("app_slug") or "").strip()
+    if not app_slug:
+        return []
+    return [
+        f"generated_apps/{app_slug}/app.config.json",
+        f"generated_apps/{app_slug}/custom/",
+    ]
+
+
+def _read_app_generation_shell_config(context: Any) -> dict[str, Any]:
+    run_dir = Path(getattr(context, "run_dir", "."))
+    config_path = run_dir / "app.config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        config = read_json(config_path)
+    except Exception:
+        return {}
+    if str(config.get("shell_kind") or "") != "report_generator":
+        return {}
+    return config
 
 
 def _task_level_allowed_paths(context: Any) -> list[str]:
@@ -1612,7 +1645,12 @@ def _app_generation_verification_commands(context: Any) -> list[str]:
     except Exception:  # noqa: BLE001 - fall back to domain metadata.
         return []
     commands = _string_list(contract.get("verification_commands") if isinstance(contract, dict) else [])
-    return _format_app_generation_command_templates(commands, context)
+    commands = _format_app_generation_command_templates(commands, context)
+    shell_config = _read_app_generation_shell_config(context)
+    if shell_config:
+        run_id = str(getattr(context, "run_id", "") or "")
+        commands.append(f"python3 -m growth_dev.cli app appcheck config --run-id {run_id}")
+    return _dedupe(commands)
 
 
 def _run_app_runtime_verification_if_needed(
@@ -2267,6 +2305,9 @@ def _app_generation_prompt_lines(context: Any) -> list[str]:
         "- `node --check` is not sufficient: `runtime_smoke.js` must prove the browser entry script initializes without throwing before DOM events are bound.",
         "- The generated SPA must render first-screen controls with options and bind primary button click handlers; silent no-op buttons are blockers.",
     ]
+    shell_config = _read_app_generation_shell_config(context)
+    if shell_config:
+        lines.extend(_app_generation_shell_prompt_lines(run_dir=run_dir, app_config=shell_config))
     benchmark_path = run_dir / "benchmark_context.json"
     if benchmark_path.exists():
         try:
@@ -2292,6 +2333,49 @@ def _app_generation_prompt_lines(context: Any) -> list[str]:
     ])
     
     return lines
+
+
+def _app_generation_shell_prompt_lines(*, run_dir: Path, app_config: dict[str, Any]) -> list[str]:
+    acceptance_text = _safe_read_text(run_dir / "acceptance_criteria.md", limit=2000)
+    skill_text = _safe_read_text(run_dir / "skill_snapshot" / "SKILL.md", limit=2000)
+    customizations = json.dumps(app_config.get("customizations", []), ensure_ascii=False, indent=2)
+    config_text = json.dumps(app_config, ensure_ascii=False, indent=2)
+    if len(config_text) > 4000:
+        config_text = config_text[:4000] + "\n...<truncated>"
+    if len(customizations) > 2000:
+        customizations = customizations[:2000] + "\n...<truncated>"
+    return [
+        "",
+        "## Report Generator Shell Flow",
+        "- This run uses `app.config.json` + the fixed `shells/report_generator` shell.",
+        "- 禁止修改 Shell 源码、禁止重画 DAG、禁止改写 rules.registry、禁止编造数字。",
+        "- Codex may only update the generated app `app.config.json` and files under `custom/` when this shell flow is active.",
+        "",
+        "### app.config.json (current)",
+        "```json",
+        config_text,
+        "```",
+        "",
+        "### acceptance_criteria.md",
+        acceptance_text or "<missing>",
+        "",
+        "### skill_snapshot/SKILL.md",
+        skill_text or "<missing>",
+        "",
+        "### customizations.md",
+        "```json",
+        customizations,
+        "```",
+    ]
+
+
+def _safe_read_text(path: Path, *, limit: int) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if len(text) > limit:
+        return text[:limit] + "\n...<truncated>"
+    return text
 
 
 def _slice_loop_context_lines(context: Any) -> list[str]:

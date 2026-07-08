@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .local/
 .venv/
+.venv-*/
+.playwright-cli/
 *.egg-info/
 runs/
 node_modules/
@@ -14,3 +16,5 @@ node_modules/
 /codex_plan/
 /input_image/
 /target/
+output/
+outputs/

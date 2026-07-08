@@ -68,9 +68,8 @@
                         <label>
                           Executor:
                           <select id="app-generation-upload-executor">
+                            <option value="deterministic">Deterministic（固定 Shell）</option>
                             <option value="codex">Codex</option>
-                            <option value="llm">LLM</option>
-                            <option value="rule">Rule</option>
                           </select>
                         </label>
                         <label>
@@ -99,6 +98,7 @@
                       <button id="app-generation-preview-btn" type="button" class="primary small" disabled>启动应用预览</button>
                     </div>
                     <p id="app-generation-app-preview-status" class="meta"></p>
+                    <div id="app-generation-shell-preview" class="app-generation-shell-preview"></div>
                   </section>
 
                   <div class="app-generation-canvas-grid">

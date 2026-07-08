@@ -155,10 +155,11 @@ def build_canvas_projection(run_id: str, *, runs_dir: Path = Path("runs"), repo_
     warnings: list[dict[str, str]] = []
     quality_mode = _quality_mode(run_dir)
     run_status_value = str(record.get("status") or process.get("status") or "unknown")
+    executor = _executor(record, process)
     _terminal_statuses = {"completed", "failed", "blocked", "cancelled", "delivered"}
     run_active = run_status_value not in _terminal_statuses and run_status_value not in {"unknown", "draft", ""}
     objects = _build_canvas_objects(run_dir, app_slug, warnings)
-    nodes = _build_business_nodes(run_dir, objects, quality_mode=quality_mode, run_active=run_active)
+    nodes = _build_business_nodes(run_dir, objects, quality_mode=quality_mode, executor=executor, run_active=run_active)
     current_business_node_id = next(
         (str(node["id"]) for node in nodes if node.get("is_current")), ""
     )
@@ -172,6 +173,7 @@ def build_canvas_projection(run_id: str, *, runs_dir: Path = Path("runs"), repo_
             "app_slug": app_slug,
             "brief": str(record.get("brief", "")),
             "status": run_status_value,
+            "executor": executor,
             "quality_mode": quality_mode,
             "classification_summary": classification_summary,
         },
@@ -433,17 +435,23 @@ def _build_business_nodes(
     objects: list[dict[str, Any]],
     *,
     quality_mode: str,
+    executor: str,
     run_active: bool = False,
 ) -> list[dict[str, Any]]:
     nodes: list[dict[str, Any]] = []
     total = len(BUSINESS_NODE_MAP)
     current_assigned = False
     for index, definition in enumerate(BUSINESS_NODE_MAP):
+        node_id = str(definition["id"])
         artifact_refs = [str(path) for path in definition.get("artifact_refs", [])]
-        required_refs = _required_artifact_refs(str(definition["id"]), artifact_refs, quality_mode)
+        artifact_policy = _artifact_policy(node_id, artifact_refs, quality_mode=quality_mode, executor=executor)
+        required_refs = artifact_policy["required_artifact_refs"]
+        optional_refs = artifact_policy["optional_artifact_refs"]
+        quality_refs = artifact_policy["quality_artifact_refs"]
         existing = [path for path in artifact_refs if (run_dir / path).exists()]
         required_existing = [path for path in required_refs if (run_dir / path).exists()]
-        node_objects = [item for item in objects if item.get("owner_node_id") == definition["id"]]
+        optional_existing = [path for path in optional_refs if (run_dir / path).exists()]
+        node_objects = [item for item in objects if item.get("owner_node_id") == node_id]
         ready = len(required_existing)
         required = len(required_refs)
         input_from = BUSINESS_NODE_MAP[index - 1]["title"] if index > 0 else PIPELINE_ENTRY_LABEL
@@ -453,7 +461,7 @@ def _build_business_nodes(
         is_current = run_active and incomplete and not current_assigned
         if is_current:
             current_assigned = True
-        node_status = "running" if is_current else _business_node_status(definition["id"], ready, required)
+        node_status = "running" if is_current else _business_node_status(node_id, ready, required, run_active=run_active)
         nodes.append(
             {
                 "id": definition["id"],
@@ -483,16 +491,63 @@ def _build_business_nodes(
                 "coder_progress": _coder_progress_for_node(run_dir, str(definition["id"])),
                 "latest_event": _latest_event_for_node(run_dir, str(definition["id"])),
                 "artifact_refs": artifact_refs,
+                "required_artifact_refs": required_refs,
+                "optional_artifact_refs": optional_refs,
+                "quality_artifact_refs": quality_refs,
+                "missing_artifact_refs": [path for path in required_refs if path not in required_existing],
+                "missing_optional_artifact_refs": [path for path in optional_refs if path not in optional_existing],
                 "evidence_refs": existing,
             }
         )
     return nodes
 
 
-def _required_artifact_refs(node_id: str, artifact_refs: list[str], quality_mode: str) -> list[str]:
-    if node_id == "capability_verification" and quality_mode != "benchmark_parity":
-        return [path for path in artifact_refs if path not in {"benchmark_diff.md", "agqs_score.json"}]
-    return artifact_refs
+def _artifact_policy(node_id: str, artifact_refs: list[str], *, quality_mode: str, executor: str) -> dict[str, list[str]]:
+    optional_refs: list[str] = []
+    quality_refs: list[str] = []
+    required_refs = list(artifact_refs)
+
+    if node_id == "prototype_generation":
+        codex_refs = ["codex/implementation_trace.json", "codex/diff.patch"]
+        if executor == "deterministic":
+            required_refs = ["code_run_record.json"]
+            optional_refs = codex_refs
+        else:
+            required_refs = codex_refs
+            optional_refs = ["code_run_record.json"]
+    elif node_id == "capability_verification":
+        benchmark_refs = ["benchmark_diff.md", "agqs_score.json"]
+        codex_refs = ["codex/verification_record.json"]
+        if executor == "deterministic":
+            required_refs = ["review_report.md", "test_report.md"]
+            optional_refs = codex_refs
+        else:
+            required_refs = ["review_report.md", "test_report.md", *codex_refs]
+        if quality_mode == "benchmark_parity":
+            required_refs = [*required_refs, *benchmark_refs]
+            quality_refs = benchmark_refs
+        else:
+            optional_refs = [*optional_refs, *benchmark_refs]
+    elif node_id == "delivery_version":
+        preview_refs = ["preview/preview_run_record.json"]
+        required_refs = ["preview_instructions.md", "final_report.md"]
+        optional_refs = preview_refs
+
+    return {
+        "required_artifact_refs": _dedupe_refs(required_refs),
+        "optional_artifact_refs": _dedupe_refs(optional_refs),
+        "quality_artifact_refs": _dedupe_refs(quality_refs),
+    }
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if ref not in seen:
+            seen.add(ref)
+            deduped.append(ref)
+    return deduped
 
 
 def _build_flow_steps(run_dir: Path, business_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -513,6 +568,7 @@ def _build_flow_steps(run_dir: Path, business_nodes: list[dict[str, Any]]) -> li
 def _entry_flow_step(run_dir: Path) -> dict[str, Any]:
     step = dict(ENTRY_STEP)
     exists = (run_dir / "input_prd.md").exists()
+    required_refs = ["input_prd.md"]
     step.update(
         {
             "status": "drafted" if exists else "ready",
@@ -524,7 +580,12 @@ def _entry_flow_step(run_dir: Path) -> dict[str, Any]:
             "progress": {"ready_artifacts": 1 if exists else 0, "required_artifacts": 1, "ratio": 1.0 if exists else 0.0},
             "coder_progress": {},
             "latest_event": "PRD 已进入生成任务。" if exists else "",
-            "artifact_refs": ["input_prd.md"],
+            "artifact_refs": required_refs,
+            "required_artifact_refs": required_refs,
+            "optional_artifact_refs": [],
+            "quality_artifact_refs": [],
+            "missing_artifact_refs": [] if exists else required_refs,
+            "missing_optional_artifact_refs": [],
             "evidence_refs": ["input_prd.md"] if exists else [],
         }
     )
@@ -561,6 +622,11 @@ def _preview_flow_step(run_dir: Path) -> dict[str, Any]:
             "coder_progress": {},
             "latest_event": latest_event,
             "artifact_refs": ["app_publish.json", "preview/preview_run_record.json"],
+            "required_artifact_refs": ["app_publish.json", "preview/preview_run_record.json"],
+            "optional_artifact_refs": [],
+            "quality_artifact_refs": [],
+            "missing_artifact_refs": [path for path in ["app_publish.json", "preview/preview_run_record.json"] if path not in evidence_refs],
+            "missing_optional_artifact_refs": [],
             "evidence_refs": evidence_refs,
         }
     )
@@ -650,7 +716,12 @@ def _build_canvas_objects(run_dir: Path, app_slug: str, warnings: list[dict[str,
             )
         )
 
-    if (run_dir / "codex" / "implementation_trace.json").exists() or (run_dir / "codex" / "diff.patch").exists():
+    generated_refs = [
+        path
+        for path in ["code_run_record.json", "codex/implementation_trace.json", "codex/diff.patch"]
+        if (run_dir / path).exists()
+    ]
+    if generated_refs:
         objects.append(
             _canvas_object(
                 "artifact:generated_app",
@@ -659,11 +730,16 @@ def _build_canvas_objects(run_dir: Path, app_slug: str, warnings: list[dict[str,
                 f"生成目录：generated_apps/{app_slug}。",
                 "generated",
                 "prototype_generation",
-                artifact_refs=[f"generated_apps/{app_slug}", "codex/implementation_trace.json", "codex/diff.patch"],
+                artifact_refs=[f"generated_apps/{app_slug}", *generated_refs],
             )
         )
 
-    if (run_dir / "codex" / "verification_record.json").exists() or (run_dir / "test_report.md").exists():
+    verification_refs = [
+        path
+        for path in ["review_report.md", "test_report.md", "codex/verification_record.json"]
+        if (run_dir / path).exists()
+    ]
+    if verification_refs:
         objects.append(
             _canvas_object(
                 "artifact:verification",
@@ -672,7 +748,7 @@ def _build_canvas_objects(run_dir: Path, app_slug: str, warnings: list[dict[str,
                 _verification_summary(run_dir, warnings),
                 "verified",
                 "capability_verification",
-                evidence_refs=["codex/verification_record.json", "test_report.md"],
+                evidence_refs=verification_refs,
             )
         )
 
@@ -723,6 +799,7 @@ def _build_canvas_objects(run_dir: Path, app_slug: str, warnings: list[dict[str,
         )
 
     if (run_dir / "final_report.md").exists():
+        delivery_refs = [path for path in ["final_report.md", "preview_instructions.md"] if (run_dir / path).exists()]
         objects.append(
             _canvas_object(
                 "delivery_version:latest",
@@ -731,7 +808,7 @@ def _build_canvas_objects(run_dir: Path, app_slug: str, warnings: list[dict[str,
                 _text_summary(run_dir / "final_report.md", "已形成交付说明。"),
                 "delivered",
                 "delivery_version",
-                evidence_refs=["final_report.md", "preview_instructions.md"],
+                evidence_refs=delivery_refs,
             )
         )
     return objects
@@ -907,9 +984,14 @@ def _tdd_summary(path: Path, warnings: list[dict[str, str]]) -> str:
 
 def _verification_summary(run_dir: Path, warnings: list[dict[str, str]]) -> str:
     payload = _safe_read_json(run_dir / "codex" / "verification_record.json", warnings, "codex/verification_record.json")
-    commands = payload.get("commands") if isinstance(payload.get("commands"), list) else []
-    status = str(payload.get("status") or "unknown")
-    return f"验证状态：{status}；命令数：{len(commands)}。"
+    if payload:
+        commands = payload.get("commands") if isinstance(payload.get("commands"), list) else []
+        status = str(payload.get("status") or "unknown")
+        return f"验证状态：{status}；命令数：{len(commands)}。"
+    reports = [path for path in ["review_report.md", "test_report.md"] if (run_dir / path).exists()]
+    if reports:
+        return f"验证报告已生成；证据数：{len(reports)}。"
+    return "验证记录未生成。"
 
 
 def _provider_summary(provider: dict[str, Any], target_stack: dict[str, Any]) -> str:
@@ -919,11 +1001,11 @@ def _provider_summary(provider: dict[str, Any], target_stack: dict[str, Any]) ->
     return f"Provider：{provider_name}；前端：{frontend}；服务端：{backend}。"
 
 
-def _business_node_status(node_id: str, existing_count: int, total_count: int) -> str:
+def _business_node_status(node_id: str, existing_count: int, total_count: int, *, run_active: bool) -> str:
     if total_count <= 0 or existing_count <= 0:
-        return "not_started"
+        return "not_started" if run_active else "needs_attention"
     if existing_count < total_count:
-        return "generating"
+        return "generating" if run_active else "needs_attention"
     return {
         "business_goal_understanding": "drafted",
         "business_spec_compilation": "drafted",
@@ -980,6 +1062,10 @@ def _preview_refs(canvas_object: dict[str, Any]) -> list[dict[str, str]]:
 def _quality_mode(run_dir: Path) -> str:
     benchmark = _safe_read_json(run_dir / "benchmark_context.json")
     return str(benchmark.get("quality_mode") or "prototype")
+
+
+def _executor(record: dict[str, Any], process: dict[str, Any]) -> str:
+    return str(record.get("executor") or _process_command_arg(process, "--executor") or "")
 
 
 def _process_command(process: dict[str, Any]) -> list[str]:

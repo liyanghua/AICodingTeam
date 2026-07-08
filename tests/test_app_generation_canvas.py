@@ -78,6 +78,60 @@ def _write_canvas_run(runs_dir: Path, run_id: str = "canvas-run-1") -> Path:
     return run_dir
 
 
+def _write_deterministic_canvas_run(runs_dir: Path, run_id: str = "deterministic-canvas-run") -> Path:
+    run_dir = runs_dir / run_id
+    (run_dir / "requirements").mkdir(parents=True)
+    (run_dir / "planning").mkdir(parents=True)
+    (run_dir / "generated_apps" / "prd" / "public").mkdir(parents=True)
+    record = {
+        "run_id": run_id,
+        "domain_id": "app_generation",
+        "brief": "根据 PRD 生成本地应用：prd",
+        "status": "completed",
+        "executor": "deterministic",
+        "inputs": {"app_slug": "prd", "comparison_group_id": "cmp-prd"},
+        "agent_runs": [
+            {"agent_id": "coder", "status": "completed", "output_paths": ["coding_prompt.md", "code_run_record.json"]},
+            {"agent_id": "reviewer", "status": "completed", "output_paths": ["review_report.md"]},
+            {"agent_id": "verifier", "status": "completed", "output_paths": ["test_report.md"]},
+            {"agent_id": "publisher", "status": "completed", "output_paths": ["final_report.md"]},
+        ],
+        "risk_events": [],
+    }
+    (run_dir / "team_run_record.json").write_text(json.dumps(record), encoding="utf-8")
+    (run_dir / "process.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+    (run_dir / "input_prd.md").write_text("# PRD\n", encoding="utf-8")
+    (run_dir / "requirements" / "brief_analysis.json").write_text(json.dumps({"summary": "PRD ready"}), encoding="utf-8")
+    (run_dir / "requirements" / "normalized_prd.md").write_text("# Normalized\n", encoding="utf-8")
+    (run_dir / "requirements" / "capability_boundary.json").write_text(
+        json.dumps({"required_new_capabilities": [{"id": "report", "summary": "生成报告"}]}),
+        encoding="utf-8",
+    )
+    (run_dir / "app_contract.json").write_text(
+        json.dumps({"app_slug": "prd", "generated_app_dir": "generated_apps/prd"}),
+        encoding="utf-8",
+    )
+    (run_dir / "acceptance_criteria.md").write_text("# AC\n\n- `AC-001` Report generation.\n", encoding="utf-8")
+    (run_dir / "planning" / "acceptance_coverage_matrix.json").write_text(
+        json.dumps({"acceptance_criteria": [{"id": "AC-001", "description": "Report generation"}]}),
+        encoding="utf-8",
+    )
+    (run_dir / "planning" / "tdd_plan.json").write_text(
+        json.dumps({"test_cases": [{"id": "TDD-001", "description": "Report generation"}]}),
+        encoding="utf-8",
+    )
+    (run_dir / "code_run_record.json").write_text(
+        json.dumps({"status": "completed", "executor": "deterministic", "files_changed": ["generated_apps/prd/server.js"]}),
+        encoding="utf-8",
+    )
+    (run_dir / "generated_apps" / "prd" / "server.js").write_text("console.log('ok')\n", encoding="utf-8")
+    (run_dir / "review_report.md").write_text("# Review\n\npassed\n", encoding="utf-8")
+    (run_dir / "test_report.md").write_text("# Test\n\npassed\n", encoding="utf-8")
+    (run_dir / "preview_instructions.md").write_text("node server.js\n", encoding="utf-8")
+    (run_dir / "final_report.md").write_text("# Final\n", encoding="utf-8")
+    return run_dir
+
+
 class AppGenerationCanvasTests(unittest.TestCase):
     def test_canvas_projection_builds_business_nodes_and_objects_without_secrets(self) -> None:
         from growth_dev.team.app_generation_canvas import build_canvas_projection
@@ -153,6 +207,31 @@ class AppGenerationCanvasTests(unittest.TestCase):
         self.assertEqual(verification_step["progress"]["required_artifacts"], 3)
         self.assertEqual(verification_step["progress"]["ready_artifacts"], 2)
         self.assertNotIn("agqs_score.json", verification_step["evidence_refs"])
+
+    def test_completed_deterministic_run_uses_required_artifacts_without_generating_status(self) -> None:
+        from growth_dev.team.app_generation_canvas import build_canvas_projection
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            _write_deterministic_canvas_run(runs_dir)
+
+            projection = build_canvas_projection("deterministic-canvas-run", runs_dir=runs_dir, repo_root=root)
+
+        steps_by_id = {step["id"]: step for step in projection["flow_steps"]}
+        self.assertEqual(steps_by_id["prototype_generation"]["status"], "generated")
+        self.assertEqual(steps_by_id["prototype_generation"]["progress"]["required_artifacts"], 1)
+        self.assertEqual(steps_by_id["prototype_generation"]["progress"]["ready_artifacts"], 1)
+        self.assertIn("codex/implementation_trace.json", steps_by_id["prototype_generation"]["optional_artifact_refs"])
+        self.assertIn("codex/diff.patch", steps_by_id["prototype_generation"]["missing_optional_artifact_refs"])
+        self.assertEqual(steps_by_id["capability_verification"]["status"], "verified")
+        self.assertEqual(steps_by_id["capability_verification"]["progress"]["required_artifacts"], 2)
+        self.assertEqual(steps_by_id["capability_verification"]["progress"]["ready_artifacts"], 2)
+        self.assertEqual(steps_by_id["delivery_version"]["status"], "delivered")
+        self.assertEqual(steps_by_id["delivery_version"]["progress"]["required_artifacts"], 2)
+        self.assertEqual(steps_by_id["delivery_version"]["progress"]["ready_artifacts"], 2)
+        self.assertNotIn("generating", [step["status"] for step in projection["flow_steps"]])
+        self.assertTrue(any(item["object_id"] == "artifact:generated_app" for item in projection["objects"]))
 
     def test_canvas_projection_accepts_process_only_pending_app_generation_run(self) -> None:
         from growth_dev.team.app_generation_canvas import build_canvas_projection

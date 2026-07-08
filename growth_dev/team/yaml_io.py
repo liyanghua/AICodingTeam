@@ -41,7 +41,12 @@ def _tokenize(text: str) -> list[tuple[int, str]]:
         indent = len(raw_line) - len(raw_line.lstrip(" "))
         if "\t" in raw_line[:indent]:
             raise YamlSubsetError("Tabs are not supported in YAML indentation")
-        tokens.append((indent, raw_line.strip()))
+        content = raw_line.strip()
+        if tokens and indent > tokens[-1][0] and not content.startswith("- ") and ":" not in content:
+            prev_indent, prev_content = tokens[-1]
+            tokens[-1] = (prev_indent, prev_content + " " + content)
+            continue
+        tokens.append((indent, content))
     return tokens
 
 
@@ -76,6 +81,8 @@ def _parse_map(lines: list[tuple[int, str]], index: int, indent: int) -> tuple[d
         index += 1
         if index < len(lines) and lines[index][0] > indent:
             payload[key], index = _parse_block(lines, index, lines[index][0])
+        elif index < len(lines) and lines[index][0] == indent and lines[index][1].startswith("- "):
+            payload[key], index = _parse_list(lines, index, indent)
         else:
             payload[key] = {}
     return payload, index

@@ -99,6 +99,9 @@ For `app_generation`:
 - [`app_generation_runway_timeline_spec.md`](app_generation_runway_timeline_spec.md): Runway Timeline main workbench experience, aligning PRD input, business steps, app preview, Agent collaboration, and folded engineering evidence.
 - [`app_generation_node_context_contract.md`](app_generation_node_context_contract.md): node and Agent interaction context contracts.
 - [`app_generation_agent_bridge_spec.md`](app_generation_agent_bridge_spec.md): right-side Agent provider and action protocol.
+- [`app_generation_right_agent_data_mapping_spec.md`](app_generation_right_agent_data_mapping_spec.md): right-side Agent product and interaction spec for mapping free-form business data requirements to backend data capabilities.
+- [`app_generation_right_agent_data_mapping_technical_design.md`](app_generation_right_agent_data_mapping_technical_design.md): technical contract for `data_mapping_contract`, db-agent actions, persistence, safety, and tests.
+- [`app_generation_pi_data_mapping_advice_implementation.md`](app_generation_pi_data_mapping_advice_implementation.md): implementation document for making PI data-mapping advice visible, actionable as draft overlays, and gated by human confirmation.
 - [`app_generation_codex_observability_spec.md`](app_generation_codex_observability_spec.md): Code Agent progress visibility.
 - [`app_generation_acceptance_and_testing.md`](app_generation_acceptance_and_testing.md): app generation acceptance and testing strategy.
 

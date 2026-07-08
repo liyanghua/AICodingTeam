@@ -17,6 +17,7 @@ from .models import TaskSpec
 from .reporting import write_report
 from .tasks import default_task_spec, write_task_package
 from .utils import ensure_dir, now_iso, read_json, timestamp_slug, write_json
+from .team.yaml_io import load_yaml_subset
 
 _BACKGROUND_PROCESSES: list[subprocess.Popen] = []
 
@@ -88,6 +89,9 @@ def _build_parser() -> argparse.ArgumentParser:
     team_run.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
     team_run.add_argument("--env-file", default=".env")
     team_run.add_argument("--repo-root", default=".")
+    team_run.add_argument("--task-yaml-path", default="")
+    team_run.add_argument("--domain-yaml-path", default="")
+    team_run.add_argument("--skill-dir", default="")
     _add_complex_task_args(team_run)
     team_run.set_defaults(func=_cmd_team_run)
 
@@ -241,6 +245,17 @@ def _build_parser() -> argparse.ArgumentParser:
     app_generate.add_argument("--codex-provider", choices=["default", "aicodemirror"], default="default")
     app_generate.add_argument("--env-file", default=".env")
     app_generate.add_argument("--repo-root", default=".")
+    app_generate.add_argument("--task-yaml-path", default="")
+    app_generate.add_argument("--domain-yaml-path", default="")
+    app_generate.add_argument("--skill-dir", default="")
+    app_generate.add_argument("--strategy-kb", default="", help="Strategy KB manifest path used to enrich node business context.")
+    app_generate.add_argument("--strategy-kb-query-script", default="", help="Path to local-skills query_strategy_kb.py.")
+    app_generate.add_argument("--strategy-kb-python", default="python3", help="Python executable used to run the Strategy KB query script.")
+    app_generate.add_argument("--strategy-kb-top-k", type=int, default=3, help="Number of Strategy KB passages to attach per node.")
+    app_generate.add_argument("--api-doc-index", default="", help="Prebuilt api_doc_matcher api_doc_index.json to snapshot into generated apps.")
+    app_generate.add_argument("--api-detail-doc", default="", help="API detail markdown doc used to build an api_doc_matcher index during generation.")
+    app_generate.add_argument("--api-validation-doc", default="", help="API validation markdown doc used to build an api_doc_matcher index during generation.")
+    app_generate.add_argument("--shell-kind", default="", help="Shell kind (e.g., report_generator). If not provided, will be inferred from task/domain/skill.")
     _add_complex_task_args(app_generate)
     app_generate.add_argument("--foreground", action="store_true")
     app_generate.set_defaults(func=_cmd_app_generate)
@@ -262,6 +277,17 @@ def _build_parser() -> argparse.ArgumentParser:
     app_preview_list = app_preview_sub.add_parser("list", help="List active preview servers")
     app_preview_list.add_argument("--runs-dir", default="runs")
     app_preview_list.set_defaults(func=_cmd_app_preview_list)
+
+    appcheck = app_sub.add_parser("appcheck", help="Validate generated app config and acceptance contracts")
+    appcheck_sub = appcheck.add_subparsers(dest="appcheck_command", required=True)
+    appcheck_config = appcheck_sub.add_parser("config", help="Validate app.config.json")
+    appcheck_config.add_argument("--run-id", required=True)
+    appcheck_config.add_argument("--runs-dir", default="runs")
+    appcheck_config.set_defaults(func=_cmd_appcheck_config)
+    appcheck_acceptance = appcheck_sub.add_parser("acceptance", help="Validate app acceptance derivation")
+    appcheck_acceptance.add_argument("--run-id", required=True)
+    appcheck_acceptance.add_argument("--runs-dir", default="runs")
+    appcheck_acceptance.set_defaults(func=_cmd_appcheck_acceptance)
 
     code_cmd = subparsers.add_parser("code", help="Run the Codex-backed coding loop")
     _add_team_run_args(code_cmd)
@@ -441,6 +467,12 @@ def _cmd_team_run(args: argparse.Namespace) -> int:
     from .team.runtime import TeamRuntime
 
     inputs = _parse_inputs_json(args.inputs_json)
+    if str(getattr(args, "domain", "")) == "app_generation":
+        repo_root = Path(str(getattr(args, "repo_root", "") or "."))
+        path_error = _augment_app_generation_inputs(inputs, args, repo_root)
+        if path_error:
+            print(path_error, file=sys.stderr)
+            return 2
     runtime = TeamRuntime.from_domain(
         args.domain,
         domains_dir=Path(args.domains_dir),
@@ -544,25 +576,182 @@ def _cmd_code_alias(args: argparse.Namespace) -> int:
     return _cmd_code_background(args)
 
 
+def _augment_app_generation_inputs(inputs: dict, args: argparse.Namespace, repo_root: Path) -> str:
+    """Assemble four-source paths into ``inputs`` for app_generation runs.
+
+    Skips assembly when the caller already supplied any four-source key (e.g. the
+    Dashboard透传). Returns an error string when path validation fails, else "".
+    """
+    if any(key in inputs for key in ("task_yaml_path", "domain_yaml_path", "skill_dir")):
+        return ""
+    task_raw = str(getattr(args, "task_yaml_path", "") or "").strip()
+    domain_raw = str(getattr(args, "domain_yaml_path", "") or "").strip()
+    skill_arg_raw = str(getattr(args, "skill_dir", "") or "").strip()
+    if not any((task_raw, domain_raw, skill_arg_raw)):
+        return ""
+    task_yaml_path = _resolve_app_input_path(task_raw or "tasks/current/task.yaml", repo_root)
+    domain_yaml_path = _resolve_app_input_path(domain_raw or "tasks/current/domain.yaml", repo_root)
+    skill_dir_raw = skill_arg_raw or str(_derive_skill_dir(task_yaml_path)).strip()
+    skill_dir = _resolve_app_input_path(skill_dir_raw, repo_root) if skill_dir_raw else Path("")
+    path_error = _validate_app_generation_input_paths(task_yaml_path, domain_yaml_path, skill_dir)
+    if path_error:
+        return path_error
+    inputs["task_yaml_path"] = str(task_yaml_path)
+    inputs["domain_yaml_path"] = str(domain_yaml_path)
+    inputs["skill_dir"] = str(skill_dir)
+    return ""
+
+
+def _augment_strategy_kb_inputs(inputs: dict[str, Any], args: argparse.Namespace, repo_root: Path) -> str:
+    kb_raw = str(getattr(args, "strategy_kb", "") or "").strip()
+    script_raw = str(getattr(args, "strategy_kb_query_script", "") or "").strip()
+    python_raw = str(getattr(args, "strategy_kb_python", "") or "python3").strip() or "python3"
+    top_k = int(getattr(args, "strategy_kb_top_k", 3) or 3)
+    if not any((kb_raw, script_raw)):
+        return ""
+    if not kb_raw or not script_raw:
+        return "strategy_kb and strategy_kb_query_script must be provided together"
+    if top_k < 1:
+        return "strategy_kb_top_k must be >= 1"
+    kb_path = _resolve_app_input_path(kb_raw, repo_root)
+    query_script = _resolve_app_input_path(script_raw, repo_root)
+    if not kb_path.exists() or not kb_path.is_file():
+        return f"strategy_kb not found: {kb_path}"
+    if not query_script.exists() or not query_script.is_file():
+        return f"strategy_kb_query_script not found: {query_script}"
+    inputs["strategy_kb"] = str(kb_path)
+    inputs["strategy_kb_query_script"] = str(query_script)
+    inputs["strategy_kb_python"] = python_raw
+    inputs["strategy_kb_top_k"] = top_k
+    return ""
+
+
+def _augment_api_doc_inputs(inputs: dict[str, Any], args: argparse.Namespace, repo_root: Path) -> str:
+    index_raw = str(getattr(args, "api_doc_index", "") or "").strip()
+    detail_raw = str(getattr(args, "api_detail_doc", "") or "").strip()
+    validation_raw = str(getattr(args, "api_validation_doc", "") or "").strip()
+    if not any((index_raw, detail_raw, validation_raw)):
+        return ""
+    if index_raw:
+        index_path = _resolve_app_input_path(index_raw, repo_root)
+        if not index_path.exists() or not index_path.is_file():
+            return f"api_doc_index not found: {index_path}"
+        inputs["api_doc_index"] = str(index_path)
+    if detail_raw or validation_raw:
+        if not detail_raw or not validation_raw:
+            return "api_detail_doc and api_validation_doc must be provided together"
+        detail_path = _resolve_app_input_path(detail_raw, repo_root)
+        validation_path = _resolve_app_input_path(validation_raw, repo_root)
+        if not detail_path.exists() or not detail_path.is_file():
+            return f"api_detail_doc not found: {detail_path}"
+        if not validation_path.exists() or not validation_path.is_file():
+            return f"api_validation_doc not found: {validation_path}"
+        inputs["api_detail_doc"] = str(detail_path)
+        inputs["api_validation_doc"] = str(validation_path)
+    return ""
+
+
 def _cmd_app_generate(args: argparse.Namespace) -> int:
     prd_text = str(getattr(args, "prd_text", "") or "").strip()
     prd_file = str(getattr(args, "prd_file", "") or "").strip()
     if not prd_text and not prd_file:
         print("PRD input is required: pass --prd-text or --prd-file", file=sys.stderr)
         return 2
+    repo_root = Path(str(getattr(args, "repo_root", "") or "."))
     inputs: dict[str, Any] = {
         "app_slug": args.app_slug,
     }
+    path_error = _augment_app_generation_inputs(inputs, args, repo_root)
+    if path_error:
+        print(path_error, file=sys.stderr)
+        return 2
+    path_error = _augment_strategy_kb_inputs(inputs, args, repo_root)
+    if path_error:
+        print(path_error, file=sys.stderr)
+        return 2
+    path_error = _augment_api_doc_inputs(inputs, args, repo_root)
+    if path_error:
+        print(path_error, file=sys.stderr)
+        return 2
     if prd_text:
         inputs["prd_text"] = prd_text
     if prd_file:
         inputs["prd_file"] = prd_file
     if getattr(args, "ui_style", ""):
         inputs["ui_style"] = args.ui_style
+    if getattr(args, "shell_kind", ""):
+        inputs["shell_kind"] = args.shell_kind
     args.brief = f"根据 PRD 生成本地应用：{args.app_slug}"
     args.domain = "app_generation"
     args.inputs_json = json.dumps(inputs, ensure_ascii=False)
     return _cmd_code_alias(args)
+
+
+def _resolve_app_input_path(value: str, repo_root: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return repo_root / path
+
+
+def _derive_skill_dir(task_yaml_path: Path) -> str:
+    if not task_yaml_path.exists() or not task_yaml_path.is_file():
+        return ""
+    try:
+        task = load_yaml_subset(task_yaml_path)
+    except Exception:
+        return ""
+    explicit = str(task.get("skill_artifact_dir") or "").strip()
+    if explicit:
+        candidate = Path(explicit)
+        return str(candidate if candidate.is_absolute() else task_yaml_path.parent.parent.parent / candidate)
+    skill_ref = task.get("skill_ref") if isinstance(task.get("skill_ref"), dict) else {}
+    ref_dir = str(skill_ref.get("dir") or "").strip()
+    if ref_dir:
+        candidate = Path(ref_dir)
+        return str(candidate if candidate.is_absolute() else task_yaml_path.parent.parent.parent / candidate)
+    skill_id = str(task.get("skill_id") or "").strip()
+    if skill_id:
+        return str(Path("document-to-skill-engineering-package") / "build" / skill_id)
+    return ""
+
+
+def _validate_app_generation_input_paths(task_yaml_path: Path, domain_yaml_path: Path, skill_dir: Path) -> str:
+    if not task_yaml_path.exists() or not task_yaml_path.is_file():
+        return f"task_yaml_path not found: {task_yaml_path}"
+    if not domain_yaml_path.exists() or not domain_yaml_path.is_file():
+        return f"domain_yaml_path not found: {domain_yaml_path}"
+    if not str(skill_dir):
+        return "skill_dir is required or must be derivable from task yaml"
+    if not skill_dir.exists() or not skill_dir.is_dir():
+        return f"skill_dir not found: {skill_dir}"
+    return ""
+
+
+def _cmd_appcheck_config(args: argparse.Namespace) -> int:
+    from .team.app_generation import validate_app_config
+
+    run_dir = Path(args.runs_dir) / str(args.run_id)
+    errors = validate_app_config(run_dir)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 1
+    print(f"app.config.json ok: {args.run_id}")
+    return 0
+
+
+def _cmd_appcheck_acceptance(args: argparse.Namespace) -> int:
+    from .team.app_generation import validate_app_acceptance
+
+    run_dir = Path(args.runs_dir) / str(args.run_id)
+    errors = validate_app_acceptance(run_dir)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 1
+    print(f"acceptance ok: {args.run_id}")
+    return 0
 
 
 def _cmd_code_background(args: argparse.Namespace) -> int:

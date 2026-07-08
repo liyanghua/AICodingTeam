@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>从业务资料到可试用应用：App Generation V6</title>
+  <style>
+    :root {
+      --background: #f6f7f9;
+      --surface: #ffffff;
+      --surface-subtle: #f2f5f7;
+      --border: #dce2e7;
+      --border-strong: #c9d3dc;
+      --text: #1d252c;
+      --muted: #667684;
+      --action: #1f5d8c;
+      --green: #1f7a4d;
+      --amber: #946200;
+      --red: #b43b3b;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: SFMono-Regular, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 48px; }
+
+    header { margin-bottom: 24px; }
+
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.25; font-weight: 760; }
+
+    h2 { margin: 0 0 14px; font-size: 15px; line-height: 1.25; font-weight: 740; }
+
+    p { margin: 0; color: var(--muted); }
+
+    .lead { max-width: 980px; color: var(--text); font-size: 15px; }
+
+    .section {
+      margin-top: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(29, 37, 44, 0.06);
+    }
+
+    .responsibility-grid, .principle-grid { display: grid; gap: 12px; }
+    .responsibility-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .principle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .item {
+      min-height: 112px;
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .item h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.25; font-weight: 740; }
+    .item p { font-size: 13px; color: var(--muted); }
+
+    .item.accent { background: #f6efe3; border-color: #d5bd87; }
+    .item.product { background: #eef4f8; border-color: #9bb8cb; }
+
+    .diagram-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfd; }
+
+    svg { display: block; width: 100%; min-width: 1120px; height: auto; }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--action);
+      background: #eef4f8;
+      color: #314455;
+      border-radius: 6px;
+    }
+
+    .note.summary { border-left-color: var(--green); background: #eaf4ee; font-weight: 600; color: #214d36; }
+
+    .thinking-intro {
+      max-width: 980px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .thinking-comparison {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .thinking-card {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .thinking-card-header {
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #fbfcfd;
+    }
+
+    .thinking-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      margin-bottom: 10px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 740;
+    }
+
+    .thinking-old .thinking-eyebrow { background: #fee2e2; color: #8a1f1f; }
+    .thinking-new .thinking-eyebrow { background: #dbeafe; color: #1f4f83; }
+
+    .thinking-card h3 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 760;
+    }
+
+    .thinking-subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .thinking-svg-wrap {
+      overflow-x: auto;
+      padding: 10px 10px 0;
+      background: #ffffff;
+    }
+
+    .thinking-svg-wrap svg {
+      min-width: 520px;
+    }
+
+    .thinking-note {
+      margin: 0 14px 14px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #314455;
+    }
+
+    .thinking-note strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text);
+    }
+
+    .thinking-old .thinking-note { background: #fff7ed; border: 1px solid #fed7aa; }
+    .thinking-new .thinking-note { background: #f0fdf4; border: 1px solid #bbf7d0; }
+
+    .thinking-rules {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .thinking-rule {
+      padding: 14px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .thinking-rule b {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .thinking-rule span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .thinking-svg-wrap .node-title { font-weight: 700; font-size: 15px; }
+    .thinking-svg-wrap .node-desc { font-size: 12px; fill: #4b5563; }
+    .thinking-svg-wrap .center-label { font-size: 16px; font-weight: 800; }
+    .thinking-svg-wrap .center-desc { font-size: 12px; fill: #4b5563; }
+
+    @media (max-width: 980px) {
+      main { padding: 24px 16px 36px; }
+      .responsibility-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .principle-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .thinking-comparison { grid-template-columns: 1fr; }
+      .thinking-rules { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .responsibility-grid, .principle-grid { grid-template-columns: 1fr; }
+      .section { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>从业务资料到可试用应用：App Generation V6</h1>
+      <p class="lead">
+        V6 用业务产品语言描述完整闭环：用户给一组业务资料、企业与行业数据、私有模型能力，系统先把这些输入整理成产品需求和可执行的业务运行资产，再由应用装配工作台生成一个与具体场景和业务相关的可预览应用。应用只是用户操作入口；真正的业务判断、证据、规则和复盘沉淀在共享能力运行时。
+      </p>
+    </header>
+
+    <section class="section" aria-labelledby="diagram-title">
+      <h2 id="diagram-title">主链路：业务资料如何变成可试用应用</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 760" role="img" aria-labelledby="svg-title svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="svg-title">业务资料到可试用应用的主链路</title>
+          <desc id="svg-desc">业务资料集合、企业与行业数据、私有模型先进入业务蓝图编译，生成产品需求、业务流程、数据要求、知识约束、模型绑定、证据标准和应用配置。应用装配工作台消费这些产物，生成场景化可试用应用，并连接能力运行时。应用运行后，证据和用户调整回写能力运行时。</desc>
+          <defs>
+            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <style>
+              .lane { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .box-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .box-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .box-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .band { fill: #667684; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: 1px; }
+              .label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .mono { fill: #314455; font: 12px SFMono-Regular, Consolas, monospace; }
+              .tagA { fill: #1f7a4d; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .tagB { fill: #1f5d8c; font: 700 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#arrow-blue); }
+              .arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#arrow-green); }
+              .arrow-amber { stroke: #946200; stroke-width: 2; fill: none; marker-end: url(#arrow-amber); stroke-dasharray: 6 4; }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="712" rx="12" class="lane"></rect>
+          <text x="48" y="54" class="title">策略文档、企业/行业数据和私有模型先变成业务蓝图，再装配成场景化应用</text>
+
+          <text x="48" y="90" class="band">1. 业务输入</text>
+          <rect x="48" y="112" width="210" height="152" rx="8" class="box box-amber"></rect>
+          <text x="66" y="142" class="label">业务输入集合</text>
+          <text x="66" y="170" class="small">业务策略文档</text>
+          <text x="66" y="194" class="small">企业数据 + 行业数据</text>
+          <text x="66" y="218" class="small">私有模型 / 领域模型</text>
+          <text x="66" y="242" class="small">样例数据 / 术语表</text>
+
+          <text x="302" y="90" class="band">2. 业务蓝图编译</text>
+          <rect x="302" y="112" width="218" height="152" rx="8" class="box box-blue"></rect>
+          <text x="320" y="142" class="label">业务蓝图编译器</text>
+          <text x="320" y="170" class="small">理解业务目标和场景</text>
+          <text x="320" y="194" class="small">抽取流程 / 数据 / 工具</text>
+          <text x="320" y="218" class="small">绑定知识、模型与证据</text>
+          <text x="320" y="242" class="small">生成产品需求和运行资产</text>
+
+          <rect x="560" y="88" width="242" height="200" rx="8" class="box"></rect>
+          <text x="578" y="118" class="label">生成的业务运行资产</text>
+          <text x="578" y="146" class="mono">产品需求 PRD++</text>
+          <text x="578" y="170" class="mono">ScenarioSpec / 工作流</text>
+          <text x="578" y="194" class="mono">DataSpec / KnowledgeSpec</text>
+          <text x="578" y="218" class="mono">ModelBinding / ToolSpec</text>
+          <text x="578" y="242" class="mono">EvalSpec / EvidenceSpec</text>
+          <text x="578" y="266" class="mono">skill_snapshot / app.config</text>
+
+          <text x="848" y="90" class="band">3. 应用装配</text>
+          <rect x="848" y="112" width="236" height="152" rx="8" class="box box-green"></rect>
+          <text x="866" y="142" class="label">应用装配工作台</text>
+          <text x="866" y="170" class="small">按业务场景选择应用形态</text>
+          <text x="866" y="194" class="small">装配页面 / 节点 / 数据入口</text>
+          <text x="866" y="218" class="small">绑定私有模型与能力运行时</text>
+          <text x="866" y="242" class="small">发布预览 / Agent 辅助修复</text>
+
+          <path d="M258 188 H302" class="arrow-blue"></path>
+          <path d="M520 188 H560" class="arrow-blue"></path>
+          <path d="M802 188 H848" class="arrow-green"></path>
+
+          <rect x="48" y="326" width="1064" height="1" fill="#dce2e7"></rect>
+          <text x="48" y="354" class="band">4. 可试用应用与能力运行时</text>
+
+          <rect x="112" y="386" width="258" height="156" rx="8" class="box box-green"></rect>
+          <text x="130" y="418" class="label">可试用应用 <tspan class="tagA">(A)</tspan></text>
+          <text x="130" y="446" class="small">围绕具体业务场景设计</text>
+          <text x="130" y="470" class="small">展示数据入口和业务节点</text>
+          <text x="130" y="494" class="small">调用私有模型/运行时能力</text>
+          <text x="130" y="518" class="small">让用户通过右侧 Agent 调整</text>
+
+          <rect x="452" y="386" width="314" height="156" rx="8" class="box box-blue"></rect>
+          <text x="470" y="418" class="label">能力运行时 <tspan class="tagB">(B)</tspan></text>
+          <text x="470" y="446" class="small">执行业务流程、规则和工具调用</text>
+          <text x="470" y="470" class="small">连接企业/行业数据和私有模型</text>
+          <text x="470" y="494" class="small">保存证据、评估、回放记录</text>
+          <text x="470" y="518" class="small">是业务判断的单一真相</text>
+
+          <rect x="848" y="386" width="236" height="156" rx="8" class="box"></rect>
+          <text x="866" y="418" class="label">反馈与沉淀</text>
+          <text x="866" y="446" class="small">预览问题</text>
+          <text x="866" y="470" class="small">Agent 修复记录</text>
+          <text x="866" y="494" class="small">用户调优历史</text>
+          <text x="866" y="518" class="small">规则提升候选</text>
+
+          <path d="M966 264 C966 330 274 330 242 386" class="arrow-green"></path>
+          <path d="M370 464 H452" class="arrow-blue"></path>
+          <path d="M766 464 H848" class="arrow-amber"></path>
+          <path d="M966 542 C966 652 554 664 554 542" class="arrow-amber"></path>
+
+          <text x="48" y="690" class="small">业务产品口径：可生成应用的差异来自业务策略、企业/行业数据和私有模型；装配器把这些资产变成对应场景的可试用应用。</text>
+        </svg>
+      </div>
+      <p class="note">
+        这张图只讲业务产品主线：用户不是“写 prompt”，而是提交业务资料、数据和模型能力；系统不是“直接生成代码”，而是先编译业务蓝图，再装配与场景相关的应用，并把运行证据沉淀回能力运行时。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="detail-title">
+      <h2 id="detail-title">细节图：应用装配工作台如何运行</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1160 620" role="img" aria-labelledby="detail-svg-title detail-svg-desc" xmlns="http://www.w3.org/2000/svg">
+          <title id="detail-svg-title">应用装配工作台的节点执行流与 Agent 协作协议</title>
+          <desc id="detail-svg-desc">应用装配工作台内部包含节点执行流、图执行引擎、中间产物区、右侧 Agent 协作协议、Code Agent 修复和预览发布。用户通过右侧 Agent 与中间产物交互，框架把请求转成结构化动作。</desc>
+          <defs>
+            <marker id="detail-arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f5d8c"></path>
+            </marker>
+            <marker id="detail-arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1f7a4d"></path>
+            </marker>
+            <marker id="detail-arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#946200"></path>
+            </marker>
+            <style>
+              .detail-lane { fill: #f2f5f7; stroke: #dce2e7; stroke-width: 1; }
+              .detail-box { fill: #ffffff; stroke: #c9d3dc; stroke-width: 1.4; }
+              .detail-blue { fill: #eef4f8; stroke: #9bb8cb; }
+              .detail-green { fill: #eaf4ee; stroke: #9fc7b1; }
+              .detail-amber { fill: #f6efe3; stroke: #d5bd87; }
+              .detail-title { fill: #1d252c; font: 700 15px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .detail-label { fill: #1d252c; font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .detail-small { fill: #667684; font: 12px Inter, ui-sans-serif, system-ui, sans-serif; }
+              .detail-mono { fill: #314455; font: 12px SFMono-Regular, Consolas, monospace; }
+              .detail-arrow-blue { stroke: #1f5d8c; stroke-width: 2.2; fill: none; marker-end: url(#detail-arrow-blue); }
+              .detail-arrow-green { stroke: #1f7a4d; stroke-width: 2.2; fill: none; marker-end: url(#detail-arrow-green); }
+              .detail-arrow-amber { stroke: #946200; stroke-width: 2; fill: none; marker-end: url(#detail-arrow-amber); stroke-dasharray: 6 4; }
+            </style>
+          </defs>
+
+          <rect x="24" y="24" width="1112" height="572" rx="12" class="detail-lane"></rect>
+          <text x="48" y="56" class="detail-title">应用装配器 = 图执行引擎 + 中间产物区 + 右侧 Agent 协议 + 预览修复闭环</text>
+
+          <rect x="52" y="96" width="210" height="406" rx="8" class="detail-box detail-green"></rect>
+          <text x="72" y="128" class="detail-label">节点执行流</text>
+          <text x="72" y="158" class="detail-small">1. 理解业务目标</text>
+          <text x="72" y="188" class="detail-small">2. 编译业务规格</text>
+          <text x="72" y="218" class="detail-small">3. 规划应用结构</text>
+          <text x="72" y="248" class="detail-small">4. 生成应用原型</text>
+          <text x="72" y="278" class="detail-small">5. 验证业务能力</text>
+          <text x="72" y="308" class="detail-small">6. 输出交付版本</text>
+          <text x="72" y="350" class="detail-mono">Graph Execution Engine</text>
+          <text x="72" y="374" class="detail-small">按节点依赖执行</text>
+          <text x="72" y="398" class="detail-small">记录状态、输入、输出</text>
+          <text x="72" y="422" class="detail-small">支持重跑与验证</text>
+
+          <rect x="322" y="96" width="244" height="176" rx="8" class="detail-box detail-blue"></rect>
+          <text x="342" y="128" class="detail-label">中间产物区</text>
+          <text x="342" y="158" class="detail-small">PRD++ / 应用契约</text>
+          <text x="342" y="182" class="detail-small">节点输入输出</text>
+          <text x="342" y="206" class="detail-small">生成代码 diff / 验证报告</text>
+          <text x="342" y="230" class="detail-small">预览日志 / 修复记录</text>
+          <text x="342" y="254" class="detail-mono">Artifacts as source of truth</text>
+
+          <rect x="322" y="326" width="244" height="176" rx="8" class="detail-box"></rect>
+          <text x="342" y="358" class="detail-label">产物交互协议</text>
+          <text x="342" y="388" class="detail-small">选中步骤 / 文件 / 预览</text>
+          <text x="342" y="412" class="detail-small">生成可确认动作</text>
+          <text x="342" y="436" class="detail-small">重跑节点 / 修复应用</text>
+          <text x="342" y="460" class="detail-small">所有修改落证据</text>
+          <text x="342" y="484" class="detail-mono">CanvasSelectionContext</text>
+
+          <rect x="626" y="96" width="226" height="176" rx="8" class="detail-box detail-amber"></rect>
+          <text x="646" y="128" class="detail-label">右侧 Agent 操作台</text>
+          <text x="646" y="158" class="detail-small">解释当前步骤</text>
+          <text x="646" y="182" class="detail-small">读懂输入 / 输出 / 证据</text>
+          <text x="646" y="206" class="detail-small">把用户诉求转成动作</text>
+          <text x="646" y="230" class="detail-small">委托 Code Agent 修复</text>
+          <text x="646" y="254" class="detail-mono">AgentAction protocol</text>
+
+          <rect x="626" y="326" width="226" height="176" rx="8" class="detail-box detail-green"></rect>
+          <text x="646" y="358" class="detail-label">Code Agent / 修复闭环</text>
+          <text x="646" y="388" class="detail-small">生成候选 diff</text>
+          <text x="646" y="412" class="detail-small">验证改动</text>
+          <text x="646" y="436" class="detail-small">发布新快照</text>
+          <text x="646" y="460" class="detail-small">失败可回滚</text>
+          <text x="646" y="484" class="detail-mono">delegate_code_repair</text>
+
+          <rect x="910" y="172" width="190" height="250" rx="8" class="detail-box"></rect>
+          <text x="930" y="204" class="detail-label">可预览应用</text>
+          <text x="930" y="234" class="detail-small">发布快照</text>
+          <text x="930" y="258" class="detail-small">启动本地服务</text>
+          <text x="930" y="282" class="detail-small">内嵌浏览器预览</text>
+          <text x="930" y="306" class="detail-small">发现问题后继续问 Agent</text>
+          <text x="930" y="344" class="detail-label">回写</text>
+          <text x="930" y="372" class="detail-small">预览问题</text>
+          <text x="930" y="396" class="detail-small">用户调整</text>
+
+          <path d="M262 186 H322" class="detail-arrow-blue"></path>
+          <path d="M444 272 V326" class="detail-arrow-blue"></path>
+          <path d="M566 414 H626" class="detail-arrow-amber"></path>
+          <path d="M852 184 H910" class="detail-arrow-blue"></path>
+          <path d="M852 414 H910" class="detail-arrow-green"></path>
+          <path d="M1006 422 C1006 558 160 558 160 502" class="detail-arrow-amber"></path>
+
+          <text x="48" y="558" class="detail-small">业务产品口径：用户看见的是业务步骤和可试用应用；系统内部用图执行引擎保证步骤可执行，用产物协议保证右侧 Agent 的每次修改都可追踪。</text>
+        </svg>
+      </div>
+      <p class="note">
+        细节图把“应用装配器”展开成四件事：节点执行流负责跑流程，中间产物区负责可观测，右侧 Agent 协议负责把用户语言变成结构化动作，Code Agent 负责真正生成或修复代码。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="modules-title">
+      <h2 id="modules-title">核心组件职责</h2>
+      <div class="responsibility-grid">
+        <article class="item product">
+          <h3>业务策略文档</h3>
+          <p>说明业务目标、经营方法、流程步骤、判断标准和最终输出。它决定应用为什么存在、为谁服务、解决什么场景问题。</p>
+        </article>
+        <article class="item product">
+          <h3>企业 + 行业数据</h3>
+          <p>包括企业内部数据、行业数据、样例数据、口径定义和可用字段。它决定应用需要哪些数据入口、校验和证据链。</p>
+        </article>
+        <article class="item product">
+          <h3>私有模型能力</h3>
+          <p>包括企业私有模型、领域模型、模型调用边界和适用任务。它决定哪些节点能自动分析、总结、评分或生成建议。</p>
+        </article>
+        <article class="item product">
+          <h3>业务蓝图编译器</h3>
+          <p>把策略、数据和模型能力整理成产品需求、业务流程、数据规范、知识规范、模型绑定、证据标准和应用配置。</p>
+        </article>
+        <article class="item">
+          <h3>应用装配工作台</h3>
+          <p>它就是应用装配器：消费业务运行资产，驱动节点执行流、代码生成、发布预览和 Agent 修复。</p>
+        </article>
+        <article class="item">
+          <h3>节点执行流</h3>
+          <p>面向用户展示业务步骤；内部由图执行引擎按依赖运行，记录输入、过程、输出、风险和重跑证据。</p>
+        </article>
+        <article class="item">
+          <h3>右侧 Agent 协议</h3>
+          <p>把“解释这个产物”“重跑这步”“修复预览问题”等自然语言请求转成可确认、可验证的结构化动作。</p>
+        </article>
+        <article class="item accent">
+          <h3>能力运行时</h3>
+          <p>承载业务规则、数据访问、私有模型调用、工具调用、证据、评估、回放和可复用场景 Skill，是业务判断的事实源。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="mvp-title">
+      <h2 id="mvp-title">MVP 取舍：哪些先人工，哪些必须突破</h2>
+      <div class="responsibility-grid">
+        <article class="item">
+          <h3>可先人工：资料整理</h3>
+          <p>业务策略文档、行业材料、术语表和样例数据可以先由人整理成目录与 manifest，保证输入质量，不急着做全自动采集。</p>
+        </article>
+        <article class="item">
+          <h3>可先人工：数据接入</h3>
+          <p>企业数据和行业数据先支持 CSV / 文件上传、字段映射和人工确认；真实数据库、BI、ERP、API 连接可以后置。</p>
+        </article>
+        <article class="item">
+          <h3>可先人工：模型配置</h3>
+          <p>私有模型先通过人工配置 endpoint、模型名、适用任务和调用边界；模型路由、自动评测和成本优化可以后置。</p>
+        </article>
+        <article class="item">
+          <h3>可先人工：业务审核</h3>
+          <p>PRD++、规则阈值、证据口径和最终应用快照先由业务专家确认，避免早期系统自动放大错误结论。</p>
+        </article>
+        <article class="item">
+          <h3>可先人工：发布与反馈</h3>
+          <p>发布预览、验收记录、问题标注、规则提升候选可以先走人工确认，让闭环跑通并积累高质量样本。</p>
+        </article>
+        <article class="item accent">
+          <h3>不能人工替代：核心壁垒</h3>
+          <p>业务蓝图编译、运行资产契约、应用装配器、图执行引擎、Agent 产物协议和能力运行时必须产品化，否则无法规模化复制场景。</p>
+        </article>
+      </div>
+      <p class="note">
+        MVP 的原则是：低频、非结构化、需要业务判断的环节可以人工；高频、可复制、决定规模化的环节必须系统化。核心壁垒不是“把页面生成出来”，而是把业务策略、数据、模型和证据编译成可执行、可回放、可复用的场景能力。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="principles-title">
+      <h2 id="principles-title">设计原则</h2>
+      <div class="principle-grid">
+        <article class="item">
+          <h3>先理解业务，再生成应用</h3>
+          <p>业务策略、数据和模型能力先编译成 PRD 与运行资产，再进入应用装配，不把原文直接丢给 Code Agent。</p>
+        </article>
+        <article class="item">
+          <h3>工作台就是装配器</h3>
+          <p>工作台不是只看日志的页面，而是业务步骤、产物、预览和 Agent 协作的装配现场。</p>
+        </article>
+        <article class="item">
+          <h3>场景决定应用</h3>
+          <p>生成出来的是某个业务场景的应用，不是通用页面；页面、节点、数据入口和模型能力都来自业务运行资产。</p>
+        </article>
+        <article class="item accent">
+          <h3>可观测优先</h3>
+          <p>每一步都要看到输入、执行过程、输出、风险、证据和可操作项。</p>
+        </article>
+        <article class="item">
+          <h3>Agent 有边界</h3>
+          <p>右侧 Agent 理解用户意图并生成动作；复杂代码修改委托 Code Agent，所有改动落证据。</p>
+        </article>
+        <article class="item accent">
+          <h3>能力可复用</h3>
+          <p>一次应用生成的规则、证据和调优经验，可以沉淀为下一个业务场景的能力资产。</p>
+        </article>
+      </div>
+      <p class="note summary">
+        一句总结：V6 的核心不是“从 PRD 生成页面”，而是“从业务策略、企业/行业数据和私有模型编译出业务运行资产，再用应用装配器生成对应场景的可试用应用，并把运行证据沉淀为可复用能力”。
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="thinking-loop-title">
+      <h2 id="thinking-loop-title">结尾：从共识强化到反证驱动</h2>
+      <p class="thinking-intro">
+        这组对比图作为 V6 的收束：系统不是让更多资料去证明一个已经成立的大叙事，而是把业务判断拆成可被证伪、可被实验、可被修正、可被沉淀的运行资产。应用生成工作台的价值，也在于把这种反证循环产品化。
+      </p>
+
+      <div class="thinking-comparison">
+        <article class="thinking-card thinking-old">
+          <div class="thinking-card-header">
+            <div class="thinking-eyebrow">现有模式｜容易陷入</div>
+            <h3>共识强化型循环</h3>
+            <div class="thinking-subtitle">快速理解大结构之后，信息越多，反而越容易强化已有判断。</div>
+          </div>
+
+          <div class="thinking-svg-wrap">
+            <svg viewBox="0 0 620 520" role="img" aria-label="共识强化型循环图" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="thinking-arrow-red" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                  <path d="M2,2 L10,6 L2,10 Z" fill="#f87171"></path>
+                </marker>
+                <filter id="thinking-shadow-old" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#991b1b" flood-opacity="0.12"></feDropShadow>
+                </filter>
+              </defs>
+
+              <path d="M310 82 C430 82 515 165 515 265" fill="none" stroke="#f87171" stroke-width="4" marker-end="url(#thinking-arrow-red)"></path>
+              <path d="M515 265 C515 382 430 442 310 442" fill="none" stroke="#f87171" stroke-width="4" marker-end="url(#thinking-arrow-red)"></path>
+              <path d="M310 442 C190 442 105 382 105 265" fill="none" stroke="#f87171" stroke-width="4" marker-end="url(#thinking-arrow-red)"></path>
+              <path d="M105 265 C105 155 190 82 310 82" fill="none" stroke="#f87171" stroke-width="4" marker-end="url(#thinking-arrow-red)"></path>
+
+              <circle cx="310" cy="265" r="78" fill="#fee2e2" stroke="#ef4444" stroke-width="2"></circle>
+              <text x="310" y="250" text-anchor="middle" class="center-label" fill="#991b1b">核心陷阱</text>
+              <text x="310" y="276" text-anchor="middle" class="center-desc">结构说得通</text>
+              <text x="310" y="296" text-anchor="middle" class="center-desc">就被误认为已验证</text>
+
+              <g filter="url(#thinking-shadow-old)">
+                <rect x="220" y="34" rx="16" ry="16" width="180" height="72" fill="#fff" stroke="#fecaca"></rect>
+                <text x="310" y="62" text-anchor="middle" class="node-title" fill="#991b1b">1. 快速理解结构</text>
+                <text x="310" y="84" text-anchor="middle" class="node-desc">流程、模块、架构都看懂</text>
+
+                <rect x="415" y="205" rx="16" ry="16" width="170" height="80" fill="#fff" stroke="#fecaca"></rect>
+                <text x="500" y="234" text-anchor="middle" class="node-title" fill="#991b1b">2. 形成共识判断</text>
+                <text x="500" y="256" text-anchor="middle" class="node-desc">“本质都差不多”</text>
+                <text x="500" y="275" text-anchor="middle" class="node-desc">“大方向一定对”</text>
+
+                <rect x="220" y="414" rx="16" ry="16" width="180" height="72" fill="#fff" stroke="#fecaca"></rect>
+                <text x="310" y="442" text-anchor="middle" class="node-title" fill="#991b1b">3. 收集大量信息</text>
+                <text x="310" y="464" text-anchor="middle" class="node-desc">工具、案例、论文、项目</text>
+
+                <rect x="35" y="205" rx="16" ry="16" width="170" height="80" fill="#fff" stroke="#fecaca"></rect>
+                <text x="120" y="234" text-anchor="middle" class="node-title" fill="#991b1b">4. 反复印证常识</text>
+                <text x="120" y="256" text-anchor="middle" class="node-desc">验证“大家都知道的对”</text>
+                <text x="120" y="275" text-anchor="middle" class="node-desc">认知停在大结构层</text>
+              </g>
+
+              <rect x="82" y="332" rx="12" ry="12" width="456" height="44" fill="#fff7ed" stroke="#fdba74"></rect>
+              <text x="310" y="360" text-anchor="middle" font-size="15" font-weight="700" fill="#9a3412">结果：尝试很多，但真正被验证的不是“成败变量”</text>
+            </svg>
+          </div>
+
+          <p class="thinking-note">
+            <strong>一句话解释</strong>
+            这个循环会让人越来越懂行业大图，但很容易错过真正决定商业成败的细节变量。
+          </p>
+        </article>
+
+        <article class="thinking-card thinking-new">
+          <div class="thinking-card-header">
+            <div class="thinking-eyebrow">改进模式｜刻意训练</div>
+            <h3>反证驱动型循环</h3>
+            <div class="thinking-subtitle">先承认大结构只是初步判断，再用小实验找到哪里对、哪里错。</div>
+          </div>
+
+          <div class="thinking-svg-wrap">
+            <svg viewBox="0 0 620 520" role="img" aria-label="反证驱动型循环图" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="thinking-arrow-blue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                  <path d="M2,2 L10,6 L2,10 Z" fill="#60a5fa"></path>
+                </marker>
+                <filter id="thinking-shadow-new" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#1e40af" flood-opacity="0.12"></feDropShadow>
+                </filter>
+              </defs>
+
+              <path d="M310 82 C430 82 515 165 515 265" fill="none" stroke="#60a5fa" stroke-width="4" marker-end="url(#thinking-arrow-blue)"></path>
+              <path d="M515 265 C515 382 430 442 310 442" fill="none" stroke="#60a5fa" stroke-width="4" marker-end="url(#thinking-arrow-blue)"></path>
+              <path d="M310 442 C190 442 105 382 105 265" fill="none" stroke="#60a5fa" stroke-width="4" marker-end="url(#thinking-arrow-blue)"></path>
+              <path d="M105 265 C105 155 190 82 310 82" fill="none" stroke="#60a5fa" stroke-width="4" marker-end="url(#thinking-arrow-blue)"></path>
+
+              <circle cx="310" cy="265" r="78" fill="#dbeafe" stroke="#2563eb" stroke-width="2"></circle>
+              <text x="310" y="248" text-anchor="middle" class="center-label" fill="#1e40af">核心转变</text>
+              <text x="310" y="274" text-anchor="middle" class="center-desc">不是证明自己对</text>
+              <text x="310" y="294" text-anchor="middle" class="center-desc">而是快速发现哪里错</text>
+
+              <g filter="url(#thinking-shadow-new)">
+                <rect x="220" y="34" rx="16" ry="16" width="180" height="72" fill="#fff" stroke="#bfdbfe"></rect>
+                <text x="310" y="62" text-anchor="middle" class="node-title" fill="#1e40af">1. 理解大结构</text>
+                <text x="310" y="84" text-anchor="middle" class="node-desc">只当作“初步假设”</text>
+
+                <rect x="415" y="205" rx="16" ry="16" width="170" height="80" fill="#fff" stroke="#bfdbfe"></rect>
+                <text x="500" y="232" text-anchor="middle" class="node-title" fill="#1e40af">2. 找判别变量</text>
+                <text x="500" y="254" text-anchor="middle" class="node-desc">哪个细节真正决定</text>
+                <text x="500" y="273" text-anchor="middle" class="node-desc">客户价值和商业成败？</text>
+
+                <rect x="220" y="414" rx="16" ry="16" width="180" height="72" fill="#fff" stroke="#bfdbfe"></rect>
+                <text x="310" y="442" text-anchor="middle" class="node-title" fill="#1e40af">3. 设计反证实验</text>
+                <text x="310" y="464" text-anchor="middle" class="node-desc">小样本、短周期、可度量</text>
+
+                <rect x="35" y="205" rx="16" ry="16" width="170" height="80" fill="#fff" stroke="#bfdbfe"></rect>
+                <text x="120" y="232" text-anchor="middle" class="node-title" fill="#1e40af">4. 用结果修正认知</text>
+                <text x="120" y="254" text-anchor="middle" class="node-desc">支持就沉淀</text>
+                <text x="120" y="273" text-anchor="middle" class="node-desc">不支持就改模型</text>
+              </g>
+
+              <rect x="82" y="332" rx="12" ry="12" width="456" height="44" fill="#f0fdf4" stroke="#86efac"></rect>
+              <text x="310" y="360" text-anchor="middle" font-size="15" font-weight="700" fill="#166534">结果：每一轮信息和实验，都逼近真正的“成败变量”</text>
+            </svg>
+          </div>
+
+          <p class="thinking-note">
+            <strong>一句话解释</strong>
+            这个循环不是否定抽象能力，而是把抽象后的判断变成可被证伪、可被修正、可沉淀的方法。
+          </p>
+        </article>
+      </div>
+
+      <div class="thinking-rules">
+        <div class="thinking-rule">
+          <b>1. 大结构只是起点</b>
+          <span>“我理解了架构”不等于“这个判断已经成立”。</span>
+        </div>
+        <div class="thinking-rule">
+          <b>2. 每个判断都要找判别变量</b>
+          <span>继续追问：到底哪个小变量会决定成败？</span>
+        </div>
+        <div class="thinking-rule">
+          <b>3. 用最小实验反证</b>
+          <span>不要用更多资料证明自己对，要用真实结果发现哪里错。</span>
+        </div>
+      </div>
+
+      <p class="note summary">
+        这也是 App Generation V6 的工作方式：业务资料先形成假设，节点执行流把假设变成可观察产物，可预览应用暴露真实问题，右侧 Agent 和 Code Agent 负责把问题转成修复与证据，最终沉淀为可复用能力。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

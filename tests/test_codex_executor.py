@@ -1439,6 +1439,76 @@ diff --git a/scraper.py b/scraper.py
         self.assertIn("node generated_apps/todo-prototype/runtime_smoke.js", test_report)
         self.assertIn("cd generated_apps/todo-prototype", preview)
 
+    def test_report_generator_shell_flow_narrows_codex_prompt_and_allowed_paths(self) -> None:
+        from growth_dev.team.agents import AgentContext
+        from growth_dev.team.codex import CodexExecutor, CodexExecutorConfig
+        from growth_dev.team.models import DomainSpec, TeamRunRecord
+        from growth_dev.team.runtime import default_team_spec
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            run_dir = root / "runs" / "shell-flow"
+            run_dir.mkdir(parents=True)
+            (run_dir / "input_prd.md").write_text("# 市场洞察报告", encoding="utf-8")
+            (run_dir / "app.config.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "app-config-v1",
+                        "app_slug": "market-insight",
+                        "shell_kind": "report_generator",
+                        "shell_version": "0.1.0",
+                        "customizations": [{"position": "报告顶部", "behavior": "显示摘要", "acceptance": "用户能看到摘要"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "acceptance_criteria.md").write_text("# Acceptance\n\n- 用户能看到摘要\n", encoding="utf-8")
+            skill_snapshot = run_dir / "skill_snapshot"
+            skill_snapshot.mkdir()
+            (skill_snapshot / "SKILL.md").write_text("# Market Insight Skill\n", encoding="utf-8")
+            (run_dir / "app_contract.json").write_text(
+                json.dumps(
+                    {
+                        "app_slug": "market-insight",
+                        "generated_app_dir": "generated_apps/market-insight",
+                        "shell_kind": "report_generator",
+                        "app_config_ref": "app.config.json",
+                        "verification_commands": ["node --check generated_apps/{app_slug}/server.js"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            record = TeamRunRecord(run_id="shell-flow", domain_id="app_generation", brief="生成市场洞察 Shell", run_dir=run_dir)
+            context = AgentContext(
+                run_id="shell-flow",
+                run_dir=run_dir,
+                repo_root=root,
+                executor="codex",
+                brief="生成市场洞察 Shell",
+                team=default_team_spec(),
+                domain=DomainSpec(domain_id="app_generation", risk_rules=[]),
+                inputs={"app_slug": "market-insight"},
+                record=record,
+            )
+
+            bundle = CodexExecutor(CodexExecutorConfig(), repo_root=root, run_dir=run_dir).write_prompt_bundle("coder", context)
+            prompt_text = bundle.prompt_path.read_text(encoding="utf-8")
+            prompt_bundle = json.loads((run_dir / "codex" / "prompt_bundle.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            prompt_bundle["allowed_paths"],
+            [
+                "generated_apps/market-insight/app.config.json",
+                "generated_apps/market-insight/custom/",
+            ],
+        )
+        self.assertIn("python3 -m growth_dev.cli app appcheck config --run-id shell-flow", prompt_bundle["verification_commands"])
+        self.assertIn("app.config.json (current)", prompt_text)
+        self.assertIn("acceptance_criteria.md", prompt_text)
+        self.assertIn("skill_snapshot/SKILL.md", prompt_text)
+        self.assertIn("禁止修改 Shell 源码", prompt_text)
+
     def test_app_generation_runtime_smoke_failure_blocks_coder(self) -> None:
         from growth_dev.team.runtime import TeamRuntime, default_team_spec
 

@@ -1,0 +1,152 @@
+<svg width="1440" height="980" viewBox="0 0 1440 980" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">App Generation 判别变量与反证实验地图</title>
+  <desc id="desc">这张图展示 App Generation 区别于一句话生成应用工具的核心判别变量，以及每个变量对应的最小反证实验和通过信号。</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#1F5D8C"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#1F7A4D"/>
+    </marker>
+    <filter id="soft-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1D252C" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .bg { fill: #F6F7F9; }
+      .surface { fill: #FFFFFF; stroke: #DCE2E7; stroke-width: 1.4; }
+      .panel { fill: #FFFFFF; stroke: #C9D3DC; stroke-width: 1.5; filter: url(#soft-shadow); }
+      .blue { fill: #EEF4F8; stroke: #9BB8CB; }
+      .green { fill: #EAF4EE; stroke: #9FC7B1; }
+      .amber { fill: #F6EFE3; stroke: #D5BD87; }
+      .red { fill: #FCEEEE; stroke: #D9A2A2; }
+      .text { fill: #1D252C; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+      .muted { fill: #667684; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+      .mono { fill: #314455; font-family: SFMono-Regular, Consolas, monospace; }
+      .title { font-size: 34px; font-weight: 780; }
+      .subtitle { font-size: 17px; }
+      .section-title { font-size: 20px; font-weight: 760; }
+      .card-title { font-size: 17px; font-weight: 760; }
+      .body { font-size: 14px; }
+      .small { font-size: 12px; }
+      .tag { font-size: 12px; font-weight: 760; letter-spacing: 0.8px; }
+      .arrow-blue { stroke: #1F5D8C; stroke-width: 2.3; fill: none; marker-end: url(#arrow-blue); }
+      .arrow-green { stroke: #1F7A4D; stroke-width: 2.3; fill: none; marker-end: url(#arrow-green); }
+      .arrow-dashed { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1440" height="980"/>
+
+  <text x="72" y="76" class="text title">App Generation 判别变量与反证实验地图</text>
+  <text x="72" y="110" class="muted subtitle">目标不是证明“我们也能生成 App”，而是快速验证：我们能否把业务资料、数据、模型和规则变成可试用、可修复、可沉淀的业务能力。</text>
+
+  <rect x="72" y="142" width="1296" height="92" rx="8" class="panel amber"/>
+  <text x="96" y="176" class="text section-title">核心 fit 成立判别</text>
+  <text x="96" y="207" class="text body">如果用户只说“页面生成得挺快”，还没有 Fit；如果用户说“我能把一套业务方法快速变成能试、能改、能复用的应用”，核心 Fit 才成立。</text>
+
+  <rect x="72" y="276" width="360" height="590" rx="8" class="panel"/>
+  <text x="96" y="312" class="text section-title">核心判别变量</text>
+  <text x="96" y="338" class="muted body">一旦不成立，系统会退化成 Demo 生成器。</text>
+
+  <g>
+    <rect x="96" y="372" width="312" height="58" rx="8" class="blue"/>
+    <text x="116" y="396" class="text card-title">V1 输入 Fit</text>
+    <text x="116" y="416" class="muted small">业务文档集合能否编译成 PRD++ 与运行资产</text>
+
+    <rect x="96" y="444" width="312" height="58" rx="8" class="blue"/>
+    <text x="116" y="468" class="text card-title">V2 消费 Fit</text>
+    <text x="116" y="488" class="muted small">task/domain/app.config 是否真实影响应用生成</text>
+
+    <rect x="96" y="516" width="312" height="58" rx="8" class="green"/>
+    <text x="116" y="540" class="text card-title">V3 交付 Fit</text>
+    <text x="116" y="560" class="muted small">生成应用能否完成真实业务闭环</text>
+
+    <rect x="96" y="588" width="312" height="58" rx="8" class="green"/>
+    <text x="116" y="612" class="text card-title">V4 修复 Fit</text>
+    <text x="116" y="632" class="muted small">右侧 Agent 能否把问题转成可执行修复</text>
+
+    <rect x="96" y="660" width="312" height="58" rx="8" class="amber"/>
+    <text x="116" y="684" class="text card-title">V5 信任 Fit</text>
+    <text x="116" y="704" class="muted small">每一步是否有证据、验证、风险和回放</text>
+
+    <rect x="96" y="732" width="312" height="58" rx="8" class="amber"/>
+    <text x="116" y="756" class="text card-title">V6 复用 Fit</text>
+    <text x="116" y="776" class="muted small">修复经验能否沉淀成规则或能力快照</text>
+  </g>
+
+  <rect x="540" y="276" width="360" height="590" rx="8" class="panel"/>
+  <text x="564" y="312" class="text section-title">最小反证实验</text>
+  <text x="564" y="338" class="muted body">不要做大 Demo，优先验证最容易失败的环节。</text>
+
+  <g>
+    <rect x="564" y="372" width="312" height="58" rx="8" class="surface"/>
+    <text x="584" y="396" class="text card-title">E1 文档集合编译实验</text>
+    <text x="584" y="416" class="muted small">只给业务资料目录，不手写完整 PRD</text>
+
+    <rect x="564" y="444" width="312" height="58" rx="8" class="surface"/>
+    <text x="584" y="468" class="text card-title">E2 产物扰动实验</text>
+    <text x="584" y="488" class="muted small">改 app.config/domain.yaml 一个业务约束</text>
+
+    <rect x="564" y="516" width="312" height="58" rx="8" class="surface"/>
+    <text x="584" y="540" class="text card-title">E3 真实任务闭环实验</text>
+    <text x="584" y="560" class="muted small">从资料输入到预览应用完成核心任务</text>
+
+    <rect x="564" y="588" width="312" height="58" rx="8" class="surface"/>
+    <text x="584" y="612" class="text card-title">E4 首次修复实验</text>
+    <text x="584" y="632" class="muted small">制造一个预览 bug，只通过右侧 Agent 修复</text>
+
+    <rect x="564" y="660" width="312" height="58" rx="8" class="surface"/>
+    <text x="584" y="684" class="text card-title">E5 可观测等待实验</text>
+    <text x="584" y="704" class="muted small">长时间 Code Agent 运行时用户能否判断状态</text>
+
+    <rect x="564" y="732" width="312" height="58" rx="8" class="surface"/>
+    <text x="584" y="756" class="text card-title">E6 规则复用实验</text>
+    <text x="584" y="776" class="muted small">同类错误第二次是否进入 verifier 或规则候选</text>
+  </g>
+
+  <rect x="1008" y="276" width="360" height="590" rx="8" class="panel"/>
+  <text x="1032" y="312" class="text section-title">通过信号</text>
+  <text x="1032" y="338" class="muted body">不是“看起来不错”，而是用户动作和系统证据成立。</text>
+
+  <g>
+    <rect x="1032" y="372" width="312" height="58" rx="8" class="green"/>
+    <text x="1052" y="396" class="text card-title">S1 产物可执行</text>
+    <text x="1052" y="416" class="muted small">PRD++ / DataSpec / EvalSpec 能支撑后续生成</text>
+
+    <rect x="1032" y="444" width="312" height="58" rx="8" class="green"/>
+    <text x="1052" y="468" class="text card-title">S2 应用随业务约束变化</text>
+    <text x="1052" y="488" class="muted small">不是静态模板，不是文档摆设</text>
+
+    <rect x="1032" y="516" width="312" height="58" rx="8" class="green"/>
+    <text x="1052" y="540" class="text card-title">S3 用户完成核心任务</text>
+    <text x="1052" y="560" class="muted small">能上传、生成、预览、下载、局部迭代</text>
+
+    <rect x="1032" y="588" width="312" height="58" rx="8" class="green"/>
+    <text x="1052" y="612" class="text card-title">S4 修复闭环成立</text>
+    <text x="1052" y="632" class="muted small">repair request、diff、验证、重启、证据齐全</text>
+
+    <rect x="1032" y="660" width="312" height="58" rx="8" class="green"/>
+    <text x="1052" y="684" class="text card-title">S5 用户知道系统在干什么</text>
+    <text x="1052" y="704" class="muted small">能看到阶段、最近事件、失败原因和下一步</text>
+
+    <rect x="1032" y="732" width="312" height="58" rx="8" class="green"/>
+    <text x="1052" y="756" class="text card-title">S6 下次少踩同类坑</text>
+    <text x="1052" y="776" class="muted small">规则提升候选进入 benchmark / prompt / verifier</text>
+  </g>
+
+  <path d="M408 401 H564" class="arrow-blue"/>
+  <path d="M876 401 H1032" class="arrow-green"/>
+  <path d="M408 473 H564" class="arrow-blue"/>
+  <path d="M876 473 H1032" class="arrow-green"/>
+  <path d="M408 545 H564" class="arrow-blue"/>
+  <path d="M876 545 H1032" class="arrow-green"/>
+  <path d="M408 617 H564" class="arrow-blue"/>
+  <path d="M876 617 H1032" class="arrow-green"/>
+  <path d="M408 689 H564" class="arrow-blue"/>
+  <path d="M876 689 H1032" class="arrow-green"/>
+  <path d="M408 761 H564" class="arrow-blue"/>
+  <path d="M876 761 H1032" class="arrow-green"/>
+
+  <rect x="72" y="900" width="1296" height="48" rx="8" class="red"/>
+  <text x="96" y="930" class="text body">最高优先级三连测：E1 文档集合编译实验 → E3 真实任务闭环实验 → E4 首次修复实验。三者通过，才说明它不是“一句话生成页面”，而是业务能力装配器。</text>
+</svg>
