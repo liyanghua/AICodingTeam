@@ -1,6 +1,7 @@
 """Tests for report_generator shell server API endpoints."""
 import json
 import os
+import re
 import shutil
 import shlex
 import socket
@@ -1686,7 +1687,9 @@ process.stdout.write(JSON.stringify(result));
             self.assertIn("八类需求标准", prompt["message"])
             self.assertIn("品类需求", prompt["message"])
             self.assertIn("定制需求", prompt["message"])
-            self.assertEqual(prompt["message"].count('"row_id"'), 1)
+            match = re.search(r'"row_id": "(keyword:防水桌布\d+)"', prompt["message"])
+            self.assertIsNotNone(match)
+            self.assertEqual(prompt["message"].count(match.group(1)), 1)
 
         proposal_ids = [item["proposal_id"] for item in batch["proposals"]]
         status, applied = self._direct(
@@ -1749,6 +1752,66 @@ process.stdout.write(JSON.stringify(result));
         )
         self.assertEqual(patched["agent_enrichment"]["remaining_cells"], 3)
 
+    def test_keyword_agent_batch_normalizes_flat_and_field_value_patch_shapes(self):
+        self._write_keyword_collaboration_fixture(count=2)
+        fake_pi = self.app_root / "fake_pi_keyword_patch_shapes"
+        fake_pi.write_text(
+            "#!/usr/bin/env node\n"
+            "let request = '';\n"
+            "process.stdin.setEncoding('utf8');\n"
+            "process.stdin.once('data', chunk => { request += chunk;\n"
+            "  const payload = JSON.parse(request.trim());\n"
+            "  const rowId = (payload.message.match(/\\\"row_id\\\": \\\"([^\\\"]+)/) || [])[1] || '';\n"
+            "  const patches = rowId.endsWith('1')\n"
+            "    ? [{row_id:rowId,root_terms:'防水，桌布，防水',demand_type:'功能'}]\n"
+            "    : [\n"
+            "        {row_id:rowId,field:'root_terms',value:['加厚','桌布','加厚']},\n"
+            "        {row_id:rowId,field_name:'demand_type',value:'场景'}\n"
+            "      ];\n"
+            "  const proposal = {schema_version:'pi-data-mapping-advice-v1',node_id:'collect_keywords',summary:{status:'needs_review',text:'关键词语义建议'},field_advice:[],table_edit_proposal:{schema_version:'data-table-edit-proposal-v1',patches}};\n"
+            "  process.stdout.write(JSON.stringify({type:'agent_start',model:'gpt-5.6-sol'}) + '\\n');\n"
+            "  process.stdout.write(JSON.stringify({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:JSON.stringify(proposal)}}) + '\\n');\n"
+            "  process.stdout.write('{\"type\":\"agent_end\",\"messages\":[],\"willRetry\":false}\\n');\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        fake_pi.chmod(0o755)
+        status, started = self._direct(
+            "POST",
+            "/api/nodes/collect_keywords/agent-thread/batches",
+            {"base_revision": 0, "page_number": 1, "page_size": 10},
+            env_extra={
+                "PI_BIN": str(fake_pi),
+                "AICODEMIRROR_API_KEY": "sk-test",
+                "PI_DEFAULT_MODEL": "aicodemirror/gpt-5.6-sol",
+                "PI_RPC_TIMEOUT_MS": "3000",
+            },
+        )
+        self.assertEqual(status, 202)
+        _, loaded = self._direct(
+            "GET", f"/api/nodes/collect_keywords/agent-thread/batches/{started['batch_id']}"
+        )
+        batch = loaded["batch"]
+        self.assertEqual(batch["progress"]["proposed_cells"], 4, json.dumps(batch, ensure_ascii=False))
+        self.assertEqual(batch["progress"]["rejected_cells"], 0)
+        self.assertTrue(all(not item["proposal_risks"] for item in batch["items"]))
+        self.assertEqual(
+            [diagnostic["patch_format"] for diagnostic in batch["items"][0]["patch_diagnostics"]],
+            ["flat_keyword_patch", "flat_keyword_patch"],
+        )
+        self.assertEqual(
+            [diagnostic["patch_format"] for diagnostic in batch["items"][1]["patch_diagnostics"]],
+            ["field_value_patch", "field_value_patch"],
+        )
+        proposals = {
+            (item["row_id"], item["field_path"]): item["new_value"]
+            for item in batch["proposals"]
+        }
+        self.assertEqual(proposals[("keyword:防水桌布1", "root_terms")], ["防水", "桌布"])
+        self.assertEqual(proposals[("keyword:防水桌布1", "demand_type")], "功能需求")
+        self.assertEqual(proposals[("keyword:防水桌布2", "root_terms")], ["加厚", "桌布"])
+        self.assertEqual(proposals[("keyword:防水桌布2", "demand_type")], "场景需求")
+
     def test_keyword_agent_batch_rejects_unknown_demand_type(self):
         self._write_keyword_collaboration_fixture(count=1)
         fake_pi = self.app_root / "fake_pi_keyword_invalid_demand"
@@ -1760,6 +1823,14 @@ process.stdout.write(JSON.stringify(result));
             "table_edit_proposal": {
                 "schema_version": "data-table-edit-proposal-v1",
                 "patches": [
+                    {
+                        "row_id": "keyword:防水桌布1",
+                        "field": "root_terms",
+                        "value": {"unexpected": "object"},
+                        "reason": "错误的词根结构",
+                        "confidence": 0.8,
+                        "evidence_refs": [],
+                    },
                     {
                         "row_id": "keyword:防水桌布1",
                         "field_path": "demand_type",
@@ -1797,7 +1868,9 @@ process.stdout.write(JSON.stringify(result));
         )
         batch = loaded["batch"]
         self.assertEqual(batch["progress"]["proposed_cells"], 0)
+        self.assertIn("invalid_root_terms_rejected", batch["items"][0]["proposal_risks"])
         self.assertIn("invalid_demand_type_rejected", batch["items"][0]["proposal_risks"])
+        self.assertNotIn("patch_outside_selection_rejected", batch["items"][0]["proposal_risks"])
 
     def test_agent_batch_uses_only_page_two_rows_and_one_product_per_prompt(self):
         self._write_collaboration_fixture()

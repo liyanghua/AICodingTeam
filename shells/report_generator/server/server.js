@@ -673,6 +673,10 @@ function piPromptForDataMapping(node, payload) {
     : {};
   const intent = String(payload.intent || 'data_mapping_advice');
   const collaborationIntent = ['table_edit_advice', 'insight_collaboration', 'free_chat'].includes(intent);
+  const keywordTableAdvice = intent === 'table_edit_advice' && (
+    String(node && node.id || '') === 'collect_keywords'
+    || String(payload.batch_item_context && payload.batch_item_context.subject_kind || '') === 'keyword'
+  );
   if (payload.batch_item_context && typeof payload.batch_item_context === 'object') {
     const keywordBatch = String(payload.batch_item_context.subject_kind || '') === 'keyword';
     return [
@@ -691,7 +695,7 @@ function piPromptForDataMapping(node, payload) {
       '必须返回 JSON，schema_version 固定为 "pi-data-mapping-advice-v1"，node_id 等于当前节点。',
       '必须返回 table_edit_proposal，schema_version 固定为 "data-table-edit-proposal-v1"。',
       keywordBatch
-        ? 'patches 只能包含当前 row_id 的 root_terms 和 demand_type；root_terms 必须为去重字符串数组，demand_type 必须是八类需求标准中的一个主类型。'
+        ? 'patches 只能包含当前 row_id 的 root_terms 和 demand_type；root_terms 必须为去重字符串数组，demand_type 必须是八类需求标准中的一个主类型。每个字段必须单独返回一个 patch，格式示例：{"row_id":"keyword:书桌垫","field_path":"root_terms","old_value":[],"new_value":["书桌","桌垫"],"reason":"关键词拆解","confidence":0.9,"evidence_refs":[]}。'
         : 'patches 只能包含当前 row_id 的 target_fields，old_value 必须为空，new_value 只能是有证据支持的简洁描述。',
       `证据不足的字段不要编造，保持为空；不得修改 API 事实字段、其它${keywordBatch ? '关键词' : '商品'}或输出隐藏思维过程。`,
     ].join('\n');
@@ -743,7 +747,9 @@ function piPromptForDataMapping(node, payload) {
     '4. 如果 intent=derived_field_analysis 或 derived_field_fill，必须额外输出 derived_field_advice[]，说明派生字段的分析逻辑、所需证据、草稿值条件、置信度和风险；如果已有样例行证据，可输出 derived_field_rows[]，格式为 {row_index, fields:{字段名:{draft_value, confidence, evidence_fields}}}；无证据时 draft_value 留空。',
     '5. 如果 intent=mapping_correction，必须围绕“当前纠错目标字段”给出 field_advice；可以建议 change_source/manual_fill/ask_user，但不能自动确认。',
     '6. 如果 intent=insight_draft，必须额外输出 insight_draft_advice，包含草稿文本、证据字段、风险和待确认问题；不能把草稿写成 confirmed 事实。',
-    '7. 如果 intent=table_edit_advice，必须输出 table_edit_proposal，schema_version="data-table-edit-proposal-v1"，patches 只包含当前选区中的 row_id/field_path，并带 old_value/new_value/reason/confidence/evidence_refs。',
+    keywordTableAdvice
+      ? '7. 如果 intent=table_edit_advice，必须输出 table_edit_proposal，schema_version="data-table-edit-proposal-v1"；关键词字段必须逐字段输出标准 patch，例如 {"row_id":"keyword:书桌垫","field_path":"root_terms","old_value":[],"new_value":["书桌","桌垫"],"reason":"关键词拆解","confidence":0.9,"evidence_refs":[]}。只允许当前选区中的 root_terms 和 demand_type。'
+      : '7. 如果 intent=table_edit_advice，必须输出 table_edit_proposal，schema_version="data-table-edit-proposal-v1"，patches 只包含当前选区中的 row_id/field_path，并带 old_value/new_value/reason/confidence/evidence_refs。',
     '8. 如果 intent=insight_collaboration，必须输出 insight_collaboration_proposal，包含 requirement_id、proposed_text、evidence_bindings、risks、questions_for_user；证据只能引用当前表格工作区中的字段和 row_id。',
     '9. 如果 intent=free_chat，基于当前数据表和多轮历史直接回答；没有足够证据时明确说明缺口，不生成表格 patch 或已确认结论。',
     '10. 无法完整判断时，用 questions_for_user 列出待用户澄清的问题。',
@@ -1215,13 +1221,85 @@ const KEYWORD_DEMAND_TYPES = new Set([
   '场景需求', '品牌需求', '风格需求', '定制需求',
 ]);
 
+const KEYWORD_DEMAND_TYPE_ALIASES = new Map(Array.from(KEYWORD_DEMAND_TYPES).flatMap(value => [
+  [value, value],
+  [value.slice(0, -2), value],
+]));
+
 function normalizeKeywordRootTerms(value) {
   const terms = Array.isArray(value)
     ? value
     : typeof value === 'string'
       ? value.split(/[，,、;；|\n]+/)
       : [];
-  return Array.from(new Set(terms.map(item => String(item || '').trim()).filter(Boolean)));
+  return Array.from(new Set(terms
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean)));
+}
+
+function normalizeKeywordDemandType(value) {
+  const normalized = String(value || '').trim();
+  return KEYWORD_DEMAND_TYPE_ALIASES.get(normalized) || '';
+}
+
+function keywordPatchCandidates(rawPatch) {
+  const patch = rawPatch && typeof rawPatch === 'object' && !Array.isArray(rawPatch) ? rawPatch : {};
+  const keys = Object.keys(patch).map(String).sort();
+  const explicitField = patch.field_path || patch.field_name || patch.field;
+  if (explicitField) {
+    const hasNewValue = Object.prototype.hasOwnProperty.call(patch, 'new_value');
+    const hasValue = Object.prototype.hasOwnProperty.call(patch, 'value');
+    return [{
+      patch: {
+        ...patch,
+        field_path: explicitField,
+        new_value: hasNewValue ? patch.new_value : hasValue ? patch.value : undefined,
+      },
+      diagnostic: {
+        patch_format: hasNewValue ? 'standard_field_patch' : hasValue ? 'field_value_patch' : 'field_patch_missing_value',
+        original_patch_keys: keys,
+        normalized_field: String(explicitField || ''),
+        value_type: hasNewValue ? valueTypeName(patch.new_value) : hasValue ? valueTypeName(patch.value) : 'undefined',
+      },
+    }];
+  }
+  const flatFields = ['root_terms', 'demand_type'].filter(field => Object.prototype.hasOwnProperty.call(patch, field));
+  if (flatFields.length > 0) {
+    return flatFields.map(field => ({
+      patch: {
+        row_id: patch.row_id,
+        field_path: field,
+        old_value: patch.old_value,
+        new_value: patch[field],
+        reason: patch.reason,
+        confidence: patch.confidence,
+        evidence_refs: patch.evidence_refs,
+      },
+      diagnostic: {
+        patch_format: 'flat_keyword_patch',
+        original_patch_keys: keys,
+        normalized_field: field,
+        value_type: valueTypeName(patch[field]),
+      },
+    }));
+  }
+  return [{
+    patch,
+    diagnostic: {
+      patch_format: 'unsupported_patch_shape',
+      original_patch_keys: keys,
+      normalized_field: '',
+      value_type: 'undefined',
+    },
+    unsupported: true,
+  }];
+}
+
+function valueTypeName(value) {
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
 }
 
 function normalizeTableEditProposal(raw, context) {
@@ -1235,23 +1313,52 @@ function normalizeTableEditProposal(raw, context) {
   ]));
   const risks = Array.isArray(item.risks) ? item.risks.map(String) : [];
   const rawPatches = Array.isArray(item.patches) ? item.patches : [];
-  const keywordBatch = String(context.batch_item_context && context.batch_item_context.subject_kind || '') === 'keyword';
+  const keywordBatch = String(context.batch_item_context && context.batch_item_context.subject_kind || '') === 'keyword'
+    || (catalog.fields.has('keyword') && catalog.fields.has('root_terms') && catalog.fields.has('demand_type'));
   let rejected = 0;
+  let outsideSelectionRejected = 0;
   const rejectedPatchRefs = [];
+  const patchDiagnostics = [];
   const patches = [];
-  for (const rawPatch of rawPatches) {
-    const patch = rawPatch && typeof rawPatch === 'object' ? rawPatch : {};
+  const candidates = rawPatches.flatMap(rawPatch => keywordBatch
+    ? keywordPatchCandidates(rawPatch)
+    : [{
+        patch: rawPatch && typeof rawPatch === 'object' ? rawPatch : {},
+        diagnostic: {
+          patch_format: 'standard_field_patch',
+          original_patch_keys: Object.keys(rawPatch && typeof rawPatch === 'object' ? rawPatch : {}).map(String).sort(),
+          normalized_field: String(rawPatch && (rawPatch.field_path || rawPatch.field_name || rawPatch.field) || ''),
+          value_type: valueTypeName(rawPatch && rawPatch.new_value),
+        },
+      }]);
+  for (const candidate of candidates) {
+    const patch = candidate.patch;
+    const diagnostic = candidate.diagnostic;
+    if (candidate.unsupported) {
+      rejected += 1;
+      risks.push('unsupported_patch_shape_rejected');
+      rejectedPatchRefs.push({
+        row_id: String(patch.row_id || ''),
+        field_path: '',
+        reason: 'unsupported_patch_shape',
+        patch_keys: diagnostic.original_patch_keys,
+      });
+      patchDiagnostics.push({ status: 'rejected', reason: 'unsupported_patch_shape', ...diagnostic });
+      continue;
+    }
     const rowId = canonicalWorkspaceRowId(catalog, patch.row_id);
     const rawFieldPath = patch.field_path || patch.field_name || patch.field;
     const fieldPath = canonicalWorkspaceField(catalog, rawFieldPath);
     if (!tableSelectionAllows(selection, rowId, fieldPath, catalog)) {
       rejected += 1;
+      outsideSelectionRejected += 1;
       rejectedPatchRefs.push({
         row_id: String(patch.row_id || ''),
         field_path: String(rawFieldPath || ''),
         reason: 'outside_selection',
-        patch_keys: Object.keys(patch).map(String).sort(),
+        patch_keys: diagnostic.original_patch_keys,
       });
+      patchDiagnostics.push({ status: 'rejected', reason: 'outside_selection', ...diagnostic });
       continue;
     }
     const selected = selectedCells.get(`${rowId}\u0000${fieldPath}`) || {};
@@ -1267,22 +1374,24 @@ function normalizeTableEditProposal(raw, context) {
           row_id: rowId,
           field_path: fieldPath,
           reason: 'invalid_root_terms',
-          patch_keys: Object.keys(patch).map(String).sort(),
+          patch_keys: diagnostic.original_patch_keys,
         });
+        patchDiagnostics.push({ status: 'rejected', reason: 'invalid_root_terms', ...diagnostic });
         continue;
       }
     }
     if (keywordBatch && fieldPath === 'demand_type') {
-      newValue = String(newValue || '').trim();
-      if (!KEYWORD_DEMAND_TYPES.has(newValue)) {
+      newValue = normalizeKeywordDemandType(newValue);
+      if (!newValue) {
         rejected += 1;
         risks.push('invalid_demand_type_rejected');
         rejectedPatchRefs.push({
           row_id: rowId,
           field_path: fieldPath,
           reason: 'invalid_demand_type',
-          patch_keys: Object.keys(patch).map(String).sort(),
+          patch_keys: diagnostic.original_patch_keys,
         });
+        patchDiagnostics.push({ status: 'rejected', reason: 'invalid_demand_type', ...diagnostic });
         continue;
       }
     }
@@ -1298,8 +1407,9 @@ function normalizeTableEditProposal(raw, context) {
       source_kind: 'pi_derived',
       overrides_api_value: sourceKind === 'api' && oldValue !== undefined && oldValue !== null && String(oldValue).trim() !== '' && newValue !== oldValue,
     });
+    patchDiagnostics.push({ status: 'accepted', reason: '', ...diagnostic, normalized_field: fieldPath });
   }
-  if (rejected > 0) risks.push('patch_outside_selection_rejected');
+  if (outsideSelectionRejected > 0) risks.push('patch_outside_selection_rejected');
   return {
     schema_version: 'data-table-edit-proposal-v1',
     proposal_id: String(item.proposal_id || `table-proposal-${Date.now()}`),
@@ -1308,10 +1418,12 @@ function normalizeTableEditProposal(raw, context) {
     patches,
     summary: String(item.summary || ''),
     risks: Array.from(new Set(risks)),
-    raw_patch_count: rawPatches.length,
+    input_patch_count: rawPatches.length,
+    raw_patch_count: candidates.length,
     accepted_patch_count: patches.length,
     rejected_patch_count: rejected,
     rejected_patch_refs: rejectedPatchRefs,
+    patch_diagnostics: patchDiagnostics,
     status: patches.length > 0 ? 'pending' : 'no_applicable_patch',
     requires_human_application: true,
   };

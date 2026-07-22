@@ -1491,7 +1491,7 @@ function createCollaborationStore({
       table_revision: batch.base_revision,
     };
     const keywordInstruction = String(batch.subject_kind || '') === 'keyword'
-      ? '请基于当前关键词及其指标，同时生成 root_terms 和 demand_type。root_terms 必须是去重字符串数组；demand_type 必须是八类需求标准之一：品类需求、人群需求、属性需求、功能需求、场景需求、品牌需求、风格需求、定制需求。只允许修改当前行的 root_terms、demand_type。'
+      ? '请基于当前关键词及其指标，同时生成 root_terms 和 demand_type。root_terms 必须是去重字符串数组；demand_type 必须是八类需求标准之一：品类需求、人群需求、属性需求、功能需求、场景需求、品牌需求、风格需求、定制需求。只允许修改当前行的 root_terms、demand_type。每个字段单独返回一个 patch，例如 {"row_id":"keyword:书桌垫","field_path":"root_terms","old_value":[],"new_value":["书桌","桌垫"],"reason":"关键词拆解","confidence":0.9,"evidence_refs":[]}。'
       : '请结合当前商品已有信息，补齐全部目标字段。';
     return {
       model: batch.requested_model,
@@ -1515,7 +1515,10 @@ function createCollaborationStore({
       : typeof value === 'string'
         ? value.split(/[，,、;；|\n]+/)
         : [];
-    return Array.from(new Set(values.map(item => String(item || '').trim()).filter(Boolean)));
+    return Array.from(new Set(values
+      .filter(item => typeof item === 'string')
+      .map(item => item.trim())
+      .filter(Boolean)));
   }
 
   async function executeAgentBatch(prepared, callAgent, itemIds = null) {
@@ -1578,6 +1581,22 @@ function createCollaborationStore({
               field_path: String(ref && ref.field_path || ''),
               reason: String(ref && ref.reason || 'rejected'),
               patch_keys: Array.isArray(ref && ref.patch_keys) ? ref.patch_keys.map(String) : [],
+              patch_format: String(ref && ref.patch_format || ''),
+              original_patch_keys: Array.isArray(ref && ref.original_patch_keys) ? ref.original_patch_keys.map(String) : [],
+              normalized_field: String(ref && ref.normalized_field || ''),
+              value_type: String(ref && ref.value_type || ''),
+            }))
+            : [];
+          const patchDiagnostics = Array.isArray(proposal && proposal.patch_diagnostics)
+            ? proposal.patch_diagnostics.map(diagnostic => ({
+              status: String(diagnostic && diagnostic.status || ''),
+              reason: String(diagnostic && diagnostic.reason || ''),
+              patch_format: String(diagnostic && diagnostic.patch_format || ''),
+              original_patch_keys: Array.isArray(diagnostic && diagnostic.original_patch_keys)
+                ? diagnostic.original_patch_keys.map(String)
+                : [],
+              normalized_field: String(diagnostic && diagnostic.normalized_field || ''),
+              value_type: String(diagnostic && diagnostic.value_type || ''),
             }))
             : [];
           const allowedFields = new Set(item.target_fields || []);
@@ -1642,6 +1661,7 @@ function createCollaborationStore({
             : 'failed';
           item.proposal_risks = Array.from(new Set(proposalRisks));
           item.rejected_patch_refs = rejectedPatchRefs;
+          item.patch_diagnostics = patchDiagnostics;
           item.proposal_ids = proposalIds;
           batch.public_stage = '正在聚合结构化建议';
           recalculateBatchProgress(batch);
