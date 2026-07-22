@@ -23,7 +23,7 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "店铺名": ["store_name", "shop_name", "店铺名称", "店铺名"],
     "店铺名称": ["store_name", "shop_name", "店铺名称"],
     "价格": ["unit_price", "price", "价格", "件单价"],
-    "客单价": ["customer_unit_price", "previous_customer_unit_price", "unit_price", "客单价"],
+    "客单价": ["unit_price", "customer_unit_price", "price", "客单价", "previous_customer_unit_price"],
     "价格带": ["price_band", "avg_price", "price", "价格带", "价格"],
     "支付买家数": ["num_payers", "pay_buyer", "支付买家数", "买家数"],
     "销量/支付买家数": ["num_payers", "pay_buyer", "num_total", "sales_volume", "销量", "支付买家数", "销售能力"],
@@ -34,9 +34,24 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "场景": ["scene", "场景"],
     "主卖点": ["selling_point", "sell_point", "卖点", "主卖点"],
     "是否高增速": ["speed_type", "yoy", "growth", "rate", "高增速", "排名提升"],
+    "keyword": ["keyword", "keywords", "关键词", "搜索词"],
+    "search_popularity": ["search_popularity", "搜索人气"],
+    "growth_rate": ["search_growth_rate", "growth_rate", "搜索增长率"],
+    "competition_index": ["competition_index", "竞争指数"],
+    "click_rate": ["click_rate", "点击率"],
+    "conversion_rate": ["conversion_rate", "pay_rate", "支付转化率", "转化率"],
 }
 
-DERIVED_OR_MANUAL_FIELDS = {"功能", "风格", "主图元素", "爆款原因"}
+DERIVED_OR_MANUAL_FIELDS = {
+    "功能",
+    "风格",
+    "主图元素",
+    "爆款原因",
+    "root_terms",
+    "demand_type",
+    "词根",
+    "需求类型",
+}
 
 
 def _expanded_terms(query: str) -> list[str]:

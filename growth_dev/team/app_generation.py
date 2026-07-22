@@ -262,13 +262,18 @@ def _prepare_api_doc_index_snapshot(run_dir: Path, inputs: dict[str, Any]) -> di
     index_raw = str(inputs.get("api_doc_index") or "").strip()
     detail_raw = str(inputs.get("api_detail_doc") or "").strip()
     validation_raw = str(inputs.get("api_validation_doc") or "").strip()
-    if not any((index_raw, detail_raw, validation_raw)):
+    extra_detail_raw = [str(item or "").strip() for item in inputs.get("api_extra_detail_docs", []) if str(item or "").strip()]
+    if not any((index_raw, detail_raw, validation_raw, extra_detail_raw)):
         return None
     data_dir = ensure_dir(run_dir / "data_capability")
     index_path = data_dir / "api_doc_index.json"
     report_path = data_dir / "api_doc_index_report.md"
     sources: list[dict[str, Any]] = []
     build_mode = "prebuilt_index"
+    extra_detail_paths = [Path(item) for item in extra_detail_raw]
+    missing_extra = next((path for path in extra_detail_paths if not path.exists() or not path.is_file()), None)
+    if missing_extra:
+        raise ValueError(f"api_extra_detail_doc not found: {missing_extra}")
     if index_raw:
         source_index = Path(index_raw)
         if not source_index.exists() or not source_index.is_file():
@@ -279,6 +284,15 @@ def _prepare_api_doc_index_snapshot(run_dir: Path, inputs: dict[str, Any]) -> di
             "path": str(source_index),
             "sha256": _file_sha256(source_index),
         })
+        if extra_detail_paths:
+            from api_doc_matcher.indexer import merge_detail_documents_into_index_payload
+
+            merged = merge_detail_documents_into_index_payload(
+                read_json(index_path),
+                [(str(path), path.read_text(encoding="utf-8")) for path in extra_detail_paths],
+            )
+            index_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            build_mode = "prebuilt_index_with_extra_details"
     else:
         if not detail_raw or not validation_raw:
             raise ValueError("api_detail_doc and api_validation_doc must be provided together")
@@ -297,11 +311,16 @@ def _prepare_api_doc_index_snapshot(run_dir: Path, inputs: dict[str, Any]) -> di
             out_dir=data_dir,
             detail_source_path=str(detail_path),
             validation_source_path=str(validation_path),
+            extra_detail_documents=[(str(path), path.read_text(encoding="utf-8")) for path in extra_detail_paths],
         )
         sources.extend([
             {"kind": "api_detail_doc", "path": str(detail_path), "sha256": _file_sha256(detail_path)},
             {"kind": "api_validation_doc", "path": str(validation_path), "sha256": _file_sha256(validation_path)},
         ])
+    sources.extend(
+        {"kind": "api_extra_detail_doc", "path": str(path), "sha256": _file_sha256(path)}
+        for path in extra_detail_paths
+    )
     index_payload = read_json(index_path)
     stats = _api_doc_index_stats(index_payload)
     report_path.write_text(
@@ -612,6 +631,28 @@ def validate_app_config(run_dir: Path) -> list[str]:
             errors.append(f"node {node.get('id', '')} data_mapping_context missing")
         elif output_field_requirements and data_mapping_context.get("output_field_count") != len(output_field_requirements):
             errors.append(f"node {node.get('id', '')} data_mapping_context output_field_count mismatch")
+        analysis_view = node.get("analysis_node_view")
+        if not isinstance(analysis_view, dict):
+            errors.append(f"node {node.get('id', '')} analysis_node_view missing")
+        else:
+            if analysis_view.get("schema_version") != "analysis-node-view-v1":
+                errors.append(f"node {node.get('id', '')} analysis_node_view schema_version invalid")
+            analysis_kind = analysis_view.get("node_kind")
+            if output_field_requirements and node.get("data_requirements") and analysis_kind != "data_analysis":
+                errors.append(f"node {node.get('id', '')} analysis_node_view node_kind must be data_analysis")
+            if analysis_kind == "data_analysis":
+                for field in ("purpose_model", "input_model", "execution_plan", "data_output_model", "insight_output_model", "verification_model", "source_trace"):
+                    if not isinstance(analysis_view.get(field), dict):
+                        errors.append(f"node {node.get('id', '')} analysis_node_view missing {field}")
+                data_output = analysis_view.get("data_output_model") if isinstance(analysis_view.get("data_output_model"), dict) else {}
+                analysis_fields = data_output.get("fields")
+                if not isinstance(analysis_fields, list) or len(analysis_fields) != len(output_field_requirements or []):
+                    errors.append(f"node {node.get('id', '')} analysis_node_view data_output_model fields mismatch")
+                if node.get("id") == "collect_top_products":
+                    names = [str(item.get("field_name") or "") for item in output_field_requirements or [] if isinstance(item, dict)]
+                    for expected_name in ("商品主图", "功能", "风格", "主图元素", "爆款原因"):
+                        if expected_name not in names:
+                            errors.append(f"collect_top_products missing Chinese business field {expected_name}")
         tool_model = node.get("tool_model") if isinstance(node.get("tool_model"), dict) else {}
         if tool_model.get("effective_mode") != "manual_upload_only":
             errors.append(f"node {node.get('id', '')} tool_model effective_mode must be manual_upload_only")
@@ -727,45 +768,59 @@ def _compile_app_config_nodes(
         output_model_outputs = [_node_output_model_item(schema_item) for schema_item in output_schemas if isinstance(schema_item, dict)]
         node_execution_view = _node_execution_view(index, item, business_context, output_model_outputs)
         output_field_requirements = _node_output_field_requirements(output_model_outputs, required_data, node_execution_view)
-        nodes.append(
-            {
-                "id": str(item.get("id") or ""),
-                "name": str(item.get("name") or item.get("id") or ""),
-                "kind": node_kind,
-                "source_type": str(item.get("type") or ""),
-                "depends_on": [str(value) for value in item.get("depends_on", [])],
-                "data_requirements": requirement_ids,
-                "outputs": outputs,
-                "output_schema": output_schemas,
-                "output_field_requirements": output_field_requirements,
-                "state_machine": state_machine,
-                "input_model": _node_input_model(
-                    node_kind,
-                    required_data,
-                    node_execution_view.get("action", {}).get("fields", [])
-                    if isinstance(node_execution_view.get("action"), dict)
-                    else [],
-                ),
-                "output_model": {"outputs": output_model_outputs},
-                "execution_model": _node_execution_model(node_kind, state_machine, required_data),
-                "evidence_model": {
-                    "contract": evidence,
-                    "required": [str(value) for value in evidence.get("required", [])] if isinstance(evidence.get("required"), list) else [],
-                },
-                "tool_model": _node_tool_model(required_data),
-                "source_trace": _node_source_trace(requirement_ids, output_model_outputs, business_context),
-                "business_context": business_context,
-                "node_execution_view": node_execution_view,
-                "data_mapping_context": _node_data_mapping_context(
-                    item,
-                    required_data,
-                    output_model_outputs,
-                    output_field_requirements,
-                    business_context,
-                    node_execution_view,
-                ),
-            }
+        input_model = _node_input_model(
+            node_kind,
+            required_data,
+            node_execution_view.get("action", {}).get("fields", [])
+            if isinstance(node_execution_view.get("action"), dict)
+            else [],
         )
+        output_model = {"outputs": output_model_outputs}
+        execution_model = _node_execution_model(node_kind, state_machine, required_data)
+        source_trace = _node_source_trace(requirement_ids, output_model_outputs, business_context)
+        data_mapping_context = _node_data_mapping_context(
+            item,
+            required_data,
+            output_model_outputs,
+            output_field_requirements,
+            business_context,
+            node_execution_view,
+        )
+        node_config = {
+            "id": str(item.get("id") or ""),
+            "name": str(item.get("name") or item.get("id") or ""),
+            "kind": node_kind,
+            "source_type": str(item.get("type") or ""),
+            "depends_on": [str(value) for value in item.get("depends_on", [])],
+            "data_requirements": requirement_ids,
+            "outputs": outputs,
+            "output_schema": output_schemas,
+            "output_field_requirements": output_field_requirements,
+            "state_machine": state_machine,
+            "input_model": input_model,
+            "output_model": output_model,
+            "execution_model": execution_model,
+            "evidence_model": {
+                "contract": evidence,
+                "required": [str(value) for value in evidence.get("required", [])] if isinstance(evidence.get("required"), list) else [],
+            },
+            "tool_model": _node_tool_model(required_data),
+            "source_trace": source_trace,
+            "business_context": business_context,
+            "node_execution_view": node_execution_view,
+            "data_mapping_context": data_mapping_context,
+        }
+        node_config["analysis_node_view"] = _node_analysis_node_view(
+            item,
+            node_config,
+            required_data,
+            output_model_outputs,
+            output_field_requirements,
+            business_context,
+            node_execution_view,
+            source_trace,
+        )
+        nodes.append(node_config)
     return nodes
 
 
@@ -1035,6 +1090,370 @@ def _node_data_mapping_source_refs(
         for item in output_items
     )
     return refs
+
+
+def _node_analysis_node_view(
+    raw_node: dict[str, Any],
+    node_config: dict[str, Any],
+    required_data: list[dict[str, Any]],
+    output_items: list[dict[str, Any]],
+    output_field_requirements: list[dict[str, Any]],
+    business_context: dict[str, Any],
+    node_execution_view: dict[str, Any],
+    source_trace: dict[str, Any],
+) -> dict[str, Any]:
+    requirement_ids = node_config.get("data_requirements") if isinstance(node_config.get("data_requirements"), list) else []
+    has_data_requirements = bool(required_data) or bool(requirement_ids)
+    analysis_kind = "data_analysis" if has_data_requirements and output_field_requirements else "standard"
+    subsections = _workflow_subsections_for_analysis(business_context)
+    return {
+        "schema_version": "analysis-node-view-v1",
+        "node_id": str(node_config.get("id") or raw_node.get("id") or ""),
+        "node_kind": analysis_kind,
+        "purpose_model": _analysis_purpose_model(node_config, node_execution_view, subsections),
+        "input_model": _analysis_input_model(raw_node, required_data, node_config, subsections),
+        "execution_plan": _analysis_execution_plan(node_execution_view, subsections, analysis_kind),
+        "data_output_model": _analysis_data_output_model(output_items, output_field_requirements),
+        "insight_output_model": _analysis_insight_output_model(node_config, output_field_requirements, node_execution_view, subsections),
+        "verification_model": _analysis_verification_model(output_field_requirements, node_execution_view),
+        "source_trace": _analysis_source_trace(source_trace, business_context, node_execution_view),
+    }
+
+
+def _workflow_subsections_for_analysis(business_context: dict[str, Any]) -> list[dict[str, Any]]:
+    result = _primary_workflow_section_result(business_context)
+    workflow = result.get("workflow_section") if isinstance(result, dict) and isinstance(result.get("workflow_section"), dict) else {}
+    subsections = workflow.get("subsections") if isinstance(workflow.get("subsections"), list) else []
+    return [item for item in subsections if isinstance(item, dict)]
+
+
+def _analysis_purpose_model(
+    node: dict[str, Any],
+    node_execution_view: dict[str, Any],
+    subsections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    section = _find_subsection(subsections, ("目的",))
+    markdown = str((section or {}).get("markdown") or node_execution_view.get("goal", {}).get("markdown") or "")
+    purpose = _markdown_summary_text(markdown) or str(node.get("name") or node.get("id") or "")
+    checks = node_execution_view.get("verification", {}).get("checks") if isinstance(node_execution_view.get("verification"), dict) else []
+    success_criteria = [
+        str(item.get("standard") or item.get("id") or "")
+        for item in checks
+        if isinstance(item, dict) and (item.get("standard") or item.get("id"))
+    ]
+    artifact = node_execution_view.get("artifact") if isinstance(node_execution_view.get("artifact"), dict) else {}
+    if artifact.get("title"):
+        success_criteria.append(f"产出 {artifact.get('title')}")
+    return {
+        "title": str(node_execution_view.get("workflow_title") or node.get("name") or node.get("id") or ""),
+        "purpose": purpose,
+        "business_questions": _analysis_questions(markdown),
+        "success_criteria": success_criteria,
+        "source_ref": _analysis_source_ref(node_execution_view, section, fallback="business_doc:目的"),
+    }
+
+
+def _analysis_input_model(
+    raw_node: dict[str, Any],
+    required_data: list[dict[str, Any]],
+    node_config: dict[str, Any],
+    subsections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    section = _find_subsection(subsections, ("数据来源",))
+    data_sources = _analysis_data_sources(section, required_data)
+    depends_on = [str(value) for value in raw_node.get("depends_on", [])]
+    upstream_artifacts = [
+        {
+            "node_id": node_id,
+            "artifact_title": "",
+            # TODO: derive these fields from the upstream artifact schema instead of this market-insight placeholder.
+            "required_fields": ["分析类目", "分析周期", "分析产品线"] if required_data else [],
+        }
+        for node_id in depends_on
+    ]
+    data_mapping_context = node_config.get("data_mapping_context") if isinstance(node_config.get("data_mapping_context"), dict) else {}
+    api_doc_matching = data_mapping_context.get("api_doc_matching") if isinstance(data_mapping_context.get("api_doc_matching"), dict) else {}
+    return {
+        "data_sources": data_sources,
+        "upstream_artifacts": upstream_artifacts,
+        "known_params": {},
+        "missing_params": [],
+        "data_requirement_ids": [str(item.get("id") or "") for item in required_data],
+        "api_matching": {
+            "provider": str(api_doc_matching.get("provider") or "api_doc_matcher"),
+            "strategy": str(api_doc_matching.get("default_strategy") or "field_coverage_rerank"),
+            "status": "not_started",
+        },
+        "source_ref": _analysis_source_ref({}, section, fallback="business_doc:数据来源"),
+    }
+
+
+def _analysis_execution_plan(
+    node_execution_view: dict[str, Any],
+    subsections: list[dict[str, Any]],
+    analysis_kind: str,
+) -> dict[str, Any]:
+    section = _find_subsection(subsections, ("执行动作", "分析方法"))
+    markdown = str((section or {}).get("markdown") or node_execution_view.get("action", {}).get("markdown") or "")
+    steps = []
+    for index, instruction in enumerate(_analysis_steps(markdown), start=1):
+        title, detail = _split_step_title(instruction, index)
+        steps.append(
+            {
+                "step_id": f"step_{index}",
+                "title": title,
+                "instruction": detail,
+                "requires": _analysis_step_requires(index, analysis_kind),
+                "produces": _analysis_step_produces(instruction),
+                "human_review_required": _analysis_step_needs_review(instruction),
+                "source_ref": _analysis_source_ref(node_execution_view, section, fallback="business_doc:执行动作"),
+            }
+        )
+    if not steps:
+        steps.append(
+            {
+                "step_id": "step_1",
+                "title": "完成节点执行",
+                "instruction": str(node_execution_view.get("workflow_title") or "按节点配置完成执行。"),
+                "requires": [],
+                "produces": [],
+                "human_review_required": analysis_kind == "data_analysis",
+                "source_ref": _analysis_source_ref(node_execution_view, section, fallback="app.config.json:node_execution_view"),
+            }
+        )
+    return {"steps": steps}
+
+
+def _analysis_data_output_model(
+    output_items: list[dict[str, Any]],
+    output_field_requirements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    output = output_items[0] if output_items else {}
+    required_count = len([item for item in output_field_requirements if item.get("required") is not False])
+    return {
+        "output_id": str(output.get("id") or "node_output"),
+        "title": str(output.get("title") or output.get("id") or "数据表产物"),
+        "fields": [dict(item) for item in output_field_requirements],
+        "coverage_summary": {
+            "total": len(output_field_requirements),
+            "mapped": 0,
+            "derived_or_manual_required": 0,
+            "missing_required": required_count,
+        },
+        "contract_ref": "",
+        "status": "field_mapping_not_started" if output_field_requirements else "missing_output_fields",
+    }
+
+
+def _analysis_insight_output_model(
+    node: dict[str, Any],
+    output_field_requirements: list[dict[str, Any]],
+    node_execution_view: dict[str, Any],
+    subsections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    section = _find_subsection(subsections, ("分析结论", "结论", "判断标准"))
+    markdown = str((section or {}).get("markdown") or node_execution_view.get("verification", {}).get("markdown") or "")
+    field_names = [str(item.get("field_name") or item.get("title") or "") for item in output_field_requirements if item.get("field_name") or item.get("title")]
+    questions = _analysis_questions(markdown) or _analysis_steps(markdown)
+    requirements = [
+        {
+            "requirement_id": f"insight_{index}",
+            "question": question,
+            "required_evidence_fields": _evidence_fields_for_question(question, field_names),
+            "source_ref": _analysis_source_ref(node_execution_view, section, fallback="business_doc:分析结论"),
+        }
+        for index, question in enumerate(questions, start=1)
+    ]
+    if not requirements:
+        requirements = [
+            {
+                "requirement_id": "insight_1",
+                "question": "基于数据表产物形成有证据引用的业务分析结论。",
+                "required_evidence_fields": field_names[:5],
+                "source_ref": _analysis_source_ref(node_execution_view, section, fallback="app.config.json:analysis_node_view"),
+            }
+        ]
+    return {
+        "title": f"{node.get('name') or node.get('id') or '节点'}分析结论",
+        "requirements": requirements,
+        "draft": {"status": "not_started", "text": "", "evidence_refs": [], "risks": []},
+        "human_confirmation": {"status": "unconfirmed", "confirmed_by": "", "confirmed_at": ""},
+    }
+
+
+def _analysis_verification_model(
+    output_field_requirements: list[dict[str, Any]],
+    node_execution_view: dict[str, Any],
+) -> dict[str, Any]:
+    checks = [
+        {"check_id": "required_fields_covered", "title": "必填字段已覆盖", "status": "pending", "evidence_refs": []},
+        {"check_id": "derived_fields_reviewed", "title": "派生字段已有处理方案", "status": "pending", "evidence_refs": []},
+        {"check_id": "insight_has_evidence", "title": "分析结论有证据引用", "status": "pending", "evidence_refs": []},
+    ]
+    verification_checks = node_execution_view.get("verification", {}).get("checks") if isinstance(node_execution_view.get("verification"), dict) else []
+    for item in verification_checks or []:
+        if not isinstance(item, dict):
+            continue
+        check_id = _canonical_field_name(str(item.get("id") or item.get("standard") or "business_check"))
+        checks.append(
+            {
+                "check_id": check_id,
+                "title": str(item.get("id") or item.get("standard") or "业务判断"),
+                "status": "pending",
+                "evidence_refs": [],
+            }
+        )
+    return {
+        "checks": checks,
+        "required_field_count": len([item for item in output_field_requirements if item.get("required") is not False]),
+    }
+
+
+def _analysis_source_trace(
+    source_trace: dict[str, Any],
+    business_context: dict[str, Any],
+    node_execution_view: dict[str, Any],
+) -> dict[str, Any]:
+    source = node_execution_view.get("source") if isinstance(node_execution_view.get("source"), dict) else {}
+    doc_ref = str(source.get("source_path") or "")
+    heading = str(source.get("heading") or node_execution_view.get("workflow_title") or "")
+    business_doc_refs = [f"{doc_ref}#{heading}" if doc_ref and heading else doc_ref or heading]
+    trace = dict(source_trace)
+    trace.update(
+        {
+            "business_doc_refs": [item for item in business_doc_refs if item],
+            "strategy_kb_refs": [
+                str(item.get("citation_id") or item.get("kb_page_id") or "")
+                for item in business_context.get("results", [])
+                if isinstance(item, dict) and (item.get("citation_id") or item.get("kb_page_id"))
+            ],
+            "api_doc_index_ref": "data/api_doc_index.json",
+        }
+    )
+    return trace
+
+
+def _analysis_data_sources(section: dict[str, Any] | None, required_data: list[dict[str, Any]]) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    markdown = str((section or {}).get("markdown") or "")
+    for index, item in enumerate(_analysis_steps(markdown), start=1):
+        text = _strip_markdown_marker(item)
+        if not text:
+            continue
+        name, _, description = text.partition("：")
+        if not description:
+            name, description = f"数据来源{index}", text
+        sources.append({"name": name.strip(), "description": description.strip(), "source_ref": "business_doc:数据来源"})
+    for data in required_data:
+        data_id = str(data.get("id") or "")
+        description = str(data.get("description") or data_id)
+        if not description:
+            continue
+        if any(data_id and data_id in source.get("description", "") for source in sources):
+            continue
+        sources.append({"name": data_id or "data_requirement", "description": description, "source_ref": f"skill_snapshot/data_requirements.yaml#{data_id}"})
+    return sources
+
+
+def _analysis_questions(markdown: str) -> list[str]:
+    questions = []
+    for item in _analysis_steps(markdown):
+        text = _strip_markdown_marker(item)
+        if not text:
+            continue
+        if "？" in text or "?" in text:
+            questions.append(text)
+    return questions
+
+
+def _analysis_steps(markdown: str) -> list[str]:
+    items: list[str] = []
+    for paragraph in _markdown_paragraphs_without_tables(markdown):
+        normalized = paragraph.replace("  ", " ").strip()
+        if not normalized:
+            continue
+        split_items = re.split(r"(?=(?:第[一二三四五六七八九十]+步[:：]|\d+[.、]\s*))", normalized)
+        for item in split_items:
+            text = _strip_markdown_marker(item)
+            if text:
+                items.append(text)
+    return items
+
+
+def _strip_markdown_marker(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^\s*[-*+]\s+", "", text)
+    text = re.sub(r"^\s*\d+[.、]\s*", "", text)
+    return text.strip()
+
+
+def _markdown_summary_text(markdown: str) -> str:
+    paragraphs = [_strip_markdown_marker(item) for item in _markdown_paragraphs_without_tables(markdown)]
+    return "\n".join(item for item in paragraphs if item)
+
+
+def _split_step_title(instruction: str, index: int) -> tuple[str, str]:
+    text = _strip_markdown_marker(instruction)
+    match = re.match(r"^(第[一二三四五六七八九十]+步)[:：]\s*(.+)$", text)
+    if match:
+        return match.group(1), match.group(2).strip()
+    head, sep, tail = text.partition("：")
+    if sep and len(head) <= 16:
+        return head.strip(), tail.strip() or text
+    return f"步骤{index}", text
+
+
+def _analysis_step_requires(index: int, analysis_kind: str) -> list[str]:
+    if analysis_kind != "data_analysis":
+        return []
+    if index == 1:
+        return ["upstream_artifacts", "data_sources"]
+    return ["output_field_requirements", "field_mapping_or_manual_input"]
+
+
+def _analysis_step_produces(instruction: str) -> list[str]:
+    text = instruction.lower()
+    produces = []
+    if "导出" in instruction or "获取" in instruction:
+        produces.append("raw_data")
+    if "匹配" in instruction or "补充" in instruction or "字段" in instruction:
+        produces.append("field_mapping_or_enriched_fields")
+    if "统计" in instruction or "分类" in instruction:
+        produces.append("data_table_summary")
+    if "找出" in instruction or "分析" in instruction or "判断" in instruction or "conclusion" in text:
+        produces.append("insight_draft")
+    return produces
+
+
+def _analysis_step_needs_review(instruction: str) -> bool:
+    return any(keyword in instruction for keyword in ("匹配", "补充", "统计", "找出", "分析", "判断", "结论"))
+
+
+def _analysis_source_ref(
+    node_execution_view: dict[str, Any],
+    section: dict[str, Any] | None,
+    *,
+    fallback: str,
+) -> str:
+    title = str((section or {}).get("title") or "")
+    source = node_execution_view.get("source") if isinstance(node_execution_view.get("source"), dict) else {}
+    heading = str(source.get("heading") or node_execution_view.get("workflow_title") or "")
+    if heading and title:
+        return f"business_doc:{heading}/{title}"
+    if heading:
+        return f"business_doc:{heading}"
+    if title:
+        return f"business_doc:{title}"
+    return fallback
+
+
+def _evidence_fields_for_question(question: str, field_names: list[str]) -> list[str]:
+    matched = [name for name in field_names if name and name in question]
+    if matched:
+        return matched
+    default_keywords = ("排名", "销量/支付买家数", "GMV/交易指数", "客单价", "价格带", "主卖点", "爆款原因")
+    defaults = [name for name in field_names if name in default_keywords]
+    return defaults[:5] if defaults else field_names[:5]
 
 
 def _node_input_model(
@@ -2729,17 +3148,44 @@ def _should_generate_report_generator_shell(*, run_dir: Path, contract: dict[str
 
 def _ensure_report_generator_mapping_config(config: dict[str, Any]) -> dict[str, Any]:
     nodes = config.get("nodes") if isinstance(config.get("nodes"), list) else []
+    data_by_id = {
+        str(item.get("id") or ""): item
+        for item in config.get("data_requirements", [])
+        if isinstance(item, dict)
+    }
+    bindings_by_requirement = {
+        str(item.get("data_requirement_id") or ""): item
+        for item in config.get("tool_bindings", [])
+        if isinstance(item, dict)
+    }
     for node in nodes:
         if not isinstance(node, dict):
             continue
         output_model = node.get("output_model") if isinstance(node.get("output_model"), dict) else {}
         output_items = output_model.get("outputs") if isinstance(output_model.get("outputs"), list) else []
-        required_data = []
+        requirement_ids = [str(value) for value in node.get("data_requirements", [])] if isinstance(node.get("data_requirements"), list) else []
         input_model = node.get("input_model") if isinstance(node.get("input_model"), dict) else {}
+        required_data = []
         if isinstance(input_model.get("required_data"), list):
             required_data = [item for item in input_model.get("required_data", []) if isinstance(item, dict)]
         business_context = node.get("business_context") if isinstance(node.get("business_context"), dict) else {}
         node_execution_view = node.get("node_execution_view") if isinstance(node.get("node_execution_view"), dict) else {}
+        if not required_data and requirement_ids:
+            required_data = [_node_required_data(requirement_id, data_by_id, bindings_by_requirement) for requirement_id in requirement_ids]
+            action_fields = (
+                node_execution_view.get("action", {}).get("fields", [])
+                if isinstance(node_execution_view.get("action"), dict)
+                else []
+            )
+            if not isinstance(node.get("input_model"), dict):
+                node["input_model"] = _node_input_model(str(node.get("kind") or ""), required_data, action_fields)
+            else:
+                node["input_model"] = {
+                    **input_model,
+                    "mode": str(input_model.get("mode") or "manual_upload"),
+                    "required_data": required_data,
+                    "fields": input_model.get("fields") if isinstance(input_model.get("fields"), list) else action_fields,
+                }
         if not isinstance(node.get("output_field_requirements"), list):
             node["output_field_requirements"] = _node_output_field_requirements(output_items, required_data, node_execution_view)
         if not isinstance(node.get("data_mapping_context"), dict):
@@ -2750,6 +3196,24 @@ def _ensure_report_generator_mapping_config(config: dict[str, Any]) -> dict[str,
                 node.get("output_field_requirements", []),
                 business_context,
                 node_execution_view,
+            )
+        analysis_view = node.get("analysis_node_view") if isinstance(node.get("analysis_node_view"), dict) else {}
+        needs_analysis_view = not analysis_view or (
+            bool(node.get("output_field_requirements"))
+            and bool(requirement_ids)
+            and analysis_view.get("node_kind") != "data_analysis"
+        )
+        if needs_analysis_view:
+            source_trace = node.get("source_trace") if isinstance(node.get("source_trace"), dict) else _node_source_trace(requirement_ids, output_items, business_context)
+            node["analysis_node_view"] = _node_analysis_node_view(
+                node,
+                node,
+                required_data,
+                output_items,
+                node.get("output_field_requirements", []),
+                business_context,
+                node_execution_view,
+                source_trace,
             )
     data_capability_index = config.get("data_capability_index")
     if isinstance(data_capability_index, dict) and data_capability_index.get("provider") == "api_doc_index":
@@ -2779,6 +3243,8 @@ def _generate_report_generator_shell_files(
     ensure_dir(app_dir / "data")
 
     shutil.copy2(shell_root / "server" / "server.js", app_dir / "server.js")
+    shutil.copy2(shell_root / "server" / "collaboration_store.js", app_dir / "collaboration_store.js")
+    shutil.copy2(shell_root / "server" / "gene_analysis_store.js", app_dir / "gene_analysis_store.js")
     shutil.copy2(shell_root / "server" / "db_archaeologist_worker.mjs", app_dir / "db_archaeologist_worker.mjs")
     shutil.copy2(shell_root / "web" / "index.html", app_dir / "public" / "index.html")
     shutil.copy2(shell_root / "web" / "styles.css", app_dir / "public" / "styles.css")
@@ -2836,6 +3302,8 @@ Open http://127.0.0.1:${{PREVIEW_PORT:-8788}} in your browser.
 
     files_changed = [
         f"{generated_app_dir}/server.js",
+        f"{generated_app_dir}/collaboration_store.js",
+        f"{generated_app_dir}/gene_analysis_store.js",
         f"{generated_app_dir}/db_archaeologist_worker.mjs",
         f"{generated_app_dir}/README.md",
         f"{generated_app_dir}/app.config.json",
@@ -3162,6 +3630,49 @@ function assertOutputFieldRequirements(config) {
   }
 }
 
+function assertAnalysisNodeView(config) {
+  const nodes = Array.isArray(config.nodes) ? config.nodes : [];
+  for (const node of nodes) {
+    const view = node.analysis_node_view;
+    if (!view || typeof view !== 'object') {
+      throw new Error(`Node ${node.id} missing analysis_node_view`);
+    }
+    if (view.schema_version !== 'analysis-node-view-v1') {
+      throw new Error(`Node ${node.id} invalid analysis_node_view schema_version`);
+    }
+    if (Array.isArray(node.output_field_requirements) && node.output_field_requirements.length > 0 && Array.isArray(node.data_requirements) && node.data_requirements.length > 0) {
+      if (view.node_kind !== 'data_analysis') {
+        throw new Error(`Node ${node.id} expected data_analysis view`);
+      }
+      for (const key of ['purpose_model', 'input_model', 'execution_plan', 'data_output_model', 'insight_output_model', 'verification_model', 'source_trace']) {
+        if (!view[key] || typeof view[key] !== 'object') {
+          throw new Error(`Node ${node.id} analysis_node_view missing ${key}`);
+        }
+      }
+      const fields = view.data_output_model.fields;
+      if (!Array.isArray(fields) || fields.length !== node.output_field_requirements.length) {
+        throw new Error(`Node ${node.id} analysis data_output_model fields mismatch`);
+      }
+    }
+  }
+  const topProducts = nodes.find(node => node.id === 'collect_top_products');
+  if (topProducts && topProducts.analysis_node_view) {
+    const view = topProducts.analysis_node_view;
+    if (!String(view.purpose_model && view.purpose_model.title || '').includes('行业大盘')) {
+      throw new Error('collect_top_products analysis purpose title missing');
+    }
+    if (!Array.isArray(view.input_model && view.input_model.data_sources) || view.input_model.data_sources.length === 0) {
+      throw new Error('collect_top_products analysis input data_sources missing');
+    }
+    if (!Array.isArray(view.execution_plan && view.execution_plan.steps) || view.execution_plan.steps.length === 0) {
+      throw new Error('collect_top_products analysis execution steps missing');
+    }
+    if (!Array.isArray(view.insight_output_model && view.insight_output_model.requirements) || view.insight_output_model.requirements.length === 0) {
+      throw new Error('collect_top_products analysis insight requirements missing');
+    }
+  }
+}
+
 function assertDataCapabilityIndex(config) {
   const index = config.data_capability_index;
   if (!index) return;
@@ -3218,6 +3729,7 @@ function assertConfigViewModel(config) {
     throw new Error('No node exposes output_model.outputs[].schema');
   }
   assertOutputFieldRequirements(config);
+  assertAnalysisNodeView(config);
   assertDataCapabilityIndex(config);
   if (nodes.some(node => node.business_context && node.business_context.status === 'available')) {
     assertNodeExecutionView(config);

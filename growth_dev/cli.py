@@ -255,6 +255,7 @@ def _build_parser() -> argparse.ArgumentParser:
     app_generate.add_argument("--api-doc-index", default="", help="Prebuilt api_doc_matcher api_doc_index.json to snapshot into generated apps.")
     app_generate.add_argument("--api-detail-doc", default="", help="API detail markdown doc used to build an api_doc_matcher index during generation.")
     app_generate.add_argument("--api-validation-doc", default="", help="API validation markdown doc used to build an api_doc_matcher index during generation.")
+    app_generate.add_argument("--api-extra-detail-doc", action="append", default=[], help="Additional standalone API detail markdown doc; repeat for multiple docs.")
     app_generate.add_argument("--shell-kind", default="", help="Shell kind (e.g., report_generator). If not provided, will be inferred from task/domain/skill.")
     _add_complex_task_args(app_generate)
     app_generate.add_argument("--foreground", action="store_true")
@@ -529,7 +530,7 @@ def _cmd_app_preview_start(args: argparse.Namespace) -> int:
         generated_app_dir=app_dir,
         preview_command=preview_command,
         preferred_port=args.port,
-        repo_root=run_dir,
+        repo_root=runs_dir.resolve().parent,
     )
     result = start_preview(request, runs_dir=runs_dir)
 
@@ -630,7 +631,8 @@ def _augment_api_doc_inputs(inputs: dict[str, Any], args: argparse.Namespace, re
     index_raw = str(getattr(args, "api_doc_index", "") or "").strip()
     detail_raw = str(getattr(args, "api_detail_doc", "") or "").strip()
     validation_raw = str(getattr(args, "api_validation_doc", "") or "").strip()
-    if not any((index_raw, detail_raw, validation_raw)):
+    extra_detail_raw = [str(item or "").strip() for item in getattr(args, "api_extra_detail_doc", []) if str(item or "").strip()]
+    if not any((index_raw, detail_raw, validation_raw, extra_detail_raw)):
         return ""
     if index_raw:
         index_path = _resolve_app_input_path(index_raw, repo_root)
@@ -648,6 +650,12 @@ def _augment_api_doc_inputs(inputs: dict[str, Any], args: argparse.Namespace, re
             return f"api_validation_doc not found: {validation_path}"
         inputs["api_detail_doc"] = str(detail_path)
         inputs["api_validation_doc"] = str(validation_path)
+    if extra_detail_raw:
+        extra_paths = [_resolve_app_input_path(item, repo_root) for item in extra_detail_raw]
+        missing_extra = next((path for path in extra_paths if not path.exists() or not path.is_file()), None)
+        if missing_extra:
+            return f"api_extra_detail_doc not found: {missing_extra}"
+        inputs["api_extra_detail_docs"] = [str(path) for path in extra_paths]
     return ""
 
 

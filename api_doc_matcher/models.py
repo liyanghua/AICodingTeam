@@ -105,11 +105,17 @@ class DetailApiEntry:
     api_id: str
     method: str
     path: str
+    api_name: str = ""
+    verified_status: str = "unverified"
+    verified_url_path: str = ""
+    response_root: str = "data.result[]"
+    default_params: dict[str, Any] = field(default_factory=dict)
     source_path: str = ""
     source_line_no: int = 0
     request_params: list[ApiParam] = field(default_factory=list)
     request_headers: list[str] = field(default_factory=list)
     response_fields: list[ApiField] = field(default_factory=list)
+    response_examples: list[dict[str, Any]] = field(default_factory=list)
     parse_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +157,9 @@ class ApiDocEntry:
     method: str
     path: str
     verified_status: str
+    verified_url_path: str = ""
+    response_root: str = "data.result[]"
+    default_params: dict[str, Any] = field(default_factory=dict)
     request_params: list[ApiParam] = field(default_factory=list)
     request_headers: list[str] = field(default_factory=list)
     response_fields: list[ApiField] = field(default_factory=list)
@@ -175,6 +184,9 @@ class ApiDocEntry:
             method=str(data.get("method", "")),
             path=str(data.get("path", "")),
             verified_status=str(data.get("verified_status", "")),
+            verified_url_path=str(data.get("verified_url_path", "")),
+            response_root=str(data.get("response_root", "data.result[]")),
+            default_params=dict(data.get("default_params", {})) if isinstance(data.get("default_params"), dict) else {},
             request_params=[ApiParam.from_dict(p) for p in data.get("request_params", [])],
             request_headers=[str(h) for h in data.get("request_headers", [])],
             response_fields=[ApiField.from_dict(f) for f in data.get("response_fields", [])],

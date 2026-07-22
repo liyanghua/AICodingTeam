@@ -298,6 +298,39 @@
               "agent_assist": {"type": "object"},
               "source": {"type": "object"}
             }
+          },
+          "analysis_node_view": {
+            "type": "object",
+            "required": ["schema_version", "node_id", "node_kind", "purpose_model", "input_model", "execution_plan", "data_output_model", "insight_output_model", "verification_model", "source_trace"],
+            "properties": {
+              "schema_version": {"type": "string", "const": "analysis-node-view-v1"},
+              "node_id": {"type": "string"},
+              "node_kind": {"type": "string", "enum": ["data_analysis", "standard"]},
+              "purpose_model": {"type": "object"},
+              "input_model": {"type": "object"},
+              "execution_plan": {"type": "object"},
+              "data_output_model": {"type": "object"},
+              "insight_output_model": {
+                "type": "object",
+                "properties": {
+                  "requirements": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["question", "required_evidence_fields", "source_ref"],
+                      "properties": {
+                        "requirement_id": {"type": "string", "pattern": "^insight_[0-9]+$"},
+                        "question": {"type": "string"},
+                        "required_evidence_fields": {"type": "array", "items": {"type": "string"}},
+                        "source_ref": {"type": "string"}
+                      }
+                    }
+                  }
+                }
+              },
+              "verification_model": {"type": "object"},
+              "source_trace": {"type": "object"}
+            }
           }
         }
       }

@@ -27,7 +27,11 @@ def _cmd_build_index(args: argparse.Namespace) -> int:
         raise SystemExit(f"detail doc not found: {detail_doc}")
     if not validation_doc.exists():
         raise SystemExit(f"validation doc not found: {validation_doc}")
-    result = build_index_from_files(detail_doc, validation_doc, Path(args.out))
+    extra_detail_docs = [Path(item) for item in args.extra_detail_doc]
+    missing_extra = next((path for path in extra_detail_docs if not path.exists()), None)
+    if missing_extra:
+        raise SystemExit(f"extra detail doc not found: {missing_extra}")
+    result = build_index_from_files(detail_doc, validation_doc, Path(args.out), extra_detail_docs=extra_detail_docs)
     _print_json(result.to_summary_dict())
     return 0
 
@@ -111,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     build = subparsers.add_parser("build-index", help="Parse two API docs and build derived indexes")
     build.add_argument("--detail-doc", required=True)
     build.add_argument("--validation-doc", required=True)
+    build.add_argument("--extra-detail-doc", action="append", default=[])
     build.add_argument("--out", default="api_doc_matcher/build")
     build.set_defaults(func=_cmd_build_index)
 

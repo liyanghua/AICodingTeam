@@ -23,7 +23,92 @@ const TOOL_IMPORTS = {
     module: "src/tools/probe_api_sample.mjs",
     exportName: "probeApiSampleTool",
   },
+  probe_api_batch: {
+    module: "src/tools/probe_api_sample.mjs",
+    exportName: "probeApiSampleTool",
+  },
 };
+
+function clamp(value, min, max, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(min, Math.min(max, Math.floor(numeric))) : fallback;
+}
+
+function rowsFromProbeResult(result) {
+  return result && result.response && Array.isArray(result.response.top) ? result.response.top : [];
+}
+
+function retryableProbeResult(result) {
+  const state = String(result && result.status && result.status.state || "");
+  return state === "timeout" || state === "network_error";
+}
+
+async function probeApiBatch(fn, args) {
+  const apiId = String(args.api_id || "").trim();
+  const items = Array.isArray(args.items) ? args.items.slice(0, 50) : [];
+  const concurrency = clamp(args.concurrency, 1, 10, 5);
+  const retry = clamp(args.retry, 0, 1, 1);
+  const timeoutMs = clamp(args.timeout_ms, 1000, 30000, 8000);
+  const topPerItem = clamp(args.top_per_item, 1, 50, 1);
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function runItem(item, position) {
+    const correlationId = String(item && item.correlation_id || position);
+    const params = item && item.params && typeof item.params === "object" ? item.params : {};
+    let attempts = 0;
+    let response = null;
+    let error = "";
+    while (attempts <= retry) {
+      attempts += 1;
+      try {
+        response = await fn({ api_id: apiId, params, top: topPerItem, timeout_ms: timeoutMs });
+        if (!retryableProbeResult(response) || attempts > retry) break;
+      } catch (caught) {
+        error = String(caught && caught.message ? caught.message : caught);
+        if (attempts > retry) break;
+      }
+    }
+    const state = String(response && response.status && response.status.state || "");
+    const rows = rowsFromProbeResult(response);
+    const status = state === "ok" && rows.length > 0
+      ? "success"
+      : state === "ok"
+        ? "empty"
+        : "failed";
+    results[position] = {
+      correlation_id: correlationId,
+      status,
+      attempts,
+      rows,
+      response,
+      error,
+    };
+  }
+
+  async function runner() {
+    while (true) {
+      const position = cursor;
+      cursor += 1;
+      if (position >= items.length) return;
+      await runItem(items[position], position);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(items.length, 1)) }, () => runner()));
+  const summary = { requested: items.length, success: 0, empty: 0, failed: 0 };
+  for (const item of results) summary[item.status] += 1;
+  return {
+    kind: "api_probe_batch_result",
+    api_id: apiId,
+    concurrency,
+    retry,
+    timeout_ms: timeoutMs,
+    top_per_item: topPerItem,
+    summary,
+    items: results,
+  };
+}
 
 function write(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -67,7 +152,7 @@ async function main() {
     write({ ok: false, status: "blocked", reason: "tool_not_allowed", tool });
     return;
   }
-  if (tool === "probe_api_sample" && !liveEnabled) {
+  if ((tool === "probe_api_sample" || tool === "probe_api_batch") && !liveEnabled) {
     write({ ok: false, status: "blocked", reason: "live_probe_disabled", tool, live_enabled: false });
     return;
   }
@@ -84,7 +169,7 @@ async function main() {
     write({ ok: false, status: "error", reason: "tool_export_missing", tool, export_name: target.exportName });
     return;
   }
-  const payload = await fn(args);
+  const payload = tool === "probe_api_batch" ? await probeApiBatch(fn, args) : await fn(args);
   write({ ok: true, status: "ok", tool, payload });
 }
 

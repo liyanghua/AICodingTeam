@@ -15,6 +15,58 @@ def _market_skill_fixture() -> str:
 
 
 class AppGenerationTests(unittest.TestCase):
+    def test_api_doc_snapshot_merges_extra_detail_doc_into_prebuilt_index(self) -> None:
+        from growth_dev.team.app_generation import _prepare_api_doc_index_snapshot
+
+        extra_doc = """# 商品详情信息查询接口文档
+
+| 项目 | 内容 |
+|---|---|
+| 接口名称 | 商品详情信息查询接口 |
+
+```bash
+curl -X POST "http://example.test/openApi/api/abc/5/data/goods/ads_ind_goods_detail_info_m?goods_id=1&data_source=qbt"
+```
+
+### 5.1 Query 参数
+| 参数名 | 类型 | 是否必填 | 说明 |
+|---|---|---:|---|
+| goods_id | string | 是 | 商品 ID |
+
+### 7.4 测试结果
+```json
+{"code":"200","data":{"result":[{"goods_id":"1","core_material":"化纤","usage_scene":"家用"}]}}
+```
+
+### 8.2 `data.result[]` 字段说明
+| 字段名 | 类型 | 说明 |
+|---|---|---|
+| goods_id | string | 商品 ID |
+| core_material | string | 核心材质 |
+| usage_scene | string | 使用场景 |
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            index_path = root / "api_doc_index.json"
+            detail_path = root / "商品详情信息查询接口文档.md"
+            index_path.write_text('{"schema_version":"api-doc-index-v2","api_count":0,"apis":[]}', encoding="utf-8")
+            detail_path.write_text(extra_doc, encoding="utf-8")
+
+            metadata = _prepare_api_doc_index_snapshot(
+                run_dir,
+                {"api_doc_index": str(index_path), "api_extra_detail_docs": [str(detail_path)]},
+            )
+            payload = json.loads((run_dir / "data_capability" / "api_doc_index.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("prebuilt_index_with_extra_details", metadata["build_mode"])
+        self.assertEqual(1, metadata["stats"]["api_count"])
+        detail = payload["apis"][0]
+        self.assertEqual("data_goods_ads_ind_goods_detail_info_m", detail["api_id"])
+        self.assertEqual("data.result[].core_material", detail["response_fields"][1]["path"])
+        self.assertEqual("api_extra_detail_doc", metadata["sources"][1]["kind"])
+
     def test_app_generation_domain_pack_declares_local_spa_contract(self) -> None:
         from growth_dev.team.domain import load_domain_spec
 
@@ -221,6 +273,75 @@ class AppGenerationTests(unittest.TestCase):
         self.assertEqual(business_fields[3]["description"], "看视觉表达")
         self.assertEqual(business_fields[3]["canonical_field_name"], "product_image")
         self.assertIn("business_doc_ref", business_fields[0]["source_trace"])
+        analysis_view = top_products_node.get("analysis_node_view")
+        self.assertIsInstance(analysis_view, dict)
+        self.assertEqual(analysis_view["schema_version"], "analysis-node-view-v1")
+        self.assertEqual(analysis_view["node_id"], "collect_top_products")
+        self.assertEqual(analysis_view["node_kind"], "data_analysis")
+        self.assertIn("行业大盘与热销商品分析", analysis_view["purpose_model"]["title"])
+        self.assertTrue(analysis_view["purpose_model"]["purpose"])
+        self.assertTrue(analysis_view["input_model"]["data_sources"])
+        self.assertIn("category_top_products_300", analysis_view["input_model"]["data_requirement_ids"])
+        self.assertTrue(analysis_view["execution_plan"]["steps"])
+        self.assertEqual(len(analysis_view["data_output_model"]["fields"]), len(business_fields))
+        self.assertEqual(analysis_view["data_output_model"]["fields"][3]["field_name"], "商品主图")
+        self.assertEqual(analysis_view["data_output_model"]["coverage_summary"]["total"], 17)
+        self.assertTrue(analysis_view["insight_output_model"]["requirements"])
+        insight_requirements = analysis_view["insight_output_model"]["requirements"]
+        self.assertEqual(len(insight_requirements), 7)
+        self.assertEqual(
+            [item["requirement_id"] for item in insight_requirements],
+            [f"insight_{index}" for index in range(1, 8)],
+        )
+        self.assertIn("当前行业热卖产品分为哪几类", insight_requirements[0]["question"])
+        self.assertEqual(analysis_view["insight_output_model"]["human_confirmation"]["status"], "unconfirmed")
+        self.assertIn("business_doc_refs", analysis_view["source_trace"])
+
+    def test_hot_product_gene_schema_is_loaded_from_skill_snapshot(self) -> None:
+        from growth_dev.team.app_generation import prepare_app_generation_artifacts
+
+        source_schema = (
+            Path("document-to-skill-engineering-package")
+            / "skills"
+            / "market_insight"
+            / "output_schemas"
+            / "hot_product_gene_table.json"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            skill_dir = root / "market_insight_skill"
+            shutil.copytree(_market_skill_fixture(), skill_dir)
+            shutil.copy2(source_schema, skill_dir / "output_schemas" / source_schema.name)
+            run_dir = root / "run"
+            prepare_app_generation_artifacts(
+                run_id="hot-product-gene-schema",
+                run_dir=run_dir,
+                inputs={
+                    "app_slug": "hot-product-gene-report",
+                    "prd_text": "# 爆款基因分析",
+                    "task_yaml_path": "tasks/current/task.yaml",
+                    "domain_yaml_path": "tasks/current/domain.yaml",
+                    "skill_dir": str(skill_dir),
+                },
+            )
+            app_config = json.loads((run_dir / "app.config.json").read_text(encoding="utf-8"))
+            snapshot_schema = json.loads(
+                (run_dir / "skill_snapshot" / "output_schemas" / source_schema.name).read_text(encoding="utf-8")
+            )
+
+        node = next(item for item in app_config["nodes"] if item["id"] == "analyze_hot_product_genes")
+        output_schema = next(item for item in node["output_schema"] if item["id"] == "hot_product_gene_table")
+        self.assertEqual("skill_snapshot", output_schema["source"])
+        self.assertEqual("skill_snapshot", output_schema["summary"]["source"])
+        self.assertEqual("hot-product-gene-analysis-v1", output_schema["schema"]["$id"])
+        self.assertEqual(snapshot_schema, output_schema["schema"])
+        self.assertTrue(
+            {"product_profiles", "dimension_findings", "gene_groups", "coverage", "risks", "human_confirmation"}
+            <= set(output_schema["schema"]["properties"])
+        )
+        self.assertTrue(
+            {"rows", "conclusions", "evidence_ids"}.isdisjoint(output_schema["schema"]["properties"])
+        )
 
     def test_prepare_app_generation_artifacts_adds_strategy_kb_business_context(self) -> None:
         from growth_dev.team.app_generation import prepare_app_generation_artifacts

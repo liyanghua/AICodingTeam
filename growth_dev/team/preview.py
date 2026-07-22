@@ -34,6 +34,22 @@ ENV_WHITELIST = frozenset(
         "OPENAI_IMAGE_SIZE",
         "OPENAI_IMAGE_QUALITY",
         "OPENAI_IMAGE_OUTPUT_FORMAT",
+        "AICODEMIRROR_API_KEY",
+        "AICODEMIRROR_KEY",
+        "AICODEMIRROR_BASE_URL",
+        "DEEPSEEK_API_KEY",
+        "PI_BIN",
+        "PI_MODEL",
+        "PI_DEFAULT_MODEL",
+        "PI_DEFAULT_THINKING",
+        "PI_RPC_TIMEOUT_MS",
+        "DB_ARCHAEOLOGIST_SPEC_PACK",
+        "DBA_LIVE_PROBE",
+        "ZICHEN_BASE_URL",
+        "ZICHEN_TENANT_ID",
+        "ZICHEN_USER_ID",
+        "ZICHEN_APP_CODE_KEY",
+        "ZICHEN_APP_CODE",
     }
 )
 

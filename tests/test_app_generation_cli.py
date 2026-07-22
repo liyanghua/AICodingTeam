@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -130,11 +132,13 @@ class AppGenerationCliTests(unittest.TestCase):
             domain_path = root / "domain.yaml"
             skill_dir = root / "skill-build"
             index_path = root / "api_doc_index.json"
+            extra_detail_path = root / "商品详情信息查询接口文档.md"
             prd_path.write_text("# PRD\n", encoding="utf-8")
             task_path.write_text("task_id: demo-app\n", encoding="utf-8")
             domain_path.write_text("domain_id: demo\n", encoding="utf-8")
             skill_dir.mkdir()
             index_path.write_text('{"apis":[]}', encoding="utf-8")
+            extra_detail_path.write_text("# 商品详情信息查询接口文档\n", encoding="utf-8")
 
             captured: dict[str, object] = {}
 
@@ -159,12 +163,15 @@ class AppGenerationCliTests(unittest.TestCase):
                         str(skill_dir),
                         "--api-doc-index",
                         str(index_path),
+                        "--api-extra-detail-doc",
+                        str(extra_detail_path),
                     ]
                 )
 
         inputs = json.loads(str(captured["inputs_json"]))
         self.assertEqual(exit_code, 0)
         self.assertEqual(inputs["api_doc_index"], str(index_path))
+        self.assertEqual(inputs["api_extra_detail_docs"], [str(extra_detail_path)])
 
     def test_app_generate_derives_default_skill_dir_from_task_yaml(self) -> None:
         from growth_dev import cli
@@ -333,6 +340,67 @@ class AppGenerationCliTests(unittest.TestCase):
             exit_code = cli.main(["app", "appcheck", "config", "--run-id", "market-run", "--runs-dir", str(runs_dir)])
 
         self.assertEqual(exit_code, 1)
+
+    def test_app_preview_start_discovers_repo_root_from_runs_dir_when_called_in_subdirectory(self) -> None:
+        from growth_dev import cli
+
+        old_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runs_dir = root / "runs"
+            run_dir = runs_dir / "preview-run"
+            app_dir = run_dir / "generated_apps" / "demo-app"
+            app_dir.mkdir(parents=True)
+            nested_cwd = root / "tools" / "acceptance"
+            nested_cwd.mkdir(parents=True)
+            (root / ".env").write_text("AICODEMIRROR_API_KEY=sk-aicodemirror-secret\n", encoding="utf-8")
+            (run_dir / "app_contract.json").write_text(
+                json.dumps(
+                    {
+                        "app_slug": "demo-app",
+                        "generated_app_dir": "generated_apps/demo-app",
+                        "preview": {"command": "node server.js"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            captured: dict[str, object] = {}
+
+            def fake_start_preview(request, *, runs_dir):
+                captured["repo_root"] = request.repo_root
+                captured["runs_dir"] = runs_dir
+                return SimpleNamespace(
+                    status="running",
+                    pid=123,
+                    url="http://127.0.0.1:8799",
+                    log_path=run_dir / "preview" / "preview.log",
+                    record_path=run_dir / "preview" / "preview_run_record.json",
+                    health_status="ok",
+                    message="ok",
+                )
+
+            try:
+                os.chdir(nested_cwd)
+                with mock.patch("growth_dev.team.preview.start_preview", side_effect=fake_start_preview):
+                    exit_code = cli.main(
+                        [
+                            "app",
+                            "preview",
+                            "start",
+                            "--run-id",
+                            "preview-run",
+                            "--runs-dir",
+                            str(runs_dir),
+                            "--port",
+                            "8799",
+                        ]
+                    )
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(Path(captured["repo_root"]).resolve(), root.resolve())
+        self.assertEqual(Path(captured["runs_dir"]).resolve(), runs_dir.resolve())
 
 
 if __name__ == "__main__":

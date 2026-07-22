@@ -148,6 +148,21 @@ class PreviewRunnerTests(unittest.TestCase):
                         "IMAGE_PROVIDER=openrouter",
                         "OPENROUTER_API_KEY=sk-or-v1-secret",
                         "OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2",
+                        "AICODEMIRROR_API_KEY=sk-aicodemirror-secret",
+                        "AICODEMIRROR_KEY=sk-aicodemirror-legacy",
+                        "AICODEMIRROR_BASE_URL=https://aicodemirror.example/api",
+                        "DEEPSEEK_API_KEY=sk-deepseek-secret",
+                        "PI_BIN=/usr/local/bin/pi",
+                        "PI_DEFAULT_MODEL=aicodemirror/gpt-5.6-sol",
+                        "PI_DEFAULT_THINKING=medium",
+                        "PI_RPC_TIMEOUT_MS=3000",
+                        "DB_ARCHAEOLOGIST_SPEC_PACK=/tmp/db-archaeologist",
+                        "DBA_LIVE_PROBE=1",
+                        "ZICHEN_BASE_URL=https://zichen.example",
+                        "ZICHEN_TENANT_ID=tenant-1",
+                        "ZICHEN_USER_ID=user-1",
+                        "ZICHEN_APP_CODE_KEY=app-code-key",
+                        "ZICHEN_APP_CODE=app-code",
                         "DATABASE_URL=postgres://should-not-pass",
                     ]
                 ),
@@ -186,6 +201,21 @@ class PreviewRunnerTests(unittest.TestCase):
         self.assertEqual(captured_env["IMAGE_PROVIDER"], "openrouter")
         self.assertEqual(captured_env["OPENROUTER_API_KEY"], "sk-or-v1-secret")
         self.assertEqual(captured_env["OPENROUTER_IMAGE_MODEL"], "openai/gpt-5.4-image-2")
+        self.assertEqual(captured_env["AICODEMIRROR_API_KEY"], "sk-aicodemirror-secret")
+        self.assertEqual(captured_env["AICODEMIRROR_KEY"], "sk-aicodemirror-legacy")
+        self.assertEqual(captured_env["AICODEMIRROR_BASE_URL"], "https://aicodemirror.example/api")
+        self.assertEqual(captured_env["DEEPSEEK_API_KEY"], "sk-deepseek-secret")
+        self.assertEqual(captured_env["PI_BIN"], "/usr/local/bin/pi")
+        self.assertEqual(captured_env["PI_DEFAULT_MODEL"], "aicodemirror/gpt-5.6-sol")
+        self.assertEqual(captured_env["PI_DEFAULT_THINKING"], "medium")
+        self.assertEqual(captured_env["PI_RPC_TIMEOUT_MS"], "3000")
+        self.assertEqual(captured_env["DB_ARCHAEOLOGIST_SPEC_PACK"], "/tmp/db-archaeologist")
+        self.assertEqual(captured_env["DBA_LIVE_PROBE"], "1")
+        self.assertEqual(captured_env["ZICHEN_BASE_URL"], "https://zichen.example")
+        self.assertEqual(captured_env["ZICHEN_TENANT_ID"], "tenant-1")
+        self.assertEqual(captured_env["ZICHEN_USER_ID"], "user-1")
+        self.assertEqual(captured_env["ZICHEN_APP_CODE_KEY"], "app-code-key")
+        self.assertEqual(captured_env["ZICHEN_APP_CODE"], "app-code")
         self.assertNotIn("DATABASE_URL", captured_env)
 
     @unittest.skipUnless(shutil.which("node") and CAN_BIND, "node or socket bind unavailable")

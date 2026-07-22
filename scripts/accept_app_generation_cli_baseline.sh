@@ -37,6 +37,17 @@ DOC_TO_SKILL_PYTHONPATH="$DOC_TO_SKILL_SRC"
 if [[ -n "${PYTHONPATH:-}" ]]; then
   DOC_TO_SKILL_PYTHONPATH="$DOC_TO_SKILL_SRC:$PYTHONPATH"
 fi
+# Prefer the package-local venv interpreter (created by the manual install step) so
+# doc_to_skill deps (typer/rich/pydantic/PyYAML) resolve without needing an activated
+# shell. Fall back to bare python3, and allow an explicit override.
+DOC_TO_SKILL_VENV_PYTHON="document-to-skill-engineering-package/.venv/bin/python"
+if [[ -n "${DOC_TO_SKILL_PYTHON:-}" ]]; then
+  DOC_TO_SKILL_PYTHON="$DOC_TO_SKILL_PYTHON"
+elif [[ -x "$DOC_TO_SKILL_VENV_PYTHON" ]]; then
+  DOC_TO_SKILL_PYTHON="$DOC_TO_SKILL_VENV_PYTHON"
+else
+  DOC_TO_SKILL_PYTHON="python3"
+fi
 
 PASSED_STEPS=()
 CURRENT_STEP="initializing"
@@ -49,6 +60,7 @@ print_config() {
   printf 'run_id: %s\n' "$RUN_ID"
   printf 'app_slug: %s\n' "$APP_SLUG"
   printf 'source_doc: %s\n' "$SOURCE_DOC"
+  printf 'doc_to_skill_python: %s\n' "$DOC_TO_SKILL_PYTHON"
   printf 'skill_out: %s\n' "$SKILL_OUT"
   printf 'prd_file: %s\n' "$PRD_FILE"
   printf 'task_yaml_path: %s\n' "$TASK_YAML_PATH"
@@ -212,7 +224,7 @@ check_api_doc_inputs() {
 
 check_doc_to_skill_cli() {
   local output
-  if ! output=$(env PYTHONPATH="$DOC_TO_SKILL_PYTHONPATH" python3 -m doc_to_skill.cli --help 2>&1); then
+  if ! output=$(env PYTHONPATH="$DOC_TO_SKILL_PYTHONPATH" "$DOC_TO_SKILL_PYTHON" -m doc_to_skill.cli --help 2>&1); then
     printf 'doc_to_skill CLI is not available in the current python3 environment.\n' >&2
     printf '\nOriginal output:\n%s\n' "$output" >&2
     printf '\nInstall dependencies manually, for example:\n' >&2
@@ -402,6 +414,20 @@ for node in nodes:
         raise SystemExit(f"node {node_id} missing data_mapping_context")
     if mapping_context.get("output_field_count") != len(output_fields):
         raise SystemExit(f"node {node_id} data_mapping_context output_field_count mismatch")
+    analysis_view = node.get("analysis_node_view")
+    if not isinstance(analysis_view, dict):
+        raise SystemExit(f"node {node_id} missing analysis_node_view")
+    if analysis_view.get("schema_version") != "analysis-node-view-v1":
+        raise SystemExit(f"node {node_id} invalid analysis_node_view schema_version")
+    if output_fields and node.get("data_requirements"):
+        if analysis_view.get("node_kind") != "data_analysis":
+            raise SystemExit(f"node {node_id} expected data_analysis analysis_node_view")
+        data_output = analysis_view.get("data_output_model")
+        if not isinstance(data_output, dict) or len(data_output.get("fields", [])) != len(output_fields):
+            raise SystemExit(f"node {node_id} analysis data_output_model fields mismatch")
+        for section in ("purpose_model", "input_model", "execution_plan", "insight_output_model", "verification_model", "source_trace"):
+            if not isinstance(analysis_view.get(section), dict):
+                raise SystemExit(f"node {node_id} analysis_node_view missing {section}")
     if node_id == "collect_top_products":
         names = [str(field.get("field_name") or "") for field in output_fields]
         expected = [
@@ -429,6 +455,15 @@ for node in nodes:
         image_field = next((field for field in output_fields if str(field.get("field_name") or "") == "商品主图"), None)
         if not image_field or "视觉表达" not in str(image_field.get("description") or ""):
             raise SystemExit(f"collect_top_products 商品主图 lost business description: {image_field}")
+        analysis_view = node.get("analysis_node_view", {})
+        if "行业大盘" not in str(analysis_view.get("purpose_model", {}).get("title") or ""):
+            raise SystemExit("collect_top_products analysis purpose title missing")
+        if not analysis_view.get("input_model", {}).get("data_sources"):
+            raise SystemExit("collect_top_products analysis input data_sources missing")
+        if not analysis_view.get("execution_plan", {}).get("steps"):
+            raise SystemExit("collect_top_products analysis execution steps missing")
+        if not analysis_view.get("insight_output_model", {}).get("requirements"):
+            raise SystemExit("collect_top_products analysis insight requirements missing")
 
 data_nodes = [node for node in nodes if node.get("kind") == "data"]
 if not any(
@@ -511,7 +546,7 @@ run_step "Build Strategy KB workflow sections" build_strategy_kb
 run_step "Assert Strategy KB workflow sections" assert_strategy_kb_workflow_sections
 run_step \
   "Compile main business document into Skill package" \
-  env PYTHONPATH="$DOC_TO_SKILL_PYTHONPATH" python3 -m doc_to_skill.cli compile \
+  env PYTHONPATH="$DOC_TO_SKILL_PYTHONPATH" "$DOC_TO_SKILL_PYTHON" -m doc_to_skill.cli compile \
   --input "$SOURCE_DOC" \
   --output "$SKILL_OUT"
 run_step "Check compiled Skill package artifacts" check_skill_artifacts
