@@ -166,6 +166,149 @@ class ApiDocMatcherServiceTest(unittest.TestCase):
         )
         index_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
+    def _append_product_feedback_apis(self) -> None:
+        index_path = Path(self.index_path)
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        common_params = [
+            {"name": "goods_id", "type": "string", "required": True, "description": "商品ID"},
+            {"name": "goods_id_list", "type": "string/array", "required": True, "description": "商品ID列表"},
+            {"name": "pageNum", "type": "integer", "required": True, "description": "页码"},
+            {"name": "pageSize", "type": "integer", "required": True, "description": "每页条数"},
+        ]
+        payload["apis"].extend(
+            [
+                {
+                    "api_id": "get_positive_comment_data",
+                    "source_seq": 1250,
+                    "name": "获取商品好评数据",
+                    "module": "商品反馈",
+                    "business_module": "商品评价",
+                    "analysis_domain": "评价与问大家",
+                    "method": "POST",
+                    "path": "/get_positive_comment_data",
+                    "verified_status": "success",
+                    "request_params": [common_params[1]],
+                    "request_headers": [],
+                    "response_fields": [
+                        {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                        {"path": "data.result[].comment", "name": "comment", "type": "string", "description": "好评内容"},
+                    ],
+                    "source_refs": {},
+                    "parse_warnings": [],
+                },
+                {
+                    "api_id": "product_comment_content2",
+                    "source_seq": 1251,
+                    "name": "获取商品评论数据",
+                    "module": "商品反馈",
+                    "business_module": "商品评价",
+                    "analysis_domain": "评价与问大家",
+                    "method": "POST",
+                    "path": "/product_comment_content2",
+                    "verified_status": "success",
+                    "request_params": common_params,
+                    "request_headers": [],
+                    "response_fields": [
+                        {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                        {"path": "data.result[].comment", "name": "comment", "type": "string", "description": "评论内容"},
+                    ],
+                    "source_refs": {},
+                    "parse_warnings": [],
+                },
+                {
+                    "api_id": "product_question_content2",
+                    "source_seq": 1252,
+                    "name": "获取问大家分析数据",
+                    "module": "商品反馈",
+                    "business_module": "问大家",
+                    "analysis_domain": "评价与问大家",
+                    "method": "POST",
+                    "path": "/product_question_content2",
+                    "verified_status": "success",
+                    "request_params": common_params,
+                    "request_headers": [],
+                    "response_fields": [
+                        {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                        {"path": "data.result[].question_content", "name": "question_content", "type": "string", "description": "问大家问题内容"},
+                        {"path": "data.result[].answer_count", "name": "answer_count", "type": "string", "description": "回答数量"},
+                    ],
+                    "source_refs": {},
+                    "parse_warnings": [],
+                },
+            ]
+        )
+        index_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def _append_competitor_landscape_apis(self) -> None:
+        index_path = Path(self.index_path)
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        common_request_params = [
+            {"name": "cid", "type": "string", "required": True, "description": "类目ID"},
+            {"name": "business_date", "type": "string", "required": True, "description": "业务日期"},
+            {"name": "start_date", "type": "string", "required": True, "description": "开始日期"},
+            {"name": "end_date", "type": "string", "required": True, "description": "结束日期"},
+            {"name": "pageNum", "type": "integer", "required": True, "description": "页码"},
+            {"name": "pageSize", "type": "integer", "required": True, "description": "每页条数"},
+            {"name": "statist_date", "type": "string", "required": True, "description": "统计日期"},
+        ]
+        response_fields = [
+            {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+            {"path": "data.result[].shop_name", "name": "shop_name", "type": "string", "description": "店铺名称"},
+            {"path": "data.result[].goods_href", "name": "goods_href", "type": "string", "description": "商品链接"},
+            {"path": "data.result[].price", "name": "price", "type": "number", "description": "商品价格"},
+            {"path": "data.result[].main_sku", "name": "main_sku", "type": "string", "description": "主销SKU"},
+            {"path": "data.result[].main_selling_point", "name": "main_selling_point", "type": "string", "description": "主卖点"},
+            {"path": "data.result[].main_image_url", "name": "main_image_url", "type": "string", "description": "商品主图"},
+            {"path": "data.result[].main_color", "name": "main_color", "type": "string", "description": "主色调"},
+            {"path": "data.result[].sales_total", "name": "sales_total", "type": "number", "description": "销量"},
+            {"path": "data.result[].sales_ratio", "name": "sales_ratio", "type": "number", "description": "销售占比"},
+        ]
+        for source_seq, api_id, name in [
+            (1260, "data_shop_competition_pattern_analysis_v3", "竞争格局分析-商品查询"),
+            (1261, "data_competition_pattern_analysis_v3", "竞争格局分析V3"),
+        ]:
+            payload["apis"].append(
+                {
+                    "api_id": api_id,
+                    "source_seq": source_seq,
+                    "name": name,
+                    "module": "竞争格局",
+                    "business_module": "竞品分析",
+                    "analysis_domain": "竞品与竞店格局分析",
+                    "method": "POST",
+                    "path": f"/data/{api_id.removeprefix('data_')}",
+                    "verified_status": "success",
+                    "response_root": "data.result[]",
+                    "request_params": common_request_params,
+                    "request_headers": [],
+                    "response_fields": response_fields,
+                    "source_refs": {},
+                    "parse_warnings": [],
+                }
+            )
+        payload["apis"].append(
+            {
+                "api_id": "data_ads_goods_price_range_rank_m",
+                "source_seq": 1262,
+                "name": "价格带竞争对手分析-商品",
+                "module": "价格带",
+                "business_module": "价格分析",
+                "analysis_domain": "价格带",
+                "method": "POST",
+                "path": "/data/ads_goods_price_range_rank_m",
+                "verified_status": "success",
+                "request_params": common_request_params,
+                "request_headers": [],
+                "response_fields": [
+                    {"path": "data.result[].max_price", "name": "max_price", "type": "number", "description": "最高价格"},
+                    {"path": "data.result[].shop_name", "name": "shop_name", "type": "string", "description": "店铺名称"},
+                ],
+                "source_refs": {},
+                "parse_warnings": [],
+            }
+        )
+        index_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
     def test_match_fields_matches_direct_call(self) -> None:
         fields = ["排名", "商品名", "店铺名", {"name": "主卖点", "description": "商品主要卖点"}, "功能"]
         proc = _run_service({"op": "match_fields", "index_path": self.index_path, "fields": fields})
@@ -412,6 +555,112 @@ class ApiDocMatcherServiceTest(unittest.TestCase):
         derived = {item["field_name"]: item for item in response["derived_field_plan"]}
         self.assertIn("data.result[].selling_point_summary", derived["功能"]["evidence_field_paths"])
         self.assertIn("data.result[].usage_scene", derived["风格"]["evidence_field_paths"])
+
+    def test_match_business_context_adds_dependent_product_feedback_enrichment(self) -> None:
+        self._append_product_feedback_apis()
+        proc = _run_service({
+            "op": "match_business_context",
+            "index_path": self.index_path,
+            "top_k": 8,
+            "business_context": {
+                "node_id": "collect_reviews_qa",
+                "title": "评价与问大家痛点分析",
+                "purpose": "分析同类型排名前10竞品的评价与问大家",
+                "data_sources": ["竞品评价", "问大家"],
+                "actions": ["下载评论", "下载问大家", "归类痛点"],
+            },
+            "output_fields": [
+                {"field_name": "competitor_product_url", "description": "竞品链接", "required": True},
+                {"field_name": "review_text", "description": "评价原文", "required": True},
+                {"field_name": "sentiment", "description": "正负向", "required": True},
+                {"field_name": "qa_question", "description": "问题原文", "required": True},
+                {"field_name": "painpoint_type", "description": "痛点分类", "required": True},
+            ],
+            "known_params": {"category": "桌布"},
+        })
+
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        response = json.loads(proc.stdout)
+        self.assertEqual(
+            ["get_positive_comment_data", "product_comment_content2", "product_question_content2"],
+            [api_id for api_id in response["selected_api_ids"] if api_id in {
+                "get_positive_comment_data", "product_comment_content2", "product_question_content2"
+            }],
+        )
+        for api_id in ("get_positive_comment_data", "product_comment_content2", "product_question_content2"):
+            applicability = response["api_applicability"][api_id]
+            self.assertEqual("product_feedback_enrichment", applicability["execution_role"])
+            self.assertEqual("confirmed_top_products", applicability["depends_on_role"])
+            self.assertEqual("confirmed_rows[].goods_id", applicability["input_binding"]["goods_id"])
+
+        coverage = {item["field_name"]: item for item in response["field_coverage_plan"]}
+        self.assertEqual("data.result[].comment", coverage["review_text"]["source_field_path"])
+        self.assertEqual("data.result[].question_content", coverage["qa_question"]["source_field_path"])
+        for field_name in ("competitor_product_url", "sentiment", "painpoint_type"):
+            self.assertEqual("derived_or_manual_required", coverage[field_name]["mapping_status"])
+
+    def test_bind_request_params_defers_product_feedback_goods_ids(self) -> None:
+        self._append_product_feedback_apis()
+        proc = _run_service({
+            "op": "bind_request_params",
+            "index_path": self.index_path,
+            "api_id": "product_question_content2",
+            "known_params": {"category": "桌布"},
+        })
+
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        response = json.loads(proc.stdout)
+        self.assertEqual([], response["missing_required_params"])
+        mapping = {item["api_param"]: item for item in response["request_param_mapping"]}
+        self.assertEqual("deferred", mapping["goods_id"]["status"])
+        self.assertEqual("deferred", mapping["goods_id_list"]["status"])
+        self.assertEqual(1, response["params"]["pageNum"])
+        self.assertEqual(300, response["params"]["pageSize"])
+
+    def test_match_business_context_prefers_competitor_landscape_and_protects_semantic_fields(self) -> None:
+        self._append_competitor_landscape_apis()
+        proc = _run_service({
+            "op": "match_business_context",
+            "index_path": self.index_path,
+            "top_k": 8,
+            "business_context": {
+                "node_id": "analyze_competitors",
+                "title": "竞品与竞店格局分析",
+                "purpose": "筛选直接竞品、学习竞品、防御竞品并分析竞争强度",
+                "data_sources": ["竞品基础信息、价格、SKU、卖点、视觉、评价和流量结构"],
+                "actions": ["从行业商品排行榜筛选同类型产品", "确定竞品类型和竞争强度"],
+            },
+            "output_fields": [
+                {"field_name": "competitor_type", "description": "竞品类型", "required": True},
+                {"field_name": "shop_name", "description": "店铺名称", "required": True},
+                {"field_name": "product_url", "description": "商品链接", "required": True},
+                {"field_name": "price", "description": "商品价格", "required": True},
+                {"field_name": "sku_count", "description": "SKU数量", "required": True},
+                {"field_name": "main_selling_point", "description": "主卖点", "required": True},
+                {"field_name": "visual_structure", "description": "视觉结构", "required": True},
+                {"field_name": "review_painpoints", "description": "评价痛点", "required": True},
+                {"field_name": "traffic_structure", "description": "流量结构", "required": True},
+                {"field_name": "competitor_strength", "description": "竞争强度", "required": True},
+            ],
+            "known_params": {"category": "桌布", "cid": "121458013", "period": "近30天"},
+        })
+
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        response = json.loads(proc.stdout)
+        self.assertEqual(["data_shop_competition_pattern_analysis_v3"], response["selected_api_ids"])
+        applicability = response["api_applicability"]["data_shop_competition_pattern_analysis_v3"]
+        self.assertEqual("competitor_landscape_primary", applicability["execution_role"])
+        coverage = {item["field_name"]: item for item in response["field_coverage_plan"]}
+        self.assertEqual("data.result[].shop_name", coverage["shop_name"]["source_field_path"])
+        self.assertEqual("data.result[].goods_href", coverage["product_url"]["source_field_path"])
+        self.assertEqual("data.result[].price", coverage["price"]["source_field_path"])
+        self.assertEqual("data.result[].main_selling_point", coverage["main_selling_point"]["source_field_path"])
+        for field_name in ("competitor_type", "visual_structure", "review_painpoints", "competitor_strength"):
+            self.assertEqual("derived_or_manual_required", coverage[field_name]["mapping_status"])
+            self.assertNotEqual("data.result[].max_price", coverage[field_name]["source_field_path"])
+        for field_name in ("sku_count", "traffic_structure"):
+            self.assertEqual("missing", coverage[field_name]["mapping_status"])
+            self.assertEqual("", coverage[field_name]["source_field_path"])
 
     def test_bind_request_params_defers_product_detail_data_source_to_runtime(self) -> None:
         self._append_product_detail_api()

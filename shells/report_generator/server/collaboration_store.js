@@ -18,7 +18,14 @@ const DEFAULT_AGENT_MODEL = 'aicodemirror/gpt-5.6-sol';
 const AGENT_BATCH_PAGE_SIZE = 10;
 const AGENT_BATCH_CONCURRENCY = 2;
 const AGENT_BATCH_TIMEOUT_MS = 10 * 60 * 1000;
-const AGENT_FILLABLE_FIELDS = new Set(['功能', '风格', '主图元素', '爆款原因', '产品类型']);
+const COMPETITOR_FILLABLE_FIELDS = [
+  'competitor_type', 'visual_structure', 'review_painpoints', 'competitor_strength',
+];
+const AGENT_FILLABLE_FIELDS = new Set([
+  '功能', '风格', '主图元素', '爆款原因', '产品类型',
+  ...COMPETITOR_FILLABLE_FIELDS,
+]);
+const COMPETITOR_TYPES = new Set(['直接竞品', '学习竞品', '防御竞品', '趋势竞品', '弱竞品']);
 const KEYWORD_FILLABLE_FIELDS = ['root_terms', 'demand_type'];
 const KEYWORD_DEMAND_TYPES = new Set([
   '品类需求', '人群需求', '属性需求', '功能需求',
@@ -27,6 +34,7 @@ const KEYWORD_DEMAND_TYPES = new Set([
 const API_FACT_FIELDS = new Set([
   '排名', '店铺名', '商品链接', '商品主图', '销量', '支付买家数', '销量/支付买家数',
   'GMV', '交易指数', 'GMV/交易指数', '客单价', '价格带', '是否高增速', 'speed_type',
+  'shop_name', 'product_url', 'price', 'main_selling_point', 'sku_count', 'traffic_structure',
 ]);
 
 class CollaborationError extends Error {
@@ -257,10 +265,14 @@ function createCollaborationStore({
     const fieldNames = effectiveFields(workspace).map(fieldPathOf).filter(Boolean);
     const keywordTable = fieldNames.includes('keyword')
       && KEYWORD_FILLABLE_FIELDS.some(field => fieldNames.includes(field));
+    const competitorTable = Boolean(table && table.competitor_enrichment)
+      || COMPETITOR_FILLABLE_FIELDS.some(field => fieldNames.includes(field));
     const definitions = derivedFieldCatalog(table);
     const fillableFields = keywordTable
       ? KEYWORD_FILLABLE_FIELDS.filter(field => fieldNames.includes(field))
-      : fieldNames.filter(field => definitions.has(field) || AGENT_FILLABLE_FIELDS.has(field));
+      : competitorTable
+        ? COMPETITOR_FILLABLE_FIELDS.filter(field => fieldNames.includes(field))
+        : fieldNames.filter(field => definitions.has(field) || AGENT_FILLABLE_FIELDS.has(field));
     const totalCells = rows.length * fillableFields.length;
     const remainingCells = rows.reduce((count, row) => (
       count + fillableFields.filter(field => !nonEmpty(row && row[field])).length
@@ -286,7 +298,7 @@ function createCollaborationStore({
       status = 'agent_review_ready';
     }
     return {
-      subject_kind: keywordTable ? 'keyword' : 'product',
+      subject_kind: keywordTable ? 'keyword' : competitorTable ? 'competitor' : 'product',
       fillable_fields: fillableFields,
       total_cells: totalCells,
       filled_cells: filledCells,
@@ -1353,11 +1365,17 @@ function createCollaborationStore({
       goods_spec_params: ['goods_spec_params', '商品规格', '规格'],
       goods_name: ['goods_name', '商品名', '商品名称'],
       goods_img: ['goods_img', '商品主图'],
+      review_evidence: ['review_evidence', 'review_text', 'qa_question'],
     };
     const names = new Set([
       '商品名', '商品名称', 'goods_name', '材质', 'core_material', '场景', 'usage_scene',
       '主卖点', '卖点总结', 'selling_point_summary', '商品规格', '规格', 'goods_spec_params',
       'speed_type', '趋势类型',
+      'goods_id', 'rank', '排名', 'shop_name', '店铺名', 'product_url', '商品链接',
+      'price', '客单价', 'sales_total', 'sales_ratio', '销量/支付买家数', '是否高增速',
+      'product_type', '产品类型', 'material', '材质', 'scene', '场景',
+      'main_selling_point', '主卖点', 'main_image_elements', '主图元素',
+      'main_image_url', 'main_color', 'image_words', 'review_evidence', 'review_text', 'qa_question',
     ]);
     const paths = [
       ...(Array.isArray(definition && definition.evidence_field_paths) ? definition.evidence_field_paths : []),
@@ -1382,6 +1400,14 @@ function createCollaborationStore({
       for (const name of [
         'keyword', 'keywords', 'search_popularity', 'growth_rate', 'competition_index',
         'click_rate', 'conversion_rate',
+      ]) explicitNames.add(name);
+    } else if (subjectKind === 'competitor') {
+      for (const name of [
+        'goods_id', 'rank', '排名', 'shop_name', '店铺名', 'product_url', '商品链接',
+        'price', '客单价', 'sales_total', 'sales_ratio', '销量/支付买家数', 'speed_type', '是否高增速',
+        'product_type', '产品类型', 'material', '材质', 'scene', '场景',
+        'main_selling_point', '主卖点', 'main_image_elements', '主图元素',
+        'main_image_url', 'main_color', 'image_words', 'review_evidence',
       ]) explicitNames.add(name);
     }
     const values = {};
@@ -1502,7 +1528,7 @@ function createCollaborationStore({
     nextThread.messages = [...(nextThread.messages || []), {
       message_id: `batch-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role: 'user',
-      text: `发起当前页一键填充：第 ${pageNumber} 页，共 ${items.length} 个待补${subjectKind === 'keyword' ? '关键词' : '商品'}。`,
+      text: `发起当前页一键填充：第 ${pageNumber} 页，共 ${items.length} 个待补${subjectKind === 'keyword' ? '关键词' : subjectKind === 'competitor' ? '竞品商品' : '商品'}。`,
       intent: 'table_edit_batch',
       batch_id: batchId,
       table_revision: batch.base_revision,
@@ -1560,20 +1586,29 @@ function createCollaborationStore({
             category_context: clone(sourceTable.category_context || {}),
             demand_type_contract: Array.from(KEYWORD_DEMAND_TYPES),
           }
-        : { product: item.product }),
+        : String(batch.subject_kind || '') === 'competitor'
+          ? {
+              product: item.product,
+              competitor_type_contract: Array.from(COMPETITOR_TYPES),
+              source_table_ref: String(sourceTable.source_table_ref || ''),
+              review_table_ref: String(sourceTable.review_table_ref || ''),
+            }
+          : { product: item.product }),
       target_fields: item.target_fields,
       evidence_values: item.evidence_values,
       evidence_refs: item.evidence_refs,
       table_revision: batch.base_revision,
     };
-    const keywordInstruction = String(batch.subject_kind || '') === 'keyword'
+    const agentInstruction = String(batch.subject_kind || '') === 'keyword'
       ? '请基于当前关键词及其指标，同时生成 root_terms 和 demand_type。root_terms 必须是去重字符串数组；demand_type 必须是八类需求标准之一：品类需求、人群需求、属性需求、功能需求、场景需求、品牌需求、风格需求、定制需求。只允许修改当前行的 root_terms、demand_type。每个字段单独返回一个 patch，例如 {"row_id":"keyword:书桌垫","field_path":"root_terms","old_value":[],"new_value":["书桌","桌垫"],"reason":"关键词拆解","confidence":0.9,"evidence_refs":[]}。'
-      : '请结合当前商品已有信息，补齐全部目标字段。';
+      : String(batch.subject_kind || '') === 'competitor'
+        ? '请基于当前竞品的排名、价格、销量、增速、卖点、视觉文本和评价证据，补齐当前行允许的派生字段。competitor_type 只能是：直接竞品、学习竞品、防御竞品、趋势竞品、弱竞品。不得修改 shop_name、product_url、price、main_selling_point、sku_count、traffic_structure 等事实字段；仅有图片 URL 时不得声称完成视觉识别。'
+        : '请结合当前商品已有信息，补齐全部目标字段。';
     return {
       model: batch.requested_model,
       node_id: nodeId,
       intent: 'table_edit_advice',
-      message: `${keywordInstruction}只返回有证据支持的简洁描述；证据不足则留空并说明原因。\n${JSON.stringify(promptContext, null, 2)}`,
+      message: `${agentInstruction}只返回有证据支持的简洁描述；证据不足则留空并说明原因。\n${JSON.stringify(promptContext, null, 2)}`,
       conversation_history: [],
       analysis_node_view: node.analysis_node_view || {},
       table_workspace: scopedWorkspace,
@@ -1608,7 +1643,7 @@ function createCollaborationStore({
     if (queue.length === 0) return agentBatchResponse(nodeId, batchId);
     updateAgentBatch(nodeId, batchId, batch => {
       batch.status = 'running';
-      batch.public_stage = `正在构造${batch.subject_kind === 'keyword' ? '关键词' : '商品'}证据`;
+      batch.public_stage = `正在构造${batch.subject_kind === 'keyword' ? '关键词' : batch.subject_kind === 'competitor' ? '竞品商品' : '商品'}证据`;
       recalculateBatchProgress(batch);
     }, { action: 'batch_started' });
     const deadline = Date.now() + AGENT_BATCH_TIMEOUT_MS;
@@ -1639,7 +1674,7 @@ function createCollaborationStore({
           item.status = 'running';
           item.call_id = callId;
           item.started_at = new Date().toISOString();
-          batch.public_stage = `正在处理${batch.subject_kind === 'keyword' ? '关键词' : '商品'} ${Math.min(queueIndex + 1, queue.length)}/${queue.length}`;
+          batch.public_stage = `正在处理${batch.subject_kind === 'keyword' ? '关键词' : batch.subject_kind === 'competitor' ? '竞品商品' : '商品'} ${Math.min(queueIndex + 1, queue.length)}/${queue.length}`;
           recalculateBatchProgress(batch);
           itemSnapshot = clone(item);
         });
@@ -1701,6 +1736,11 @@ function createCollaborationStore({
               proposalRisks.push('invalid_demand_type_rejected');
               continue;
             }
+            if (batch.subject_kind === 'competitor' && fieldPath === 'competitor_type'
+              && !COMPETITOR_TYPES.has(String(patch.new_value || '').trim())) {
+              proposalRisks.push('invalid_competitor_type_rejected');
+              continue;
+            }
             applicable.push(patch);
           }
           const proposalIds = [];
@@ -1759,7 +1799,7 @@ function createCollaborationStore({
     }, { action: 'batch_finished' });
     let thread = loadThread(nodeId);
     const rejectedCount = Number(finalBatch.progress.rejected_cells || 0);
-    const subjectLabel = finalBatch.subject_kind === 'keyword' ? '关键词' : '商品';
+    const subjectLabel = finalBatch.subject_kind === 'keyword' ? '关键词' : finalBatch.subject_kind === 'competitor' ? '竞品商品' : '商品';
     const summaryText = finalBatch.progress.proposed_cells > 0
       ? `当前页批量填充完成：${finalBatch.progress.completed_products}/${finalBatch.progress.eligible_products} 个${subjectLabel}已处理，已生成建议 ${finalBatch.progress.proposed_cells}/${finalBatch.progress.target_cells}。`
       : rejectedCount > 0

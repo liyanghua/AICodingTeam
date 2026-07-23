@@ -1953,7 +1953,7 @@ def _load_skill_yaml_subset(path: Path) -> dict[str, Any]:
 def _node_kind(source_type: str) -> str:
     if source_type == "form_collect":
         return "form"
-    if source_type == "data_collect":
+    if source_type in {"data_collect", "multi_source_analysis"}:
         return "data"
     if source_type in {"compute", "scoring"}:
         return "compute"

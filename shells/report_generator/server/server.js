@@ -1961,7 +1961,9 @@ function extractKnownParamsFromArtifacts(upstreamArtifacts) {
       const key = labelMap[label] || labelMap[label.replace(/[：:]/g, '')];
       if (key && !known[key]) known[key] = value;
     }
-    const fields = artifact && artifact.fields && typeof artifact.fields === 'object' ? artifact.fields : {};
+    const fields = artifact && artifact.fields && typeof artifact.fields === 'object' && !Array.isArray(artifact.fields)
+      ? artifact.fields
+      : {};
     for (const [key, value] of Object.entries(fields)) {
       const normalized = labelMap[key] || key;
       if (normalized && value !== undefined && value !== null && String(value).trim() && !known[normalized]) {
@@ -2581,9 +2583,16 @@ function normalizeFieldText(value) {
     .trim();
 }
 
-const PROTECTED_SEMANTIC_FIELD_NAMES = new Set(['root_terms', 'demand_type', '词根', '需求类型']);
+const COMPETITOR_DERIVED_FIELD_NAMES = new Set([
+  'competitor_type', 'visual_structure', 'review_painpoints', 'competitor_strength',
+]);
+const PROTECTED_SEMANTIC_FIELD_NAMES = new Set([
+  'root_terms', 'demand_type', '词根', '需求类型',
+  ...COMPETITOR_DERIVED_FIELD_NAMES,
+]);
 const DERIVED_FIELD_NAMES = new Set([
   '功能', 'function', '风格', 'style', '主图元素', 'main_image_elements', '爆款原因', 'hot_sale_reason',
+  'competitor_product_url', 'sentiment', 'painpoint_type',
   ...PROTECTED_SEMANTIC_FIELD_NAMES,
 ]);
 
@@ -3319,6 +3328,13 @@ function groupedApiPlansForCoverage(node, knownParams, coverage, selectedAssetCa
     if (!byApi.has(apiId)) byApi.set(apiId, []);
     byApi.get(apiId).push(field);
   }
+  for (const card of Array.isArray(selectedAssetCards) ? selectedAssetCards : []) {
+    const apiId = String(card && card.api_id || '').trim();
+    if (!apiId || byApi.has(apiId)) continue;
+    const role = String(card && card.execution_applicability && card.execution_applicability.execution_role
+      || dataApiExecutionRole(apiId, card && card.name || '', card));
+    if (role === 'product_feedback_enrichment') byApi.set(apiId, []);
+  }
   return Array.from(byApi.entries()).map(([apiId, fields], index) => {
     const card = assetCardForApi(node, apiId, selectedAssetCards);
     const apiRequestParams = requestParamsFromAssetCard(card);
@@ -3326,24 +3342,29 @@ function groupedApiPlansForCoverage(node, knownParams, coverage, selectedAssetCa
     const binding = matcherBinding && !matcherBinding.degraded
       ? matcherBinding
       : bindApiRequestParams(apiRequestParams, knownParams);
-    const sourcePathMissing = fields
-      .filter(field => !String(field.source_field_path || field.api_field_path || '').trim())
-      .map(field => String(field.field_name || field.title || ''))
-      .filter(Boolean);
-    const hasExecutableFields = fields.some(field => String(field.source_field_path || field.api_field_path || '').trim());
-    const missingRequiredParams = [...binding.missing_required_params];
-    const categoryBlocked = Array.isArray(binding.request_param_mapping)
-      && binding.request_param_mapping.some(item => item && item.category_param_role === 'category_id' && item.status === 'missing');
-    const bindingUnavailable = Boolean(matcherBinding && matcherBinding.degraded && matcherBinding.reason !== 'api_id_not_in_api_doc_index');
-    const status = missingRequiredParams.length > 0 || !hasExecutableFields || bindingUnavailable ? 'blocked' : 'planned';
     const executionRole = String(
       card && card.execution_applicability && card.execution_applicability.execution_role
       || dataApiExecutionRole(apiId, card && card.name || fields[0] && fields[0].source_api_name || '', card)
     );
+    const sourcePathMissing = fields
+      .filter(field => !String(field.source_field_path || field.api_field_path || '').trim())
+      .map(field => String(field.field_name || field.title || ''))
+      .filter(Boolean);
+    const hasExecutableFields = executionRole === 'product_feedback_enrichment'
+      || fields.some(field => String(field.source_field_path || field.api_field_path || '').trim());
+    const missingRequiredParams = [...binding.missing_required_params].filter(name => {
+      if (executionRole !== 'product_feedback_enrichment') return true;
+      return !['goodsid', 'goodsidlist', 'itemid', 'itemidlist', 'productid', 'productidlist', 'commodityid', 'commodityidlist']
+        .includes(String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ''));
+    });
+    const categoryBlocked = Array.isArray(binding.request_param_mapping)
+      && binding.request_param_mapping.some(item => item && item.category_param_role === 'category_id' && item.status === 'missing');
+    const bindingUnavailable = Boolean(matcherBinding && matcherBinding.degraded && matcherBinding.reason !== 'api_id_not_in_api_doc_index');
+    const status = missingRequiredParams.length > 0 || !hasExecutableFields || bindingUnavailable ? 'blocked' : 'planned';
     const categoryRoles = new Set((Array.isArray(binding.request_param_mapping) ? binding.request_param_mapping : [])
       .map(item => String(item && item.category_param_role || ''))
       .filter(Boolean));
-    const categoryScope = executionRole === 'product_detail_enrichment'
+    const categoryScope = ['product_detail_enrichment', 'product_feedback_enrichment'].includes(executionRole)
       ? 'inherited_from_primary'
       : categoryRoles.has('category_id')
       ? 'category_id_required'
@@ -3354,8 +3375,16 @@ function groupedApiPlansForCoverage(node, knownParams, coverage, selectedAssetCa
       api_id: apiId,
       api_name: String(card && card.name || fields[0] && fields[0].source_api_name || ''),
       execution_role: executionRole,
-      depends_on_role: executionRole === 'product_detail_enrichment' ? 'topn_trade_total_primary' : '',
-      input_binding: executionRole === 'product_detail_enrichment' ? { goods_id: 'primary_rows[].goods_id' } : {},
+      depends_on_role: executionRole === 'product_detail_enrichment'
+        ? 'topn_trade_total_primary'
+        : executionRole === 'product_feedback_enrichment'
+          ? 'confirmed_top_products'
+          : '',
+      input_binding: executionRole === 'product_detail_enrichment'
+        ? { goods_id: 'primary_rows[].goods_id' }
+        : executionRole === 'product_feedback_enrichment'
+          ? { goods_id: 'confirmed_rows[].goods_id', goods_id_list: 'confirmed_rows[].goods_id' }
+          : {},
       call_order: index + 1,
       source_fields: fields.map(field => String(field.field_name || field.title || '')).filter(Boolean),
       request_param_mapping: binding.request_param_mapping,
@@ -3484,11 +3513,21 @@ function dataApiExecutionRole(apiId, apiName = '', card = null) {
   const compactName = value => String(value || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '');
   const requestFields = requestParamsFromAssetCard(card).map(item => compactName(item.name));
   const responseFields = apiFieldsFromAssetCard(card).map(item => compactName(item.name || item.path));
-  const hasProductInput = requestFields.some(name => ['goodsid', 'itemid', 'productid', 'commodityid'].includes(name));
+  const hasProductInput = requestFields.some(name => [
+    'goodsid', 'goodsidlist', 'itemid', 'itemidlist',
+    'productid', 'productidlist', 'commodityid', 'commodityidlist',
+  ].includes(name));
   const hasProductOutput = responseFields.some(name => ['goodsid', 'itemid', 'productid', 'commodityid'].includes(name));
   const detailSignals = responseFields.filter(name => ['corematerial', 'usagescene', 'sellingpointsummary', 'goodsspecparams'].includes(name));
+  const feedbackSignals = responseFields.filter(name => ['comment', 'questioncontent', 'answercount'].includes(name));
   if ((hasProductInput && hasProductOutput && detailSignals.length >= 2) || text.includes('goods_detail_info')) {
     return 'product_detail_enrichment';
+  }
+  if (hasProductInput && hasProductOutput && feedbackSignals.length > 0) {
+    return 'product_feedback_enrichment';
+  }
+  if ((text.includes('competition_pattern') || text.includes('竞争格局')) && hasProductOutput) {
+    return 'competitor_landscape_primary';
   }
   if ((text.includes('热销商品') || text.includes('goods')) && (text.includes('交易总量') || text.includes('trade_category_goods'))) {
     return 'topn_trade_total_primary';
@@ -3997,6 +4036,246 @@ function rowsByProductIdentity(rows) {
   return index;
 }
 
+function confirmedTopProducts(limit = 10, maximum = 300) {
+  const confirmedPath = path.join(ARTIFACTS_DIR, 'collect_top_products.confirmed_data_table.json');
+  if (!fs.existsSync(confirmedPath)) {
+    return { status: 'missing', reason: 'source_table_not_confirmed', products: [], artifact_ref: '' };
+  }
+  try {
+    const artifact = JSON.parse(fs.readFileSync(confirmedPath, 'utf-8'));
+    if (artifact.schema_version !== 'data-table-confirmed-v1' || String(artifact.status || '') !== 'confirmed') {
+      return { status: 'invalid', reason: 'source_table_not_confirmed', products: [], artifact_ref: 'artifacts/collect_top_products.confirmed_data_table.json' };
+    }
+    const rows = Array.isArray(artifact.rows) ? artifact.rows : [];
+    const rowMeta = Array.isArray(artifact.row_meta) ? artifact.row_meta : [];
+    const products = [];
+    const boundedLimit = Math.min(Math.max(1, Number(maximum) || 300), Math.max(1, Number(limit) || 10));
+    for (let index = 0; index < rows.length && products.length < boundedLimit; index += 1) {
+      const row = rows[index] || {};
+      const meta = rowMeta[index] || {};
+      const identity = String(meta.source_identity || productIdentityForRow(row) || '').trim();
+      if (!identity || products.some(item => item.goods_id === identity)) continue;
+      const productUrl = String(row['商品链接'] || row.goods_url || row.product_url || row.item_url || row.commodity_url || '').trim();
+      products.push({ goods_id: identity, product_url: productUrl, row, row_meta: meta, source_index: index });
+    }
+    return {
+      status: products.length > 0 ? 'ready' : 'empty',
+      reason: products.length > 0 ? '' : 'confirmed_product_ids_missing',
+      products,
+      workspace_revision: Number(artifact.workspace_revision || 0),
+      execution_id: String(artifact.base_execution_id || artifact.execution_id || ''),
+      artifact_ref: 'artifacts/collect_top_products.confirmed_data_table.json',
+    };
+  } catch (error) {
+    return { status: 'invalid', reason: 'confirmed_product_table_invalid', products: [], artifact_ref: 'artifacts/collect_top_products.confirmed_data_table.json', error: error.message };
+  }
+}
+
+function confirmedTopProductsForFeedback(limit = 10) {
+  return confirmedTopProducts(limit, 10);
+}
+
+function confirmedReviewsForCompetitors() {
+  const artifactRef = 'artifacts/collect_reviews_qa.confirmed_data_table.json';
+  const artifactPath = path.join(APP_ROOT, artifactRef);
+  if (!fs.existsSync(artifactPath)) return { status: 'missing', rows: [], artifact_ref: artifactRef, workspace_revision: 0 };
+  try {
+    const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
+    if (artifact.schema_version !== 'data-table-confirmed-v1' || String(artifact.status || '') !== 'confirmed') {
+      return { status: 'invalid', rows: [], artifact_ref: artifactRef, workspace_revision: Number(artifact.workspace_revision || 0) };
+    }
+    return {
+      status: 'ready',
+      rows: Array.isArray(artifact.rows) ? artifact.rows : [],
+      artifact_ref: artifactRef,
+      workspace_revision: Number(artifact.workspace_revision || 0),
+      execution_id: String(artifact.base_execution_id || artifact.execution_id || ''),
+    };
+  } catch (error) {
+    return { status: 'invalid', rows: [], artifact_ref: artifactRef, workspace_revision: 0, error: error.message };
+  }
+}
+
+function feedbackBatchRows(workerResponse, apiId) {
+  const payload = workerResponse && workerResponse.payload && typeof workerResponse.payload === 'object'
+    ? workerResponse.payload
+    : {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const rows = [];
+  const itemStatuses = [];
+  const summary = { requested: items.length, success: 0, empty: 0, failed: 0 };
+  for (const item of items) {
+    const correlationId = String(item && item.correlation_id || '');
+    const itemRows = Array.isArray(item && item.rows) ? item.rows : [];
+    const accepted = [];
+    let identityMismatch = false;
+    for (const rawRow of itemRows) {
+      if (!rawRow || typeof rawRow !== 'object' || Array.isArray(rawRow)) continue;
+      const rowIdentity = productIdentityForRow(rawRow);
+      if (rowIdentity && correlationId && rowIdentity !== correlationId) {
+        identityMismatch = true;
+        continue;
+      }
+      accepted.push({ ...rawRow, goods_id: rowIdentity || correlationId, feedback_api_id: apiId });
+    }
+    let status = String(item && item.status || 'failed');
+    if (status === 'success' && accepted.length === 0) status = itemRows.length > 0 || identityMismatch ? 'failed' : 'empty';
+    if (status === 'success') summary.success += 1;
+    else if (status === 'empty') summary.empty += 1;
+    else summary.failed += 1;
+    rows.push(...accepted);
+    itemStatuses.push({
+      correlation_id: correlationId,
+      status,
+      attempts: Number(item && item.attempts || 0),
+      rows_returned: accepted.length,
+      identity_mismatch: identityMismatch,
+      request_debug: redactedObjectForDisplay(item && item.response && item.response.request || {}),
+      error: String(item && item.error || ''),
+    });
+  }
+  return { rows, summary, item_statuses: itemStatuses };
+}
+
+function projectFeedbackRows(rowsByApi, apiExecutionPlan, sourceProducts) {
+  const sourceById = new Map((Array.isArray(sourceProducts) ? sourceProducts : []).map(item => [String(item.goods_id || ''), item]));
+  const plans = (Array.isArray(apiExecutionPlan) ? apiExecutionPlan : [])
+    .filter(plan => String(plan && plan.execution_role || '') === 'product_feedback_enrichment');
+  const rows = [];
+  const rowIdentities = [];
+  const rowSourceIdentities = [];
+  const apiIds = [];
+  for (const plan of plans) {
+    const apiId = String(plan.api_id || '');
+    const sourceRows = rowsByApi instanceof Map ? rowsByApi.get(apiId) || [] : [];
+    if (sourceRows.length > 0) apiIds.push(apiId);
+    for (let index = 0; index < sourceRows.length; index += 1) {
+      const sourceRow = sourceRows[index] || {};
+      const goodsId = productIdentityForRow(sourceRow);
+      if (!goodsId || !sourceById.has(goodsId)) continue;
+      const sourceProduct = sourceById.get(goodsId);
+      const row = {
+        goods_id: goodsId,
+        feedback_source_type: apiId === 'product_question_content2' ? 'qa' : apiId === 'get_positive_comment_data' ? 'positive_review' : 'review',
+        feedback_api_id: apiId,
+      };
+      if (sourceProduct.product_url) row.competitor_product_url = sourceProduct.product_url;
+      if (hasNonEmptyValue(sourceRow.comment)) row.review_text = sourceRow.comment;
+      if (hasNonEmptyValue(sourceRow.question_content)) row.qa_question = sourceRow.question_content;
+      if (hasNonEmptyValue(sourceRow.answer_count)) row.answer_count = sourceRow.answer_count;
+      rows.push(row);
+      rowIdentities.push(`${goodsId}:${apiId}:${index + 1}`);
+      rowSourceIdentities.push(goodsId);
+    }
+  }
+  return {
+    rows,
+    row_identities: rowIdentities,
+    row_source_identities: rowSourceIdentities,
+    identity_kind: 'feedback',
+    primary_api_id: '',
+    join_blocked_api_ids: [],
+    key_joined_api_ids: apiIds,
+    join_keys: apiIds.length > 0 ? ['goods_id'] : [],
+    row_index_merged_api_ids: [],
+    merge_strategy: apiIds.length > 0 ? 'feedback_union_by_goods_id' : 'none',
+    preserve_all_rows: true,
+  };
+}
+
+function firstNonEmptyValue(...values) {
+  return values.find(value => hasNonEmptyValue(value));
+}
+
+function projectCompetitorRows(sourceProducts, competitorRows, reviewRows, options = {}) {
+  const apiById = rowsByProductIdentity(competitorRows);
+  const reviewsById = new Map();
+  let reviewRecordsUsed = 0;
+  for (const review of Array.isArray(reviewRows) ? reviewRows : []) {
+    const goodsId = productIdentityForRow(review);
+    if (!goodsId) continue;
+    const evidence = [review.review_text, review.comment, review.qa_question, review.question_content]
+      .filter(hasNonEmptyValue)
+      .map(value => String(value).trim());
+    if (evidence.length === 0) continue;
+    if (!reviewsById.has(goodsId)) reviewsById.set(goodsId, []);
+    for (const value of evidence) {
+      if (!reviewsById.get(goodsId).includes(value)) reviewsById.get(goodsId).push(value);
+      reviewRecordsUsed += 1;
+    }
+  }
+  let matchedProducts = 0;
+  const upstreamFactFields = new Set();
+  const apiFactFields = new Set();
+  const rows = (Array.isArray(sourceProducts) ? sourceProducts : []).map(product => {
+    const goodsId = String(product && product.goods_id || '').trim();
+    const upstream = product && product.row && typeof product.row === 'object' ? product.row : {};
+    const api = goodsId ? apiById.get(goodsId) || {} : {};
+    if (Object.keys(api).length > 0) matchedProducts += 1;
+    const out = { goods_id: goodsId };
+    const facts = {
+      shop_name: {
+        api: firstNonEmptyValue(api.shop_name, api.shop),
+        upstream: firstNonEmptyValue(upstream.shop_name, upstream['店铺名']),
+      },
+      product_url: {
+        api: firstNonEmptyValue(api.goods_href, api.goods_url, api.product_url),
+        upstream: firstNonEmptyValue(product && product.product_url, upstream.product_url, upstream.goods_url, upstream['商品链接']),
+      },
+      price: {
+        api: firstNonEmptyValue(api.price, api.unit_price, api.display_price),
+        upstream: firstNonEmptyValue(upstream.price, upstream.unit_price, upstream['客单价']),
+      },
+      main_selling_point: {
+        api: firstNonEmptyValue(api.main_selling_point, api.selling_point),
+        upstream: firstNonEmptyValue(upstream.main_selling_point, upstream['主卖点']),
+      },
+    };
+    for (const [fieldName, candidates] of Object.entries(facts)) {
+      const value = firstNonEmptyValue(candidates.api, candidates.upstream);
+      if (!hasNonEmptyValue(value)) continue;
+      out[fieldName] = value;
+      if (hasNonEmptyValue(candidates.api)) apiFactFields.add(fieldName);
+      else upstreamFactFields.add(fieldName);
+    }
+    const evidenceFields = {
+      rank: firstNonEmptyValue(api.qbt_rank, api.sycm_rank, upstream.rank, upstream['排名']),
+      sales_total: firstNonEmptyValue(api.sales_total, upstream.sales_total, upstream['销量/支付买家数']),
+      sales_ratio: firstNonEmptyValue(api.sales_ratio, upstream.sales_ratio),
+      speed_type: firstNonEmptyValue(api.speed_type, upstream.speed_type, upstream['是否高增速']),
+      product_type: firstNonEmptyValue(upstream.product_type, upstream['产品类型']),
+      material: firstNonEmptyValue(upstream.material, upstream['材质']),
+      scene: firstNonEmptyValue(upstream.scene, upstream['场景']),
+      main_image_elements: firstNonEmptyValue(upstream.main_image_elements, upstream['主图元素']),
+      main_image_url: firstNonEmptyValue(api.main_image_url, api.main_image, upstream.main_image_url, upstream['商品主图']),
+      main_color: firstNonEmptyValue(api.main_color, upstream.main_color),
+      image_words: firstNonEmptyValue(api.image_words, upstream.image_words),
+    };
+    for (const [fieldName, value] of Object.entries(evidenceFields)) {
+      if (hasNonEmptyValue(value)) out[fieldName] = value;
+    }
+    const reviewEvidence = reviewsById.get(goodsId) || [];
+    if (reviewEvidence.length > 0) out.review_evidence = reviewEvidence;
+    return out;
+  });
+  return {
+    rows,
+    row_identities: (Array.isArray(sourceProducts) ? sourceProducts : []).map(product => String(product && product.goods_id || '')),
+    identity_kind: 'product_id',
+    primary_api_id: String(options.primary_api_id || ''),
+    join_blocked_api_ids: [],
+    key_joined_api_ids: apiById.size > 0 ? (Array.isArray(options.api_ids) ? options.api_ids.map(String).filter(Boolean) : []) : [],
+    join_keys: ['goods_id'],
+    row_index_merged_api_ids: [],
+    merge_strategy: 'competitor_join_by_goods_id',
+    preserve_all_rows: true,
+    matched_products: matchedProducts,
+    review_records_used: reviewRecordsUsed,
+    upstream_fact_fields: Array.from(upstreamFactFields),
+    api_fact_fields: Array.from(apiFactFields),
+  };
+}
+
 function keywordIdentityForRow(row) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) return '';
   for (const key of KEYWORD_ID_KEYS) {
@@ -4112,6 +4391,8 @@ function buildFieldSources(fieldCoveragePlan, apiExecutionPlan, projectedRows, o
   const rowsByApi = options.rowsByApi instanceof Map ? options.rowsByApi : null;
   const joinBlockedApiIds = new Set(Array.isArray(options.joinBlockedApiIds) ? options.joinBlockedApiIds : []);
   const primaryApiId = String(options.primaryApiId || '');
+  const projectedFactFields = new Set(Array.isArray(options.projectedFactFields) ? options.projectedFactFields.map(String) : []);
+  const upstreamFactFields = new Set(Array.isArray(options.upstreamFactFields) ? options.upstreamFactFields.map(String) : []);
   const deriveRank = shouldDeriveOutputField('排名', fieldCoveragePlan, rowsByApi);
   const deriveProductUrl = shouldDeriveOutputField('商品链接', fieldCoveragePlan, rowsByApi);
   return (Array.isArray(fieldCoveragePlan) ? fieldCoveragePlan : []).map(field => {
@@ -4125,8 +4406,12 @@ function buildFieldSources(fieldCoveragePlan, apiExecutionPlan, projectedRows, o
     let rowsWithValue = 0;
     const projectedValues = valuesForFieldFromRows(projectedRows, { ...field, source_field_path: '', field_name: fieldName });
     const projectedRowsWithValue = projectedValues.filter(hasNonEmptyValue).length;
-    const deterministicDerived = (fieldName === '排名' && deriveRank) || (fieldName === '商品链接' && deriveProductUrl);
-    if (deterministicDerived && projectedRowsWithValue > 0) {
+    const upstreamFeedbackIdentity = fieldName === 'competitor_product_url' && projectedRowsWithValue > 0;
+    const projectedFact = projectedFactFields.has(fieldName) && projectedRowsWithValue > 0;
+    const deterministicDerived = (fieldName === '排名' && deriveRank)
+      || (fieldName === '商品链接' && deriveProductUrl)
+      || upstreamFeedbackIdentity;
+    if ((deterministicDerived || projectedFact) && projectedRowsWithValue > 0) {
       rowsChecked = projectedValues.length;
       rowsWithValue = projectedRowsWithValue;
       valueStatus = 'present';
@@ -4152,7 +4437,13 @@ function buildFieldSources(fieldCoveragePlan, apiExecutionPlan, projectedRows, o
       field_name: fieldName,
       required: field.required !== false,
       mapping_status: mappingStatus,
-      source_kind: deterministicDerived && projectedRowsWithValue > 0 ? 'deterministic_derived' : String(field.source_kind || ''),
+      source_kind: upstreamFeedbackIdentity
+        ? 'upstream_artifact'
+        : projectedFact && upstreamFactFields.has(fieldName)
+          ? 'upstream_artifact'
+        : deterministicDerived && projectedRowsWithValue > 0
+          ? 'deterministic_derived'
+          : String(field.source_kind || ''),
       source_api_id: apiId,
       source_api_name: String(field.source_api_name || ''),
       source_field_path: sourcePath,
@@ -4162,7 +4453,15 @@ function buildFieldSources(fieldCoveragePlan, apiExecutionPlan, projectedRows, o
       value_status: valueStatus,
       rows_with_value: rowsWithValue,
       rows_missing_value: Math.max(rowsChecked - rowsWithValue, 0),
-      derivation_method: fieldName === '排名' && deterministicDerived && projectedRowsWithValue > 0 ? 'row_index_rank' : fieldName === '商品链接' && deterministicDerived && projectedRowsWithValue > 0 ? 'commodity_id_url' : '',
+      derivation_method: upstreamFeedbackIdentity
+        ? 'confirmed_product_identity_join'
+        : projectedFact
+          ? 'competitor_join_by_goods_id'
+        : fieldName === '排名' && deterministicDerived && projectedRowsWithValue > 0
+          ? 'row_index_rank'
+          : fieldName === '商品链接' && deterministicDerived && projectedRowsWithValue > 0
+            ? 'commodity_id_url'
+            : '',
       value_semantics: fieldName === '是否高增速' && sourcePath.endsWith('.speed_type') ? speedTypeValueSemantics() : null,
       runtime_repair: field.runtime_repair || null,
     };
@@ -4203,6 +4502,13 @@ function isKeywordAnalysisNode(node) {
   if (String(node.id || '') === 'collect_keywords') return true;
   const requirements = Array.isArray(node.data_requirements) ? node.data_requirements.map(String) : [];
   return requirements.includes('category_keywords_top300');
+}
+
+function isCompetitorAnalysisNode(node) {
+  if (!node || typeof node !== 'object') return false;
+  if (String(node.id || '') === 'analyze_competitors') return true;
+  const requirements = Array.isArray(node.data_requirements) ? node.data_requirements.map(String) : [];
+  return requirements.includes('competitor_landscape');
 }
 
 function loadBusinessCategoryContext() {
@@ -4388,7 +4694,8 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
   const requestedCategoryInput = String(knownParams.category || knownParams.category_name || knownParams['分析类目'] || '');
   let categoryContext = loadBusinessCategoryContext();
   if (categoryContext && !categoryContextMatchesRequest(categoryContext, requestedCategoryInput)) categoryContext = null;
-  if (isKeywordAnalysisNode(node) && !categoryContext && requestedCategoryInput) {
+  const usesSharedCategoryContext = isKeywordAnalysisNode(node) || isCompetitorAnalysisNode(node);
+  if (usesSharedCategoryContext && !categoryContext && requestedCategoryInput) {
     const candidate = callCategoryCandidateResolver(knownParams, { category_name: requestedCategoryInput });
     if (!candidate.degraded && candidate.status === 'resolved' && (candidate.canonical_name || candidate.category_id)) {
       categoryContext = persistBusinessCategoryContext(node, {
@@ -4400,7 +4707,7 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
       });
     }
   }
-  if (isKeywordAnalysisNode(node) && categoryContext) {
+  if (usesSharedCategoryContext && categoryContext) {
     knownParams = {
       ...knownParams,
       requested_category: requestedCategoryInput || String(categoryContext.requested_name || ''),
@@ -4412,8 +4719,40 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
     };
   }
   const topN = dataAnalysisTopN(payload);
-  const coverageResult = dataAnalysisCoverageForRun(node, knownParams, payload);
   const createdAt = new Date().toISOString();
+  const competitorSource = isCompetitorAnalysisNode(node) ? confirmedTopProducts(topN, 300) : null;
+  if (competitorSource && competitorSource.status !== 'ready') {
+    const blockedReasons = [competitorSource.reason || 'source_table_not_confirmed'];
+    const traceRef = persistJsonArtifact(`evidence/${node.id}.execution_trace.json`, {
+      schema_version: 'data-analysis-execution-trace-v1',
+      node_id: node.id,
+      created_at: createdAt,
+      known_params: knownParams,
+      field_coverage_ref: '',
+      api_calls: [],
+      pi_calls: [],
+      blocked_reasons: blockedReasons,
+      artifact_refs: [],
+      source_table_ref: competitorSource.artifact_ref || 'artifacts/collect_top_products.confirmed_data_table.json',
+    });
+    return {
+      schema_version: 'data-analysis-execution-v1',
+      node_id: node.id,
+      status: 'blocked',
+      known_params: knownParams,
+      upstream_artifacts: upstreamArtifacts,
+      top_n: topN,
+      execution_steps: [],
+      api_execution_plan: [],
+      data_table_ref: '',
+      insight_draft_ref: '',
+      execution_trace_ref: traceRef,
+      blocked_reasons: blockedReasons,
+      source_table_ref: competitorSource.artifact_ref || 'artifacts/collect_top_products.confirmed_data_table.json',
+    };
+  }
+  const competitorReviews = competitorSource ? confirmedReviewsForCompetitors() : null;
+  const coverageResult = dataAnalysisCoverageForRun(node, knownParams, payload);
   if (!coverageResult.ok) {
     const result = {
       schema_version: 'data-analysis-execution-v1',
@@ -4448,7 +4787,7 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
   let apiExecutionPlan = groupedApiPlansForCoverage(node, knownParams, fieldCoveragePlan, coverageResult.selected_api_asset_cards, payload)
     .map(plan => applyTopNToPlanParams(plan, topN))
     .sort((left, right) => {
-      const priority = { topn_trade_total_primary: 0, growth_enrichment: 1, product_detail_enrichment: 2, general: 3 };
+      const priority = { competitor_landscape_primary: 0, topn_trade_total_primary: 1, growth_enrichment: 2, product_detail_enrichment: 3, product_feedback_enrichment: 4, general: 5 };
       return (priority[left.execution_role] ?? 9) - (priority[right.execution_role] ?? 9);
     });
   const dbStatus = dbAgentStatus();
@@ -4460,6 +4799,9 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
   const categoryAttempts = [];
   let selectedCategoryName = '';
   let detailEnrichment = null;
+  const feedbackSource = apiExecutionPlan.some(plan => plan.execution_role === 'product_feedback_enrichment')
+    ? confirmedTopProductsForFeedback(Math.min(topN, 10))
+    : null;
 
   const requestedCategory = String(knownParams.requested_category || requestedCategoryInput || knownParams.category || knownParams.category_name || knownParams['分析类目'] || '');
   if (requestedCategory && apiExecutionPlan.some(plan => plan.category_scope !== 'unscoped')) {
@@ -4547,7 +4889,7 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
       apiExecutionPlan = groupedApiPlansForCoverage(node, knownParams, fieldCoveragePlan, coverageResult.selected_api_asset_cards, payload)
         .map(plan => applyTopNToPlanParams(plan, topN))
         .sort((left, right) => {
-          const priority = { topn_trade_total_primary: 0, growth_enrichment: 1, product_detail_enrichment: 2, general: 3 };
+          const priority = { competitor_landscape_primary: 0, topn_trade_total_primary: 1, growth_enrichment: 2, product_detail_enrichment: 3, product_feedback_enrichment: 4, general: 5 };
           return (priority[left.execution_role] ?? 9) - (priority[right.execution_role] ?? 9);
         });
       if (requestedCategory && apiExecutionPlan.some(plan => plan.category_scope !== 'unscoped')) {
@@ -4600,6 +4942,74 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
       plan.blocked_reason = 'primary_trade_total_no_data';
       blockedReasons.push(plan.blocked_reason);
       rowsByApi.set(plan.api_id, []);
+      continue;
+    }
+    if (plan.execution_role === 'product_feedback_enrichment') {
+      const products = feedbackSource && Array.isArray(feedbackSource.products) ? feedbackSource.products : [];
+      if (!feedbackSource || feedbackSource.status !== 'ready' || products.length === 0) {
+        plan.status = 'blocked';
+        plan.blocked_reason = feedbackSource && feedbackSource.reason || 'source_table_not_confirmed';
+        blockedReasons.push(plan.blocked_reason);
+        rowsByApi.set(plan.api_id, []);
+        continue;
+      }
+      const acceptedParams = new Set((Array.isArray(plan.request_param_mapping) ? plan.request_param_mapping : [])
+        .map(item => String(item && item.api_param || ''))
+        .filter(Boolean));
+      const items = products.map(product => {
+        const params = { ...(plan.params || {}) };
+        if (acceptedParams.has('goods_id')) params.goods_id = product.goods_id;
+        if (acceptedParams.has('goods_id_list')) params.goods_id_list = [product.goods_id];
+        return { correlation_id: product.goods_id, params };
+      });
+      const request = {
+        tool: 'probe_api_batch',
+        args: {
+          api_id: plan.api_id,
+          items,
+          concurrency: 5,
+          retry: 1,
+          timeout_ms: 8000,
+          top_per_item: 50,
+        },
+      };
+      const workerResponse = callDbAgentWorker(request);
+      const batch = feedbackBatchRows(workerResponse, plan.api_id);
+      const evidenceRef = persistDbAgentEvidence(node.id, 'probe_api_batch', workerResponse, knownParams, { apiId: plan.api_id });
+      plan.status = workerResponse && workerResponse.ok ? 'called' : 'blocked';
+      plan.blocked_reason = plan.status === 'called' ? '' : String(workerResponse && (workerResponse.reason || workerResponse.status) || 'feedback_batch_failed');
+      plan.evidence_ref = evidenceRef;
+      plan.rows_returned = batch.rows.length;
+      plan.rows_accepted = batch.rows.length;
+      plan.batch_summary = batch.summary;
+      plan.batch_item_statuses = batch.item_statuses;
+      plan.scope_validation_status = 'inherited_from_primary';
+      plan.scope_validation = { status: 'inherited_from_primary', reason: 'goods_id_bound_from_confirmed_top_products' };
+      plan.source_table_ref = feedbackSource.artifact_ref;
+      plan.source_revision = feedbackSource.workspace_revision;
+      plan.request_debug = {
+        tool: 'probe_api_batch',
+        api_id: plan.api_id,
+        requested_count: products.length,
+        concurrency: 5,
+        retry: 1,
+        top_per_item: 50,
+        sample_requests: batch.item_statuses.slice(0, 5).map(item => item.request_debug),
+      };
+      if (plan.status !== 'called') blockedReasons.push(plan.blocked_reason);
+      rowsByApi.set(plan.api_id, batch.rows);
+      apiCalls.push({
+        api_id: plan.api_id,
+        execution_role: plan.execution_role,
+        status: plan.status,
+        evidence_ref: evidenceRef,
+        rows_requested: products.length,
+        rows_returned: batch.rows.length,
+        batch_summary: batch.summary,
+        source_table_ref: feedbackSource.artifact_ref,
+        source_revision: feedbackSource.workspace_revision,
+        request_debug: plan.request_debug,
+      });
       continue;
     }
     if (plan.execution_role === 'product_detail_enrichment') {
@@ -4956,14 +5366,32 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
   }
 
   const repairedFieldCoveragePlan = repairFieldCoverageWithRuntimeRows(fieldCoveragePlan, rowsByApi);
-  const projection = projectRowsForApiFieldCoverage(rowsByApi, repairedFieldCoveragePlan, apiExecutionPlan);
-  const projectedRows = projection.rows.slice(0, topN);
+  const hasFeedbackPlans = apiExecutionPlan.some(plan => plan.execution_role === 'product_feedback_enrichment');
+  const competitorPlans = apiExecutionPlan.filter(plan => plan.execution_role === 'competitor_landscape_primary');
+  const competitorApiRows = competitorPlans.flatMap(plan => rowsByApi.get(plan.api_id) || []);
+  const projection = competitorSource
+    ? projectCompetitorRows(
+        competitorSource.products,
+        competitorApiRows,
+        competitorReviews && competitorReviews.status === 'ready' ? competitorReviews.rows : [],
+        {
+          primary_api_id: competitorPlans[0] && competitorPlans[0].api_id || '',
+          api_ids: competitorPlans.map(plan => plan.api_id),
+        },
+      )
+    : hasFeedbackPlans
+      ? projectFeedbackRows(rowsByApi, apiExecutionPlan, feedbackSource && feedbackSource.products)
+      : projectRowsForApiFieldCoverage(rowsByApi, repairedFieldCoveragePlan, apiExecutionPlan);
+  const projectedRows = projection.preserve_all_rows ? projection.rows : projection.rows.slice(0, topN);
+  if (competitorSource && competitorPlans.length > 0 && competitorApiRows.length === 0) blockedReasons.push('competitor_api_empty');
   if (projection.join_blocked_api_ids.length > 0) blockedReasons.push('join_blocked');
   if (projection.row_index_merged_api_ids.length > 0) blockedReasons.push('row_index_merge_requires_review');
   const fieldSources = buildFieldSources(repairedFieldCoveragePlan, apiExecutionPlan, projectedRows, {
     rowsByApi,
     primaryApiId: projection.primary_api_id,
     joinBlockedApiIds: projection.join_blocked_api_ids,
+    projectedFactFields: competitorSource ? ['shop_name', 'product_url', 'price', 'main_selling_point'] : [],
+    upstreamFactFields: competitorSource ? projection.upstream_fact_fields : [],
   });
   let riskSet = dataTableRiskSet(blockedReasons, fieldSources, projection);
   const derivedFields = derivedFieldPlanFromCoverage(repairedFieldCoveragePlan);
@@ -4984,15 +5412,29 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
     rows: projectedRows,
     row_meta: projectedRows.map((row, index) => {
       const identity = String(projection.row_identities[index] || '');
-      const identityPrefix = projection.identity_kind === 'keyword' ? 'keyword' : 'goods';
+      const sourceIdentity = String(projection.row_source_identities && projection.row_source_identities[index] || identity);
+      const identityPrefix = projection.identity_kind === 'keyword' ? 'keyword' : projection.identity_kind === 'feedback' ? 'feedback' : 'goods';
       return {
         row_id: identity ? `${identityPrefix}:${identity}` : `row:${createdAt}:${index + 1}`,
-        source_identity: identity,
+        source_identity: sourceIdentity,
         source_index: index,
       };
     }),
     field_sources: fieldSources,
     derived_fields: derivedFields,
+    ...(competitorSource ? {
+      source_table_ref: competitorSource.artifact_ref,
+      source_revision: Number(competitorSource.workspace_revision || 0),
+      review_table_ref: competitorReviews && competitorReviews.status === 'ready' ? competitorReviews.artifact_ref : '',
+      merge_strategy: 'competitor_join_by_goods_id',
+      competitor_enrichment: {
+        api_id: String(projection.primary_api_id || ''),
+        requested_products: competitorSource.products.length,
+        matched_products: Number(projection.matched_products || 0),
+        review_records_used: Number(projection.review_records_used || 0),
+        fillable_fields: Array.from(COMPETITOR_DERIVED_FIELD_NAMES),
+      },
+    } : {}),
     category_resolution: categoryResolution,
     category_context: categoryContext || null,
     category_attempts: categoryAttempts,
@@ -5015,13 +5457,18 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
     PROTECTED_SEMANTIC_FIELD_NAMES.has(String(item.field_name || ''))
     && item.value_status !== 'present'
   ));
+  const competitorEnrichmentPending = Boolean(competitorSource && competitorApiRows.length > 0 && projectedRows.length > 0 && fieldSources.some(item => (
+    COMPETITOR_DERIVED_FIELD_NAMES.has(String(item.field_name || ''))
+    && item.value_status !== 'present'
+  )));
   const tableStatus = projectedRows.length > 0
-    ? keywordEnrichmentPending
+    ? keywordEnrichmentPending || competitorEnrichmentPending
       ? 'agent_enrichment_pending'
       : (riskSet.size > 0 ? 'partial_data_table_ready' : 'data_table_ready')
     : hasSuccessfulApiCall && blockedReasons.length === 0
       ? 'empty_data'
       : 'blocked';
+  dataTable.status = tableStatus;
   const keywordRootArtifact = keywordRootTop20Artifact(node, dataTable, createdAt);
   const keywordRootTop20Ref = keywordRootArtifact
     ? persistJsonArtifact(`artifacts/${node.id}.keyword_root_top20.json`, keywordRootArtifact)
@@ -5091,6 +5538,11 @@ async function runDataAnalysisNode(node, payload, upstreamArtifacts) {
     row_index_merged_api_ids: projection.row_index_merged_api_ids,
     merge_strategy: projection.merge_strategy,
     detail_enrichment: detailEnrichment,
+    ...(competitorSource ? {
+      source_table_ref: competitorSource.artifact_ref,
+      review_table_ref: competitorReviews && competitorReviews.status === 'ready' ? competitorReviews.artifact_ref : '',
+      competitor_enrichment: dataTable.competitor_enrichment,
+    } : {}),
     risks: Array.from(riskSet),
     blocked_reasons: Array.from(new Set(blockedReasons.filter(Boolean))),
   };
@@ -5975,17 +6427,15 @@ async function handleApi(req, res, pathname) {
               fields: inputs,
             }
           : { status: 'collected', fields: inputs };
+      } else if (isDataAnalysisNode(node)) {
+        result = await runDataAnalysisNode(node, payload, upstreamArtifacts);
       } else if (node.kind === 'data') {
-        if (isDataAnalysisNode(node)) {
-          result = await runDataAnalysisNode(node, payload, upstreamArtifacts);
-        } else {
           // Data nodes without analysis semantics still expect manual upload.
-          result = {
-            status: 'waiting_upload',
-            message: 'Please upload data via /api/upload/:data_requirement_id',
-            upstream_artifacts: upstreamArtifacts,
-          };
-        }
+        result = {
+          status: 'waiting_upload',
+          message: 'Please upload data via /api/upload/:data_requirement_id',
+          upstream_artifacts: upstreamArtifacts,
+        };
       } else if (node.kind === 'llm') {
         // LLM nodes: mock for now, should call Python engine
         broadcastEvent('node_progress', { node_id: nodeId, message: 'Calling LLM...', timestamp: new Date().toISOString() });
@@ -6297,6 +6747,7 @@ module.exports = {
     buildFieldSources,
     businessParamForApiParam,
     groupedApiPlansForCoverage,
+    projectCompetitorRows,
     projectRowsForApiFieldCoverage,
     projectRowsForFields,
     repairFieldCoverageWithRuntimeRows,

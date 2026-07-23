@@ -517,11 +517,20 @@ def _api_execution_role(entry: ApiDocEntry) -> str:
     text = f"{entry.name} {entry.module} {entry.business_module} {entry.analysis_domain} {entry.path}".lower()
     request_names = {_compact_token(param.name) for param in entry.request_params}
     response_names = {_compact_token(field.name) for field in entry.response_fields}
-    has_product_id_input = bool(request_names & {"goodsid", "itemid", "productid", "commodityid"})
+    has_product_id_input = bool(request_names & {
+        "goodsid", "goodsidlist", "itemid", "itemidlist",
+        "productid", "productidlist", "commodityid", "commodityidlist",
+    })
     has_product_id_output = bool(response_names & {"goodsid", "itemid", "productid", "commodityid"})
     detail_fields = {"corematerial", "usagescene", "sellingpointsummary", "goodsspecparams"}
+    feedback_fields = {"comment", "questioncontent", "answercount"}
+    competitor_fields = {"shopname", "shop", "goodshref", "goodsurl", "price", "unitprice", "mainsellingpoint", "sellingpoint"}
     if has_product_id_input and has_product_id_output and len(response_names & detail_fields) >= 2:
         return "product_detail_enrichment"
+    if has_product_id_input and has_product_id_output and response_names & feedback_fields:
+        return "product_feedback_enrichment"
+    if has_product_id_output and ("competition_pattern" in text or "竞争格局" in text) and len(response_names & competitor_fields) >= 3:
+        return "competitor_landscape_primary"
     if ("热销商品" in text or "hot" in text) and ("交易总量" in text or "trade_category_goods" in text):
         return "topn_trade_total_primary"
     if ("热销商品" in text or "hot" in text) and ("交易增速" in text or "speed_category_goods" in text):
@@ -614,14 +623,16 @@ def _bind_request_params_for_entry(entry: ApiDocEntry, known_params: dict, execu
         category_role = _category_param_role(param)
         compact_param = _compact_token(api_param)
 
-        if execution_role == "product_detail_enrichment" and compact_param in {"tenantid", "userid"}:
+        if execution_role in {"product_detail_enrichment", "product_feedback_enrichment"} and compact_param in {"tenantid", "userid"}:
             status = "runtime_injected"
             source = "worker_env"
             binding_method = "verified_call_identity_injection"
             confidence = 1.0
-        elif execution_role == "product_detail_enrichment" and compact_param in {"goodsid", "itemid", "productid", "commodityid"}:
+        elif execution_role in {"product_detail_enrichment", "product_feedback_enrichment"} and compact_param in {
+            "goodsid", "goodsidlist", "itemid", "itemidlist", "productid", "productidlist", "commodityid", "commodityidlist"
+        }:
             status = "deferred"
-            source = "primary_rows"
+            source = "confirmed_rows" if execution_role == "product_feedback_enrichment" else "primary_rows"
             binding_method = "dependent_row_binding"
             confidence = 1.0
         elif api_param in known_params and known_params[api_param] is not None and str(known_params[api_param]).strip():
@@ -748,8 +759,19 @@ def _bind_request_params_for_entry(entry: ApiDocEntry, known_params: dict, execu
         "missing_required_params": missing_required,
         "dropped_optional_params": dropped_optional,
         "execution_role": execution_role,
-        "depends_on_role": "topn_trade_total_primary" if execution_role == "product_detail_enrichment" else "",
-        "input_binding": {"goods_id": "primary_rows[].goods_id"} if execution_role == "product_detail_enrichment" else {},
+        "depends_on_role": (
+            "topn_trade_total_primary" if execution_role == "product_detail_enrichment"
+            else "confirmed_top_products" if execution_role == "product_feedback_enrichment"
+            else ""
+        ),
+        "input_binding": (
+            {"goods_id": "primary_rows[].goods_id"} if execution_role == "product_detail_enrichment"
+            else {
+                "goods_id": "confirmed_rows[].goods_id",
+                "goods_id_list": "confirmed_rows[].goods_id",
+            } if execution_role == "product_feedback_enrichment"
+            else {}
+        ),
     }
 
 
@@ -804,6 +826,13 @@ EXECUTION_DERIVED_FIELDS = {
     "demand_type",
     "词根",
     "需求类型",
+    "competitor_product_url",
+    "sentiment",
+    "painpoint_type",
+    "competitor_type",
+    "visual_structure",
+    "review_painpoints",
+    "competitor_strength",
 }
 
 EXECUTION_FIELD_PREFERENCES = {
@@ -818,7 +847,16 @@ EXECUTION_FIELD_PREFERENCES = {
     "是否高增速": ("growth_enrichment", "speed_type"),
     "材质": ("product_detail_enrichment", "core_material"),
     "场景": ("product_detail_enrichment", "usage_scene"),
+    "review_text": ("product_feedback_enrichment", "comment"),
+    "qa_question": ("product_feedback_enrichment", "question_content"),
+    "shop_name": ("competitor_landscape_primary", "shop_name"),
+    "product_url": ("competitor_landscape_primary", "goods_href"),
+    "price": ("competitor_landscape_primary", "price"),
+    "main_selling_point": ("competitor_landscape_primary", "main_selling_point"),
 }
+
+FEEDBACK_UNAVAILABLE_FIELDS = {"rating", "qa_answer", "sku_name", "created_at"}
+COMPETITOR_UNAVAILABLE_FIELDS = {"sku_count", "traffic_structure"}
 
 DERIVED_FIELD_EVIDENCE_NAMES = {
     "功能": {"goods_name", "selling_point_summary", "goods_spec_params", "core_material", "usage_scene"},
@@ -829,6 +867,12 @@ DERIVED_FIELD_EVIDENCE_NAMES = {
     "demand_type": {"keyword", "keywords", "wordpack", "category_requirements"},
     "词根": {"keyword", "keywords"},
     "需求类型": {"keyword", "keywords", "wordpack", "category_requirements"},
+    "sentiment": {"comment"},
+    "painpoint_type": {"comment", "question_content"},
+    "competitor_type": {"shop_name", "goods_href", "price", "unit_price", "sales_total", "sales_ratio", "main_selling_point", "selling_point"},
+    "visual_structure": {"main_image_url", "main_image", "main_color", "image_words"},
+    "review_painpoints": {"comment", "question_content"},
+    "competitor_strength": {"qbt_rank", "sycm_rank", "sales_total", "sales_ratio", "price", "unit_price"},
 }
 
 
@@ -877,6 +921,8 @@ def _field_coverage_plan(
     matches_by_name = {match.business_field: match for match in field_mapping.matches}
     applicability = api_applicability or {}
     selected_api_ids = {entry.api_id for entry in selected_entries}
+    feedback_analysis = any(_api_execution_role(entry) == "product_feedback_enrichment" for entry in selected_entries)
+    competitor_analysis = any(_api_execution_role(entry) == "competitor_landscape_primary" for entry in selected_entries)
     plan: list[dict] = []
     for output_field in output_fields:
         field_name = str(output_field.get("field_name", ""))
@@ -925,6 +971,28 @@ def _field_coverage_plan(
             api_field_type = ""
             confidence = 0.0
             match_basis = "requires_derived_or_manual_enrichment"
+        elif feedback_analysis and field_name in FEEDBACK_UNAVAILABLE_FIELDS:
+            mapped = False
+            derived = False
+            status = "missing"
+            source_api_id = ""
+            source_api_name = ""
+            source_field_path = ""
+            api_field_name = ""
+            api_field_type = ""
+            confidence = 0.0
+            match_basis = "feedback_api_field_unavailable"
+        elif competitor_analysis and field_name in COMPETITOR_UNAVAILABLE_FIELDS:
+            mapped = False
+            derived = False
+            status = "missing"
+            source_api_id = ""
+            source_api_name = ""
+            source_field_path = ""
+            api_field_name = ""
+            api_field_type = ""
+            confidence = 0.0
+            match_basis = "competitor_api_field_unavailable"
         current_scope = str(applicability.get(source_api_id, {}).get("category_scope", ""))
         scoped_candidates = [
             item
@@ -974,7 +1042,7 @@ def _field_coverage_plan(
 
 
 def _api_category_scope(entry: ApiDocEntry) -> str:
-    if _api_execution_role(entry) == "product_detail_enrichment":
+    if _api_execution_role(entry) in {"product_detail_enrichment", "product_feedback_enrichment"}:
         return "inherited_from_primary"
     roles = {_category_param_role(param) for param in entry.request_params}
     if "category_name" in roles:
@@ -1010,10 +1078,22 @@ def _api_applicability(entry: ApiDocEntry, known_params: dict, category_resoluti
             known_category_id
             or category_id and category_resolution.get("status") in {"resolved", "needs_confirmation"}
         )
+    execution_role = _api_execution_role(entry)
     return {
-        "execution_role": _api_execution_role(entry),
-        "depends_on_role": "topn_trade_total_primary" if _api_execution_role(entry) == "product_detail_enrichment" else "",
-        "input_binding": {"goods_id": "primary_rows[].goods_id"} if _api_execution_role(entry) == "product_detail_enrichment" else {},
+        "execution_role": execution_role,
+        "depends_on_role": (
+            "topn_trade_total_primary" if execution_role == "product_detail_enrichment"
+            else "confirmed_top_products" if execution_role == "product_feedback_enrichment"
+            else ""
+        ),
+        "input_binding": (
+            {"goods_id": "primary_rows[].goods_id"} if execution_role == "product_detail_enrichment"
+            else {
+                "goods_id": "confirmed_rows[].goods_id",
+                "goods_id_list": "confirmed_rows[].goods_id",
+            } if execution_role == "product_feedback_enrichment"
+            else {}
+        ),
         "time_grain": _api_time_grain(entry),
         "category_scope": scope,
         "category_name_supported": scope == "category_name_supported",
@@ -1130,11 +1210,20 @@ def _op_match_business_context(request: dict) -> dict:
                 *[field.name for field in section.output_fields],
             ]
         )
-        hot_product_context = "商品" in context_text and any(token in context_text for token in ["热销", "排行", "排名", "销量"])
+        competitor_context = (
+            str(node_id) == "analyze_competitors"
+            or any(token in context_text for token in ["竞店", "竞争格局", "竞品类型", "竞争强度"])
+        )
+        hot_product_context = (
+            not competitor_context
+            and "商品" in context_text
+            and any(token in context_text for token in ["热销", "排行", "排名", "销量"])
+        )
         detail_enrichment_needed = any(
             field.name in {"材质", "场景", "功能", "风格", "主图元素", "爆款原因"}
             for field in section.output_fields
         )
+        feedback_context = any(token in context_text for token in ["评价", "评论", "问大家", "痛点"])
         role_api_ids: list[str] = []
         if hot_product_context:
             roles = ["topn_trade_total_primary", "growth_enrichment"]
@@ -1153,6 +1242,48 @@ def _op_match_business_context(request: dict) -> dict:
                 candidates.sort(key=lambda entry: (0 if entry.verified_status == "success" else 1, entry.source_seq, entry.api_id))
                 if candidates:
                     role_api_ids.append(candidates[0].api_id)
+        if feedback_context and not competitor_context:
+            feedback_candidates = [
+                entry
+                for entry in entries
+                if _api_execution_role(entry) == "product_feedback_enrichment"
+            ]
+            feedback_candidates.sort(key=lambda entry: (0 if entry.verified_status == "success" else 1, entry.source_seq, entry.api_id))
+            role_api_ids.extend(entry.api_id for entry in feedback_candidates)
+        else:
+            selected_api_ids = [
+                api_id for api_id in selected_api_ids
+                if api_applicability.get(api_id, {}).get("execution_role") != "product_feedback_enrichment"
+            ]
+        if competitor_context:
+            competitor_priority = {
+                "data_shop_competition_pattern_analysis_v3": 0,
+                "data_competition_pattern_analysis_v3": 1,
+                "data_competition_pattern_analysis": 2,
+            }
+            competitor_candidates = [
+                entry
+                for entry in entries
+                if _api_execution_role(entry) == "competitor_landscape_primary"
+                and api_applicability[entry.api_id]["category_resolution_ready"]
+            ]
+            competitor_candidates.sort(key=lambda entry: (
+                competitor_priority.get(entry.api_id, 99),
+                0 if entry.verified_status == "success" else 1,
+                entry.source_seq,
+                entry.api_id,
+            ))
+            if competitor_candidates:
+                role_api_ids.append(competitor_candidates[0].api_id)
+            selected_api_ids = [
+                api_id for api_id in selected_api_ids
+                if api_applicability.get(api_id, {}).get("execution_role") == "competitor_landscape_primary"
+            ]
+        else:
+            selected_api_ids = [
+                api_id for api_id in selected_api_ids
+                if api_applicability.get(api_id, {}).get("execution_role") != "competitor_landscape_primary"
+            ]
         scoped_candidates = [
             str(item.get("api_id", ""))
             for item in strategy_result.get("api_candidates", [])
@@ -1168,16 +1299,20 @@ def _op_match_business_context(request: dict) -> dict:
             if api_applicability.get(api_id, {}).get("category_scope") != "category_unscoped"
         ]
         selected_api_ids = [*role_api_ids, *selected_api_ids]
+        if competitor_context:
+            selected_api_ids = role_api_ids[:1]
         selected_api_ids = sorted(
             dict.fromkeys(selected_api_ids),
             key=lambda api_id: (
                 0 if api_applicability.get(api_id, {}).get("execution_role") == "topn_trade_total_primary" else
                 1 if api_applicability.get(api_id, {}).get("execution_role") == "growth_enrichment" else
                 2 if api_applicability.get(api_id, {}).get("execution_role") == "product_detail_enrichment" else
-                3 if api_applicability.get(api_id, {}).get("category_scope") == "category_name_supported" else
-                4 if api_applicability.get(api_id, {}).get("category_scope") == "category_id_required" and api_applicability.get(api_id, {}).get("category_resolution_ready") else
-                5 if api_applicability.get(api_id, {}).get("category_scope") == "category_id_required" else
-                6,
+                3 if api_applicability.get(api_id, {}).get("execution_role") == "product_feedback_enrichment" else
+                4 if api_applicability.get(api_id, {}).get("execution_role") == "competitor_landscape_primary" else
+                5 if api_applicability.get(api_id, {}).get("category_scope") == "category_name_supported" else
+                6 if api_applicability.get(api_id, {}).get("category_scope") == "category_id_required" and api_applicability.get(api_id, {}).get("category_resolution_ready") else
+                7 if api_applicability.get(api_id, {}).get("category_scope") == "category_id_required" else
+                8,
                 selected_api_ids.index(api_id) if api_id in selected_api_ids else 999,
             ),
         )[:5]

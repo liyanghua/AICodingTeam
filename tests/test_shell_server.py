@@ -397,6 +397,12 @@ if (fn === 'bindApiRequestParams') {
     },
   );
   result = { projection, field_sources: fieldSources, field_coverage_plan: coverage };
+} else if (fn === 'competitorProjection') {
+  result = testApi.projectCompetitorRows(
+    payload.source_products || [],
+    payload.competitor_rows || [],
+    payload.review_rows || [],
+  );
 } else {
   throw new Error(`Unknown test function: ${fn}`);
 }
@@ -1948,10 +1954,16 @@ process.stdout.write(JSON.stringify(result));
         self.assertEqual(status, 202)
         self.assertEqual(started["batch"]["page"]["row_ids"], ["goods:desk-11", "goods:desk-12"])
 
-        status, loaded = self._direct(
-            "GET",
-            f"/api/nodes/collect_top_products/agent-thread/batches/{started['batch_id']}",
-        )
+        loaded = {}
+        status = 0
+        for _ in range(60):
+            status, loaded = self._direct(
+                "GET",
+                f"/api/nodes/collect_top_products/agent-thread/batches/{started['batch_id']}",
+            )
+            if loaded.get("batch", {}).get("status") == "review_ready":
+                break
+            time.sleep(0.05)
         self.assertEqual(status, 200)
         batch = loaded["batch"]
         self.assertEqual(batch["schema_version"], "analysis-agent-batch-v1")
@@ -2892,6 +2904,42 @@ export async function probeApiSampleTool(args) {
       response: { total: rows.length, truncated: false, top: rows }
     };
   }
+  if (['get_positive_comment_data', 'product_comment_content2', 'product_question_content2'].includes(args.api_id)) {
+    const goodsId = String(args.params && (args.params.goods_id || (args.params.goods_id_list || [])[0]) || '');
+    const row = args.api_id === 'product_question_content2'
+      ? { goods_id: goodsId, question_content: `问题-${goodsId}`, answer_count: '3' }
+      : { goods_id: goodsId, comment: `${args.api_id === 'get_positive_comment_data' ? '好评' : '评论'}-${goodsId}` };
+    return {
+      kind: 'api_probe_result', api_id: args.api_id, method: 'POST', path: args.api_id,
+      request: { url: `https://fixture.test/${args.api_id}`, query: args.params || {}, body: args.params || {}, headers_keys: [], auth_inject: {} },
+      status: { state: 'ok', http: 200, elapsed_ms: 2 },
+      response: { total: 1, truncated: false, top: [row] }
+    };
+  }
+  if (args.api_id === 'data_shop_competition_pattern_analysis_v3') {
+    const rows = process.env.TEST_COMPETITOR_EMPTY === '1'
+      ? []
+      : ['gene-2', 'gene-1'].map((goodsId, index) => ({
+          goods_id: goodsId,
+          shop_name: `竞品店铺-${goodsId}`,
+          goods_href: `https://fixture.test/competitor/${goodsId}`,
+          price: 80 + index,
+          main_selling_point: `竞品卖点-${goodsId}`,
+          main_sku: '大号',
+          main_image_url: `https://fixture.test/competitor/${goodsId}.jpg`,
+          main_color: '透明',
+          sales_total: 1000 - index,
+          sales_ratio: 0.2 - index * 0.01,
+          cid: String(args.params && args.params.cid || ''),
+          category_name: '桌布'
+        }));
+    return {
+      kind: 'api_probe_result', api_id: args.api_id, method: 'POST', path: args.api_id,
+      request: { url: `https://fixture.test/${args.api_id}`, query: args.params || {}, body: args.params || {}, headers_keys: [], auth_inject: {} },
+      status: { state: 'ok', http: 200, elapsed_ms: 2 },
+      response: { total: rows.length, truncated: false, top: rows }
+    };
+  }
   const secret = process.env.ZICHEN_APP_CODE_KEY || '';
   const rows = args.api_id === 'top300_product_analysis'
     ? Array.from({ length: Math.max(1, Math.min(top, 60)) }, (_, index) => ({
@@ -3382,6 +3430,244 @@ export function getApiAssetCard(args) {
             }
         )
         index_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def _append_product_feedback_to_local_index(self) -> None:
+        index_path = self.app_root / "data" / "api_doc_index.json"
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        common_params = [
+            {"name": "goods_id", "type": "string", "required": True, "description": "商品ID"},
+            {"name": "goods_id_list", "type": "string/array", "required": True, "description": "商品ID列表"},
+            {"name": "pageNum", "type": "integer", "required": True, "description": "页码"},
+            {"name": "pageSize", "type": "integer", "required": True, "description": "每页条数"},
+        ]
+        payload["apis"].extend(
+            [
+                {
+                    "api_id": "get_positive_comment_data", "source_seq": 20, "name": "获取商品好评数据",
+                    "module": "商品反馈", "business_module": "商品评价", "analysis_domain": "评价与问大家",
+                    "method": "POST", "path": "/get_positive_comment_data", "verified_status": "success",
+                    "response_root": "data.result[]", "request_params": [common_params[1]], "request_headers": [],
+                    "response_fields": [
+                        {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                        {"path": "data.result[].comment", "name": "comment", "type": "string", "description": "好评内容"},
+                    ], "source_refs": {}, "parse_warnings": [],
+                },
+                {
+                    "api_id": "product_comment_content2", "source_seq": 21, "name": "获取商品评论数据",
+                    "module": "商品反馈", "business_module": "商品评价", "analysis_domain": "评价与问大家",
+                    "method": "POST", "path": "/product_comment_content2", "verified_status": "success",
+                    "response_root": "data.result[]", "request_params": common_params, "request_headers": [],
+                    "response_fields": [
+                        {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                        {"path": "data.result[].comment", "name": "comment", "type": "string", "description": "评论内容"},
+                    ], "source_refs": {}, "parse_warnings": [],
+                },
+                {
+                    "api_id": "product_question_content2", "source_seq": 22, "name": "获取问大家分析数据",
+                    "module": "商品反馈", "business_module": "问大家", "analysis_domain": "评价与问大家",
+                    "method": "POST", "path": "/product_question_content2", "verified_status": "success",
+                    "response_root": "data.result[]", "request_params": common_params, "request_headers": [],
+                    "response_fields": [
+                        {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                        {"path": "data.result[].question_content", "name": "question_content", "type": "string", "description": "问大家问题内容"},
+                        {"path": "data.result[].answer_count", "name": "answer_count", "type": "string", "description": "回答数量"},
+                    ], "source_refs": {}, "parse_warnings": [],
+                },
+            ]
+        )
+        index_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        fields = [
+            ("competitor_product_url", "竞品链接"), ("review_text", "评价原文"),
+            ("sentiment", "正负向"), ("rating", "评分"), ("qa_question", "问题原文"),
+            ("qa_answer", "竞品回答"), ("painpoint_type", "痛点分类"),
+            ("sku_name", "SKU名称"), ("created_at", "反馈时间"),
+        ]
+        config["nodes"].append(
+            {
+                "id": "collect_reviews_qa", "name": "评价与问大家痛点分析", "kind": "data",
+                "depends_on": ["collect_top_products"], "data_requirements": ["competitor_reviews_qa"],
+                "outputs": ["review_qa_painpoint_table"],
+                "analysis_node_view": {
+                    "node_kind": "data_analysis",
+                    "purpose_model": {"purpose": "分析同类型排名前10竞品的评价与问大家"},
+                    "input_model": {"data_sources": [{"description": "同类型排名前10竞品评价与问大家"}]},
+                    "execution_plan": {"steps": [{"instruction": "下载评价与问大家并归类痛点"}]},
+                    "data_output_model": {"fields": []},
+                },
+                "output_field_requirements": [
+                    {
+                        "output_id": "review_qa_painpoint_table", "field_path": f"items.properties.{name}",
+                        "field_name": name, "title": name, "description": description,
+                        "canonical_field_name": name, "type": "unknown", "required": True,
+                    }
+                    for name, description in fields
+                ],
+                "state_machine": [],
+            }
+        )
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+
+    def _append_competitor_analysis_to_local_index(self) -> None:
+        index_path = self.app_root / "data" / "api_doc_index.json"
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload["apis"].append(
+            {
+                "api_id": "data_shop_competition_pattern_analysis_v3",
+                "source_seq": 30,
+                "name": "竞争格局分析-商品查询",
+                "module": "竞争格局",
+                "business_module": "竞品分析",
+                "analysis_domain": "竞品与竞店格局分析",
+                "method": "POST",
+                "path": "/data/shop_competition_pattern_analysis_v3",
+                "verified_status": "success",
+                "response_root": "data.result[]",
+                "request_params": [
+                    {"name": "cid", "type": "string", "required": True, "description": "类目ID"},
+                    {"name": "start_date", "type": "string", "required": True, "description": "开始日期"},
+                    {"name": "end_date", "type": "string", "required": True, "description": "结束日期"},
+                    {"name": "pageNum", "type": "integer", "required": True, "description": "页码"},
+                    {"name": "pageSize", "type": "integer", "required": True, "description": "每页条数"},
+                ],
+                "request_headers": [],
+                "response_fields": [
+                    {"path": "data.result[].goods_id", "name": "goods_id", "type": "string", "description": "商品ID"},
+                    {"path": "data.result[].shop_name", "name": "shop_name", "type": "string", "description": "店铺名称"},
+                    {"path": "data.result[].goods_href", "name": "goods_href", "type": "string", "description": "商品链接"},
+                    {"path": "data.result[].price", "name": "price", "type": "number", "description": "商品价格"},
+                    {"path": "data.result[].main_sku", "name": "main_sku", "type": "string", "description": "主销SKU"},
+                    {"path": "data.result[].main_selling_point", "name": "main_selling_point", "type": "string", "description": "主卖点"},
+                    {"path": "data.result[].main_image_url", "name": "main_image_url", "type": "string", "description": "商品主图"},
+                    {"path": "data.result[].main_color", "name": "main_color", "type": "string", "description": "主色调"},
+                    {"path": "data.result[].sales_total", "name": "sales_total", "type": "number", "description": "销量"},
+                    {"path": "data.result[].sales_ratio", "name": "sales_ratio", "type": "number", "description": "销售占比"},
+                    {"path": "data.result[].cid", "name": "cid", "type": "string", "description": "类目ID"},
+                    {"path": "data.result[].category_name", "name": "category_name", "type": "string", "description": "类目名称"},
+                ],
+                "source_refs": {},
+                "parse_warnings": [],
+            }
+        )
+        index_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        fields = [
+            "competitor_type", "shop_name", "product_url", "price", "sku_count",
+            "main_selling_point", "visual_structure", "review_painpoints",
+            "traffic_structure", "competitor_strength",
+        ]
+        config["nodes"].append(
+            {
+                "id": "analyze_competitors", "name": "竞品与竞店格局分析", "kind": "data",
+                "source_type": "multi_source_analysis", "depends_on": ["collect_top_products", "collect_reviews_qa"],
+                "data_requirements": ["competitor_landscape"], "outputs": ["competitor_landscape_table"],
+                "analysis_node_view": {
+                    "node_kind": "data_analysis",
+                    "purpose_model": {"purpose": "分析竞品与竞店格局"},
+                    "input_model": {"data_sources": [{"description": "竞品格局与评价"}]},
+                    "execution_plan": {"steps": [{"instruction": "按商品ID合并竞品与评价"}]},
+                    "data_output_model": {"fields": []},
+                },
+                "output_field_requirements": [
+                    {
+                        "output_id": "competitor_landscape_table", "field_path": f"items.properties.{name}",
+                        "field_name": name, "title": name, "description": name,
+                        "canonical_field_name": name, "type": "unknown", "required": True,
+                    }
+                    for name in fields
+                ],
+                "state_machine": [],
+            }
+        )
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+
+    def _write_confirmed_competitor_reviews(self) -> None:
+        artifacts = self.app_root / "artifacts"
+        artifacts.mkdir(exist_ok=True)
+        (artifacts / "collect_reviews_qa.confirmed_data_table.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "data-table-confirmed-v1",
+                    "node_id": "collect_reviews_qa",
+                    "status": "confirmed",
+                    "workspace_revision": 2,
+                    "rows": [
+                        {"goods_id": "gene-1", "review_text": "气味较重"},
+                        {"goods_id": "gene-2", "review_text": "容易卷边"},
+                        {"goods_id": "gene-2", "qa_question": "尺寸有误差吗"},
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    def test_review_qa_node_uses_confirmed_top_products_for_feedback_enrichment(self):
+        self._write_local_api_doc_index()
+        self._append_product_feedback_to_local_index()
+        self._write_gene_analysis_source_fixture(count=2, revision=3)
+        fake_spec_pack = self._create_fake_spec_pack()
+
+        status, data = self._direct(
+            "POST",
+            "/api/nodes/collect_reviews_qa/run",
+            {"known_params": {"category": "桌布"}, "top_n": 10},
+            {"DB_ARCHAEOLOGIST_SPEC_PACK": str(fake_spec_pack), "DBA_LIVE_PROBE": "1"},
+        )
+
+        self.assertEqual(200, status)
+        result = data["result"]
+        self.assertNotIn("missing_required_params", result["blocked_reasons"])
+        feedback_plans = [
+            item for item in result["api_execution_plan"]
+            if item["execution_role"] == "product_feedback_enrichment"
+        ]
+        self.assertEqual(3, len(feedback_plans))
+        self.assertTrue(all(item["status"] == "called" for item in feedback_plans))
+        self.assertTrue(all(item["batch_summary"] == {"requested": 2, "success": 2, "empty": 0, "failed": 0} for item in feedback_plans))
+        for plan in feedback_plans:
+            self.assertEqual("confirmed_top_products", plan["depends_on_role"])
+            self.assertEqual(2, plan["request_debug"]["requested_count"])
+            for request in plan["request_debug"]["sample_requests"]:
+                query = request.get("query") or request.get("body") or {}
+                self.assertEqual(1, len(query.get("goods_id_list") or []))
+                if plan["api_id"] != "get_positive_comment_data":
+                    self.assertEqual([query.get("goods_id")], query.get("goods_id_list"))
+
+        table = json.loads((self.app_root / result["data_table_ref"]).read_text(encoding="utf-8"))
+        self.assertEqual(6, len(table["rows"]))
+        self.assertEqual(
+            {"好评-gene-1", "评论-gene-1"},
+            {row.get("review_text") for row in table["rows"] if row.get("goods_id") == "gene-1" and row.get("review_text")},
+        )
+        question_row = next(row for row in table["rows"] if row.get("qa_question") == "问题-gene-1")
+        self.assertEqual("https://fixture.test/?id=gene-1", question_row["competitor_product_url"])
+        self.assertNotIn("sentiment", question_row)
+        self.assertNotIn("rating", question_row)
+        self.assertEqual(6, len({item["row_id"] for item in table["row_meta"]}))
+        link_source = next(item for item in table["field_sources"] if item["field_name"] == "competitor_product_url")
+        self.assertEqual("upstream_artifact", link_source["source_kind"])
+        self.assertEqual("confirmed_product_identity_join", link_source["derivation_method"])
+
+    def test_review_qa_node_blocks_without_confirmed_top_products(self):
+        self._write_local_api_doc_index()
+        self._append_product_feedback_to_local_index()
+        fake_spec_pack = self._create_fake_spec_pack()
+
+        status, data = self._direct(
+            "POST",
+            "/api/nodes/collect_reviews_qa/run",
+            {"known_params": {"category": "桌布"}, "top_n": 10},
+            {"DB_ARCHAEOLOGIST_SPEC_PACK": str(fake_spec_pack), "DBA_LIVE_PROBE": "1"},
+        )
+
+        self.assertEqual(200, status)
+        result = data["result"]
+        self.assertEqual("blocked", result["status"])
+        self.assertIn("source_table_not_confirmed", result["blocked_reasons"])
+        self.assertEqual([], json.loads((self.app_root / result["execution_trace_ref"]).read_text(encoding="utf-8"))["api_calls"])
 
     def test_bind_api_request_params_uses_exact_tokens_and_tracks_dropped_optional_params(self):
         result = self._function(
@@ -4384,6 +4670,298 @@ export function selectToolsForTask(args) {
         self.assertTrue(table["field_sources"])
         self.assertTrue(all(item["value_status"] == "not_called" for item in table["field_sources"] if item["mapping_status"] in {"mapped", "suggested"}))
         self.assertTrue((self.app_root / result["execution_trace_ref"]).exists())
+
+    def test_legacy_llm_kind_with_data_analysis_view_uses_data_executor(self):
+        self._write_local_api_doc_index()
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["nodes"].append(
+            {
+                "id": "analyze_competitors",
+                "name": "竞品与竞店格局分析",
+                "kind": "llm",
+                "source_type": "multi_source_analysis",
+                "depends_on": ["collect_top_products"],
+                "data_requirements": ["competitor_landscape"],
+                "outputs": ["competitor_landscape_table"],
+                "output_field_requirements": [
+                    {
+                        "output_id": "competitor_landscape_table",
+                        "field_path": "items.properties.shop_name",
+                        "field_name": "shop_name",
+                        "title": "shop_name",
+                        "description": "店铺名称",
+                        "canonical_field_name": "shop_name",
+                        "type": "string",
+                        "required": True,
+                    }
+                ],
+                "analysis_node_view": {
+                    "schema_version": "analysis-node-view-v1",
+                    "node_id": "analyze_competitors",
+                    "node_kind": "data_analysis",
+                    "purpose_model": {"purpose": "分析竞品格局"},
+                    "input_model": {"data_sources": [{"description": "竞品格局"}]},
+                    "execution_plan": {"steps": [{"instruction": "获取竞品数据"}]},
+                    "data_output_model": {"fields": []},
+                },
+                "state_machine": [],
+            }
+        )
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+
+        status, data = self._direct(
+            "POST",
+            "/api/nodes/analyze_competitors/run",
+            {
+                "known_params": {"category": "桌布", "cid": "121458013", "period": "近30天"},
+                "execution_date": "2026-07-09",
+            },
+        )
+
+        self.assertEqual(200, status)
+        self.assertNotEqual("mock_llm", data["result"]["status"])
+        self.assertEqual("data-analysis-execution-v1", data["result"]["schema_version"])
+
+    def test_competitor_projection_preserves_top_product_order_and_joins_by_goods_id(self):
+        result = self._function(
+            "competitorProjection",
+            {
+                "source_products": [
+                    {
+                        "goods_id": "goods-2",
+                        "product_url": "https://fixture.test/?id=goods-2",
+                        "row": {"店铺名": "上游店2", "客单价": "52", "主卖点": "上游卖点2", "主图元素": "白底"},
+                        "row_meta": {"row_id": "goods:goods-2"},
+                    },
+                    {
+                        "goods_id": "goods-1",
+                        "product_url": "https://fixture.test/?id=goods-1",
+                        "row": {"店铺名": "上游店1", "客单价": "51", "主卖点": "上游卖点1"},
+                        "row_meta": {"row_id": "goods:goods-1"},
+                    },
+                ],
+                "competitor_rows": [
+                    {
+                        "goods_id": "goods-1", "shop_name": "API店1", "goods_href": "https://api.test/goods-1",
+                        "price": 61, "main_selling_point": "API卖点1", "main_sku": "大号", "sales_total": 100,
+                    },
+                    {
+                        "goods_id": "goods-2", "shop_name": "API店2", "goods_href": "https://api.test/goods-2",
+                        "price": 62, "main_selling_point": "API卖点2", "main_color": "透明", "sales_total": 200,
+                    },
+                ],
+                "review_rows": [
+                    {"goods_id": "goods-2", "review_text": "容易卷边"},
+                    {"goods_id": "goods-2", "qa_question": "尺寸有误差吗"},
+                    {"goods_id": "goods-1", "review_text": "气味较重"},
+                ],
+            },
+        )
+
+        self.assertEqual(["goods-2", "goods-1"], result["row_identities"])
+        self.assertEqual(2, len(result["rows"]))
+        self.assertEqual("API店2", result["rows"][0]["shop_name"])
+        self.assertEqual("https://api.test/goods-2", result["rows"][0]["product_url"])
+        self.assertEqual(62, result["rows"][0]["price"])
+        self.assertEqual(["容易卷边", "尺寸有误差吗"], result["rows"][0]["review_evidence"])
+        self.assertNotIn("sku_count", result["rows"][0])
+        self.assertNotIn("traffic_structure", result["rows"][0])
+        self.assertEqual("competitor_join_by_goods_id", result["merge_strategy"])
+        self.assertEqual(2, result["matched_products"])
+        self.assertEqual(3, result["review_records_used"])
+
+    def test_competitor_node_blocks_without_confirmed_top_products(self):
+        self._write_local_api_doc_index()
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["nodes"].append(
+            {
+                "id": "analyze_competitors",
+                "name": "竞品与竞店格局分析",
+                "kind": "data",
+                "source_type": "multi_source_analysis",
+                "depends_on": ["collect_top_products", "collect_reviews_qa"],
+                "data_requirements": ["competitor_landscape"],
+                "outputs": ["competitor_landscape_table"],
+                "output_field_requirements": [
+                    {
+                        "output_id": "competitor_landscape_table", "field_path": "items.properties.shop_name",
+                        "field_name": "shop_name", "title": "shop_name", "description": "店铺名称",
+                        "canonical_field_name": "shop_name", "type": "string", "required": True,
+                    }
+                ],
+                "analysis_node_view": {
+                    "node_kind": "data_analysis",
+                    "purpose_model": {"purpose": "分析竞品格局"},
+                    "input_model": {"data_sources": [{"description": "竞品格局"}]},
+                    "execution_plan": {"steps": [{"instruction": "获取竞品数据"}]},
+                    "data_output_model": {"fields": []},
+                },
+                "state_machine": [],
+            }
+        )
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+
+        status, data = self._direct("POST", "/api/nodes/analyze_competitors/run", {"known_params": {"category": "桌布"}})
+
+        self.assertEqual(200, status)
+        self.assertEqual("blocked", data["result"]["status"])
+        self.assertIn("source_table_not_confirmed", data["result"]["blocked_reasons"])
+
+    def test_competitor_node_merges_confirmed_products_api_and_reviews_by_goods_id(self):
+        self._write_local_api_doc_index()
+        self._append_competitor_analysis_to_local_index()
+        self._write_gene_analysis_source_fixture(count=2, revision=3)
+        self._write_confirmed_competitor_reviews()
+        artifacts = self.app_root / "artifacts"
+        (artifacts / "business_category_context.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "business-category-context-v1",
+                    "requested_name": "桌垫",
+                    "canonical_name": "桌布",
+                    "category_id": "121458013",
+                    "aliases": ["桌垫", "桌布"],
+                    "status": "resolved",
+                    "source_node_id": "collect_top_products",
+                    "source_revision": 3,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        fake_spec_pack = self._create_fake_spec_pack()
+
+        status, data = self._direct(
+            "POST",
+            "/api/nodes/analyze_competitors/run",
+            {"known_params": {"period": "2026-06-01"}, "execution_date": "2026-07-23", "top_n": 2},
+            {"DB_ARCHAEOLOGIST_SPEC_PACK": str(fake_spec_pack), "DBA_LIVE_PROBE": "1"},
+        )
+
+        self.assertEqual(200, status)
+        result = data["result"]
+        self.assertNotEqual("mock_llm", result["status"])
+        self.assertEqual("agent_enrichment_pending", result["status"])
+        plan = next(item for item in result["api_execution_plan"] if item["execution_role"] == "competitor_landscape_primary")
+        self.assertEqual("called", plan["status"])
+        self.assertEqual("121458013", str(plan["params"]["cid"]))
+        self.assertEqual("2026-06-01", plan["params"]["start_date"])
+        self.assertEqual("2026-06-01", plan["params"]["end_date"])
+
+        table = json.loads((self.app_root / result["data_table_ref"]).read_text(encoding="utf-8"))
+        self.assertEqual("agent_enrichment_pending", table["status"])
+        self.assertEqual(["gene-1", "gene-2"], [item["source_identity"] for item in table["row_meta"]])
+        self.assertEqual("竞品店铺-gene-1", table["rows"][0]["shop_name"])
+        self.assertEqual(["容易卷边", "尺寸有误差吗"], table["rows"][1]["review_evidence"])
+        self.assertNotIn("sku_count", table["rows"][0])
+        self.assertNotIn("traffic_structure", table["rows"][0])
+        self.assertEqual("competitor_join_by_goods_id", table["merge_strategy"])
+        self.assertEqual(2, table["competitor_enrichment"]["matched_products"])
+        self.assertEqual(3, table["competitor_enrichment"]["review_records_used"])
+        self.assertEqual(
+            {"competitor_type", "visual_structure", "review_painpoints", "competitor_strength"},
+            set(table["competitor_enrichment"]["fillable_fields"]),
+        )
+        status, workspace = self._direct("GET", "/api/nodes/analyze_competitors/data-table-workspace")
+        self.assertEqual(200, status)
+        self.assertEqual("competitor", workspace["agent_enrichment"]["subject_kind"])
+        self.assertEqual(
+            {"competitor_type", "visual_structure", "review_painpoints", "competitor_strength"},
+            set(workspace["agent_enrichment"]["fillable_fields"]),
+        )
+        self.assertEqual(8, workspace["agent_enrichment"]["remaining_cells"])
+
+        prompt_capture = self.app_root / "competitor_agent_batch_prompts.jsonl"
+        fake_pi = self.app_root / "fake_pi_competitor_agent_batch"
+        fake_pi.write_text(
+            "#!/usr/bin/env node\n"
+            "const fs = require('fs');\n"
+            "let request = '';\n"
+            "process.stdin.setEncoding('utf8');\n"
+            "process.stdin.once('data', chunk => { request += chunk;\n"
+            "  const payload = JSON.parse(request.trim());\n"
+            f"  fs.appendFileSync({json.dumps(str(prompt_capture))}, JSON.stringify(payload) + '\\n');\n"
+            "  const rowId = (payload.message.match(/\\\"row_id\\\": \\\"([^\\\"]+)/) || [])[1] || '';\n"
+            "  const competitorType = rowId.endsWith('gene-2') ? '未知竞品' : '直接竞品';\n"
+            "  const proposal = {schema_version:'pi-data-mapping-advice-v1',node_id:'analyze_competitors',summary:{status:'needs_review',text:'竞品建议'},field_advice:[],table_edit_proposal:{schema_version:'data-table-edit-proposal-v1',patches:[\n"
+            "    {row_id:rowId,field_path:'competitor_type',old_value:'',new_value:competitorType,reason:'排名价格证据',confidence:0.9,evidence_refs:[]},\n"
+            "    {row_id:rowId,field_path:'visual_structure',old_value:'',new_value:'透明主色、商品特写',reason:'主色与主图URL',confidence:0.7,evidence_refs:[]},\n"
+            "    {row_id:rowId,field_path:'review_painpoints',old_value:'',new_value:'尺寸与卷边',reason:'评价与问大家',confidence:0.8,evidence_refs:[]},\n"
+            "    {row_id:rowId,field_path:'competitor_strength',old_value:'',new_value:'销量领先',reason:'销量证据',confidence:0.8,evidence_refs:[]},\n"
+            "    {row_id:rowId,field_path:'price',old_value:'',new_value:1,reason:'越界修改事实',confidence:1,evidence_refs:[]}\n"
+            "  ]}};\n"
+            "  process.stdout.write(JSON.stringify({type:'agent_start',model:'gpt-5.6-sol'}) + '\\n');\n"
+            "  process.stdout.write(JSON.stringify({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:JSON.stringify(proposal)}}) + '\\n');\n"
+            "  process.stdout.write('{\"type\":\"agent_end\",\"messages\":[],\"willRetry\":false}\\n');\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        fake_pi.chmod(0o755)
+        status, started = self._direct(
+            "POST",
+            "/api/nodes/analyze_competitors/agent-thread/batches",
+            {"base_revision": workspace["workspace"]["revision"], "page_number": 1, "page_size": 10},
+            {
+                "PI_BIN": str(fake_pi),
+                "AICODEMIRROR_API_KEY": "sk-test",
+                "PI_DEFAULT_MODEL": "aicodemirror/gpt-5.6-sol",
+                "PI_RPC_TIMEOUT_MS": "3000",
+            },
+        )
+        self.assertEqual(202, status)
+        status, loaded = self._direct(
+            "GET", f"/api/nodes/analyze_competitors/agent-thread/batches/{started['batch_id']}"
+        )
+        self.assertEqual(200, status)
+        batch = loaded["batch"]
+        self.assertEqual("competitor", batch["subject_kind"])
+        self.assertEqual(8, batch["progress"]["target_cells"])
+        self.assertEqual(7, batch["progress"]["proposed_cells"])
+        self.assertFalse(any(item["field_path"] == "price" for item in batch["proposals"]))
+        invalid_item = next(item for item in batch["items"] if item["row_id"] == "goods:gene-2")
+        self.assertIn("invalid_competitor_type_rejected", invalid_item["proposal_risks"])
+        prompts = [json.loads(line)["message"] for line in prompt_capture.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(2, len(prompts))
+        gene_2_prompt = next(prompt for prompt in prompts if '"row_id": "goods:gene-2"' in prompt)
+        self.assertIn("容易卷边", gene_2_prompt)
+        self.assertIn("尺寸有误差吗", gene_2_prompt)
+        self.assertNotIn('"row_id": "goods:gene-1"', gene_2_prompt)
+
+        status, unchanged = self._direct("GET", "/api/nodes/analyze_competitors/data-table-workspace")
+        self.assertEqual(200, status)
+        self.assertTrue(all(not row.get("competitor_type") for row in unchanged["effective_rows"]))
+
+    def test_competitor_api_empty_keeps_confirmed_product_facts(self):
+        self._write_local_api_doc_index()
+        self._append_competitor_analysis_to_local_index()
+        self._write_gene_analysis_source_fixture(count=2, revision=3)
+        fake_spec_pack = self._create_fake_spec_pack()
+
+        status, data = self._direct(
+            "POST",
+            "/api/nodes/analyze_competitors/run",
+            {
+                "known_params": {"category": "桌布", "cid": "121458013", "period": "2026-06-01"},
+                "execution_date": "2026-07-23",
+                "top_n": 2,
+            },
+            {
+                "DB_ARCHAEOLOGIST_SPEC_PACK": str(fake_spec_pack),
+                "DBA_LIVE_PROBE": "1",
+                "TEST_COMPETITOR_EMPTY": "1",
+            },
+        )
+
+        self.assertEqual(200, status)
+        result = data["result"]
+        self.assertEqual("partial_data_table_ready", result["status"])
+        self.assertIn("competitor_api_empty", result["risks"])
+        table = json.loads((self.app_root / result["data_table_ref"]).read_text(encoding="utf-8"))
+        self.assertEqual(2, len(table["rows"]))
+        self.assertEqual("https://fixture.test/?id=gene-1", table["rows"][0]["product_url"])
+        self.assertEqual("50", table["rows"][0]["price"])
+        self.assertEqual("食品级无味，防油易清洁", table["rows"][0]["main_selling_point"])
+        self.assertEqual(0, table["competitor_enrichment"]["matched_products"])
 
     def test_data_analysis_node_run_marks_missing_source_field_path(self):
         self._write_local_api_doc_index()

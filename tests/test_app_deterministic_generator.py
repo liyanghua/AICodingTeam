@@ -7,6 +7,11 @@ from pathlib import Path
 
 
 class DeterministicGeneratorTests(unittest.TestCase):
+    def test_multi_source_analysis_generates_data_node(self) -> None:
+        from growth_dev.team.app_generation import _node_kind
+
+        self.assertEqual("data", _node_kind("multi_source_analysis"))
+
     def test_generate_deterministic_app_creates_five_required_files(self) -> None:
         from growth_dev.team.app_generation import generate_deterministic_app_files
 

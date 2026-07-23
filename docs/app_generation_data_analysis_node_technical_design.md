@@ -737,9 +737,19 @@ POST /api/nodes/analyze_hot_product_genes/gene-analysis/:execution_id/confirm
 
 关键词分析复用 `business-category-context-v1`。流程2完成类目验证后写入请求名称、标准名称、类目 ID、确认别名、来源节点 revision 和 evidence ref；关键词节点在字段匹配前加载该合同，并按“标准名称、原始名称、确认别名”依次调用接受 `tertiary_category` 的 API。只有请求无法发出才是 `blocked`；请求成功但全部候选返回零行必须返回 `empty_data`，同时保留每次类目参数、API、行数和脱敏请求证据。
 
+评价与问大家节点使用依赖型角色 `product_feedback_enrichment`。执行器必须读取 `collect_top_products.confirmed_data_table.json` 中已确认的前 10 个商品，通过稳定商品 ID 为 `get_positive_comment_data`、`product_comment_content2` 和 `product_question_content2` 分别绑定 `goods_id` / `goods_id_list`，并按商品 ID 汇总为反馈明细。评论原文和问大家问题是 API 事实；情感和痛点类型为 `pi_derived_unconfirmed`；评分、回答正文、SKU 和反馈时间在接口未提供时保持缺失。缺少确认商品表时返回 `blocked/source_table_not_confirmed`，接口成功但无反馈时返回 `empty_data`，单接口失败不得伪造其它来源数据。
+
 关键词明细使用规范化关键词做跨 API `key_join`。`keyword/keywords`、`search_popularity`、`search_growth_rate`、`competition_index`、`click_rate`、`conversion_rate/pay_rate` 是 API 事实字段；`root_terms` 和 `demand_type` 是受保护的语义字段，只能保存为 PI/确定性派生草稿并等待人工确认，任何把它们映射到点击率等数值指标的覆盖方案都必须在 matcher 和 server 两层拒绝。
 
 节点同时生成 `keyword_demand_breakdown_table` 和 `keyword-root-top20-v1`。当 API 明细已经存在但词根或需求分类未完成时，节点状态为 `agent_enrichment_pending`；词根 TOP20 草稿不得把缺失值当作零或生成伪造标签。
+
+### 竞品与竞店格局运行合同
+
+`multi_source_analysis` 必须生成为 `kind=data`。运行时同时兼容历史 `kind=llm + analysis_node_view.node_kind=data_analysis` 配置，并优先进入数据分析执行器，禁止返回 `mock_llm`。竞品节点使用 `competitor_landscape_primary` 角色，API 优先级为 `data_shop_competition_pattern_analysis_v3 -> data_competition_pattern_analysis_v3 -> data_competition_pattern_analysis`，并继承流程2确认的 `business-category-context-v1` 和流程1分析周期。
+
+`artifacts/collect_top_products.confirmed_data_table.json` 是竞品主表。缺失或未确认时返回 `blocked/source_table_not_confirmed`；可用时保持流程2商品顺序，只按稳定 `goods_id` 合并竞品 API 和可选的 `collect_reviews_qa.confirmed_data_table.json`，禁止按行号合并。API 失败或空结果不能丢弃流程2的商品链接、价格和主卖点，结果降级为 `partial_data_table_ready` 并记录 `competitor_api_empty` 或真实失败原因。
+
+字段边界如下：`shop_name/product_url/price/main_selling_point` 是 API 或上游事实；`competitor_type/visual_structure/review_painpoints/competitor_strength` 是 `pi_derived_unconfirmed`；`sku_count` 只有真实数量字段时才可填写，`main_sku` 不得冒充数量；`traffic_structure` 无真实流量来源证据时保持缺失。产物必须记录 `source_table_ref`、`review_table_ref`、`merge_strategy=competitor_join_by_goods_id`、API 命中商品数、评价证据数和 Agent 待补字段。
 
 生成验收：
 
