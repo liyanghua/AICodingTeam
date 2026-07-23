@@ -271,7 +271,8 @@ function createCollaborationStore({
     const summaries = thread && Array.isArray(thread.agent_batches) ? thread.agent_batches : [];
     const latestSummary = summaries[summaries.length - 1];
     if (latestSummary && latestSummary.batch_id) {
-      latestBatch = readJson(batchPath(nodeId, String(latestSummary.batch_id || '')));
+      const storedBatch = readJson(batchPath(nodeId, String(latestSummary.batch_id || '')));
+      if (storedBatch) latestBatch = decorateAgentBatchFreshness(nodeId, storedBatch, workspace);
     }
     let status = remainingCells === 0 && totalCells > 0
       ? 'agent_enrichment_complete'
@@ -1223,6 +1224,9 @@ function createCollaborationStore({
       subject_kind: String(batch.subject_kind || 'product'),
       requested_model: batch.requested_model,
       base_revision: batch.base_revision,
+      base_execution_id: String(batch.base_execution_id || ''),
+      freshness_status: String(batch.freshness_status || 'current'),
+      stale_reason: String(batch.stale_reason || ''),
       page: clone(batch.page || {}),
       progress: clone(batch.progress || {}),
       started_at: batch.started_at,
@@ -1243,23 +1247,83 @@ function createCollaborationStore({
     thread = writeThread(nodeId, thread);
     if (historyRecord) appendBatchHistory(nodeId, { batch_id: batch.batch_id, ...historyRecord });
     try {
-      onAgentCallEvent('agent_batch_update', { node_id: nodeId, batch: clone(batch) });
+      onAgentCallEvent('agent_batch_update', {
+        node_id: nodeId,
+        batch: decorateAgentBatchFreshness(nodeId, batch),
+      });
     } catch {
       // Observability transport must not break persisted batch state.
     }
     return { batch, thread };
   }
 
-  function agentBatchResponse(nodeId, batchId) {
+  function storedAgentBatch(nodeId, batchId) {
     const batch = readJson(batchPath(nodeId, batchId));
     if (!batch || batch.schema_version !== 'analysis-agent-batch-v1') {
       throw new CollaborationError(404, 'agent_batch_not_found', { batch_id: batchId });
     }
-    return { ok: true, batch: clone(batch) };
+    return batch;
+  }
+
+  function agentBatchFreshness(nodeId, batch, workspace = null) {
+    const currentWorkspace = workspace || loadWorkspace(nodeId).workspace;
+    const baseRevision = Number(batch.base_revision || 0);
+    const currentRevision = Number(currentWorkspace.revision || 0);
+    const baseExecutionId = String(batch.base_execution_id || '');
+    const currentExecutionId = String(currentWorkspace.base_execution_id || '');
+    let staleReason = '';
+    if (baseExecutionId && baseExecutionId !== currentExecutionId) {
+      staleReason = 'source_execution_changed';
+    } else if (baseRevision !== currentRevision) {
+      staleReason = 'workspace_revision_changed';
+    }
+    return {
+      freshness_status: staleReason ? 'stale' : 'current',
+      stale_reason: staleReason,
+      base_revision: baseRevision,
+      current_revision: currentRevision,
+      base_execution_id: baseExecutionId,
+      current_execution_id: currentExecutionId,
+    };
+  }
+
+  function decorateAgentBatchFreshness(nodeId, batch, workspace = null) {
+    const decorated = clone(batch);
+    const freshness = agentBatchFreshness(nodeId, decorated, workspace);
+    Object.assign(decorated, freshness);
+    if (freshness.freshness_status !== 'stale') return decorated;
+    decorated.previous_status = String(
+      decorated.previous_status || (decorated.status === 'stale' ? '' : decorated.status) || 'unknown'
+    );
+    decorated.status = 'stale';
+    decorated.public_stage = '批次数据已变化，仅保留审计记录';
+    decorated.proposals = (decorated.proposals || []).map(proposal => (
+      proposal.status === 'pending' ? { ...proposal, status: 'stale' } : proposal
+    ));
+    decorated.items = (decorated.items || []).map(item => (
+      ['queued', 'running'].includes(String(item.status || ''))
+        ? { ...item, status: 'failed', failure_reason: 'source_revision_changed' }
+        : item
+    ));
+    return decorated;
+  }
+
+  function agentBatchResponse(nodeId, batchId) {
+    return { ok: true, batch: decorateAgentBatchFreshness(nodeId, storedAgentBatch(nodeId, batchId)) };
+  }
+
+  function throwAgentBatchStale(batch) {
+    throw new CollaborationError(409, 'agent_batch_stale', {
+      stale_reason: String(batch.stale_reason || 'workspace_revision_changed'),
+      base_revision: Number(batch.base_revision || 0),
+      current_revision: Number(batch.current_revision || 0),
+      base_execution_id: String(batch.base_execution_id || ''),
+      current_execution_id: String(batch.current_execution_id || ''),
+    });
   }
 
   function updateAgentBatch(nodeId, batchId, updater, historyRecord = null) {
-    const batch = agentBatchResponse(nodeId, batchId).batch;
+    const batch = clone(storedAgentBatch(nodeId, batchId));
     updater(batch);
     persistAgentBatch(nodeId, batch, historyRecord);
     return batch;
@@ -1355,7 +1419,14 @@ function createCollaborationStore({
       ? tablePayload.agent_enrichment.fillable_fields.map(String)
       : [...definitions.keys(), ...fieldNames.filter(name => AGENT_FILLABLE_FIELDS.has(name))]);
     const thread = loadThread(nodeId);
-    const running = (thread.agent_batches || []).find(item => ['preparing', 'running'].includes(String(item.status || '')));
+    const running = (thread.agent_batches || []).find(item => {
+      if (!['preparing', 'running'].includes(String(item.status || ''))) return false;
+      try {
+        return agentBatchResponse(nodeId, String(item.batch_id || '')).batch.freshness_status === 'current';
+      } catch {
+        return false;
+      }
+    });
     if (running) throw new CollaborationError(409, 'agent_batch_already_running', { batch_id: running.batch_id });
     const requestedModel = String(thread.preferred_model || defaultAgentModel || DEFAULT_AGENT_MODEL);
     const items = [];
@@ -1408,6 +1479,11 @@ function createCollaborationStore({
       batch_id: batchId,
       node_id: nodeId,
       base_revision: Number(workspace.revision || 0),
+      base_execution_id: String(workspace.base_execution_id || ''),
+      freshness_status: 'current',
+      stale_reason: '',
+      current_revision: Number(workspace.revision || 0),
+      current_execution_id: String(workspace.base_execution_id || ''),
       status: items.some(item => item.status === 'queued') ? 'preparing' : 'review_ready',
       subject_kind: subjectKind,
       requested_model: requestedModel,
@@ -1524,6 +1600,7 @@ function createCollaborationStore({
   async function executeAgentBatch(prepared, callAgent, itemIds = null) {
     const { nodeId, node, batchId } = prepared;
     let initial = agentBatchResponse(nodeId, batchId).batch;
+    if (initial.freshness_status === 'stale') return { ok: true, batch: initial };
     const allowedIds = itemIds ? new Set(itemIds) : null;
     const queue = initial.items
       .filter(item => (!allowedIds || allowedIds.has(item.item_id)) && item.status === 'queued')
@@ -1538,6 +1615,7 @@ function createCollaborationStore({
     let cursor = 0;
     const worker = async () => {
       while (cursor < queue.length) {
+        if (agentBatchResponse(nodeId, batchId).batch.freshness_status === 'stale') return;
         const queueIndex = cursor;
         cursor += 1;
         const itemId = queue[queueIndex];
@@ -1567,7 +1645,9 @@ function createCollaborationStore({
         });
         if (!itemSnapshot) continue;
         const batchSnapshot = agentBatchResponse(nodeId, batchId).batch;
+        if (batchSnapshot.freshness_status === 'stale') return;
         const response = await callAgent(node, agentPayloadForBatchItem(nodeId, node, batchSnapshot, itemSnapshot), { call_id: callId });
+        if (agentBatchResponse(nodeId, batchId).batch.freshness_status === 'stale') return;
         updateAgentBatch(nodeId, batchId, batch => {
           const item = batch.items.find(candidate => candidate.item_id === itemId);
           if (!item || item.status === 'cancelled') return;
@@ -1669,6 +1749,8 @@ function createCollaborationStore({
       }
     };
     await Promise.all(Array.from({ length: Math.min(AGENT_BATCH_CONCURRENCY, queue.length) }, () => worker()));
+    const freshnessAfterWorkers = agentBatchResponse(nodeId, batchId).batch;
+    if (freshnessAfterWorkers.freshness_status === 'stale') return { ok: true, batch: freshnessAfterWorkers };
     const finalBatch = updateAgentBatch(nodeId, batchId, batch => {
       if (batch.status !== 'cancelled') batch.status = 'review_ready';
       batch.public_stage = batch.status === 'cancelled' ? '已取消' : '等待用户复核';
@@ -1707,10 +1789,11 @@ function createCollaborationStore({
 
   function applyAgentBatch(nodeId, batchId, payload) {
     const batch = agentBatchResponse(nodeId, batchId).batch;
+    if (batch.freshness_status === 'stale') throwAgentBatchStale(batch);
     const table = workspaceResponse(nodeId);
     validateRevision(table.workspace, payload && payload.base_revision);
     if (Number(batch.base_revision) !== Number(table.workspace.revision || 0)) {
-      throw new CollaborationError(409, 'revision_conflict', { current_revision: Number(table.workspace.revision || 0) });
+      throwAgentBatchStale(decorateAgentBatchFreshness(nodeId, batch, table.workspace));
     }
     const selected = new Set(Array.isArray(payload && payload.proposal_ids) ? payload.proposal_ids.map(String) : []);
     if (selected.size === 0) throw new CollaborationError(400, 'agent_batch_proposals_required');
@@ -1746,7 +1829,7 @@ function createCollaborationStore({
       operations,
     }, { sourceKind: 'pi_derived' });
     const appliedAt = new Date().toISOString();
-    const savedBatch = updateAgentBatch(nodeId, batchId, item => {
+    updateAgentBatch(nodeId, batchId, item => {
       item.proposals = (item.proposals || []).map(proposal => selected.has(String(proposal.proposal_id || ''))
         ? { ...proposal, status: 'applied', applied_at: appliedAt }
         : proposal);
@@ -1755,7 +1838,7 @@ function createCollaborationStore({
       item.applied_revision = tableWorkspace.workspace.revision;
       recalculateBatchProgress(item);
     }, { action: 'batch_proposals_applied', proposal_ids: Array.from(selected), revision: tableWorkspace.workspace.revision });
-    return { ok: true, batch: savedBatch, table_workspace: workspaceResponse(nodeId) };
+    return { ok: true, batch: agentBatchResponse(nodeId, batchId).batch, table_workspace: workspaceResponse(nodeId) };
   }
 
   function confirmDataTable(nodeId, payload = {}) {
@@ -1858,6 +1941,8 @@ function createCollaborationStore({
   }
 
   function cancelAgentBatch(nodeId, batchId) {
+    const current = agentBatchResponse(nodeId, batchId).batch;
+    if (current.freshness_status === 'stale') throwAgentBatchStale(current);
     const batch = updateAgentBatch(nodeId, batchId, item => {
       if (!['preparing', 'running'].includes(item.status)) throw new CollaborationError(409, 'agent_batch_not_running');
       item.status = 'cancelled';
@@ -1873,9 +1958,10 @@ function createCollaborationStore({
 
   function retryAgentBatch(nodeId, node, batchId, callAgent) {
     const batch = agentBatchResponse(nodeId, batchId).batch;
+    if (batch.freshness_status === 'stale') throwAgentBatchStale(batch);
     const table = workspaceResponse(nodeId);
     if (Number(batch.base_revision) !== Number(table.workspace.revision || 0)) {
-      throw new CollaborationError(409, 'revision_conflict', { current_revision: Number(table.workspace.revision || 0) });
+      throwAgentBatchStale(decorateAgentBatchFreshness(nodeId, batch, table.workspace));
     }
     const retryIds = batch.items.filter(item => ['failed', 'no_evidence'].includes(item.status) && Object.keys(item.evidence_values || {}).length > 0).map(item => item.item_id);
     if (retryIds.length === 0) throw new CollaborationError(409, 'agent_batch_no_retryable_items');

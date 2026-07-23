@@ -394,7 +394,7 @@ POST /api/nodes/:node_id/agent-thread/batches/:batch_id/cancel
 POST /api/nodes/:node_id/agent-thread/batches/:batch_id/apply
 ```
 
-执行过程只展示公开阶段、完成/运行/缺证据/失败数量、耗时、请求/实际模型和脱敏证据摘要，不展示 thinking 文本。批次完成后进入建议矩阵，建议默认全部不选中；只有用户选择并点击“应用所选建议”才调用一个原子表格 patch。revision 冲突时整批拒绝，未应用建议留在批次审计中。
+执行过程只展示公开阶段、完成/运行/缺证据/失败数量、耗时、请求/实际模型和脱敏证据摘要，不展示 thinking 文本。批次完成后进入建议矩阵，建议默认全部不选中；只有用户选择并点击“应用所选建议”才调用一个原子表格 patch。批次以 `base_revision + base_execution_id` 绑定创建时的数据快照。节点重跑、人工编辑、撤销或应用其它建议后，旧批次在读取时返回 `stale`，隐藏复核和应用控件，只保留进度、模型、证据与 Patch 诊断，并提供“按当前页重新生成”。过期应用返回 `409 agent_batch_stale`；未应用建议留在批次审计中，不自动迁移到新数据。
 
 聊天区保存独立的 `scrollTop` 和近底部状态。SSE 更新只 patch 监视器，用户向上查看历史消息时不跳回顶部，并通过“有新结果”按钮显式回到最新消息。
 

@@ -84,7 +84,20 @@ class ReportGeneratorShellTests(unittest.TestCase):
             "function renderAgentBatchMonitorArea", 1
         )[0]
         self.assertIn('data-agent-batch-review-panel=', review_renderer)
+        self.assertIn("freshness_status", review_renderer)
         self.assertNotIn('<section class="agent-batch-review" data-agent-batch-review=', review_renderer)
+
+        monitor_renderer = app_js.split("function renderAgentExecutionMonitor(nodeId)", 1)[1].split(
+            "function renderAgentBatchReview", 1
+        )[0]
+        self.assertIn("本批次已过期", monitor_renderer)
+        self.assertIn("按当前页重新生成", monitor_renderer)
+        self.assertIn("source_execution_changed", monitor_renderer)
+
+        apply_handler = app_js.split("async function applyAgentBatchProposals(batchId)", 1)[1].split(
+            "function tableCellDescriptor", 1
+        )[0]
+        self.assertIn("agent_batch_stale", apply_handler)
 
     def test_confirmed_data_table_advances_with_effective_workspace_artifact(self) -> None:
         app_js = Path("shells/report_generator/web/app.js").read_text(encoding="utf-8")

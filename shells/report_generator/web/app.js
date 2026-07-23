@@ -2200,7 +2200,40 @@ function latestAgentCall(nodeId) {
 function latestAgentBatch(nodeId) {
   const summaries = agentThreadFor(nodeId).agent_batches || [];
   const current = state.agentBatches[nodeId]?.batch;
-  return current || summaries[summaries.length - 1] || null;
+  const batch = current || summaries[summaries.length - 1] || null;
+  if (!batch) return null;
+  const workspace = state.dataTableWorkspaces[nodeId]?.workspace;
+  if (!workspace) return batch;
+  const baseExecutionId = String(batch.base_execution_id || '');
+  const currentExecutionId = String(workspace.base_execution_id || '');
+  const baseRevision = Number(batch.base_revision || 0);
+  const currentRevision = Number(workspace.revision || 0);
+  const staleReason = baseExecutionId && baseExecutionId !== currentExecutionId
+    ? 'source_execution_changed'
+    : baseRevision !== currentRevision
+      ? 'workspace_revision_changed'
+      : '';
+  if (!staleReason && batch.freshness_status !== 'stale') {
+    return {
+      ...batch,
+      freshness_status: 'current',
+      stale_reason: '',
+      current_revision: currentRevision,
+      current_execution_id: currentExecutionId,
+    };
+  }
+  return {
+    ...batch,
+    status: 'stale',
+    previous_status: batch.previous_status || (batch.status === 'stale' ? '' : batch.status),
+    freshness_status: 'stale',
+    stale_reason: staleReason || batch.stale_reason || 'workspace_revision_changed',
+    current_revision: currentRevision,
+    current_execution_id: currentExecutionId,
+    proposals: (batch.proposals || []).map(proposal => proposal.status === 'pending'
+      ? { ...proposal, status: 'stale' }
+      : proposal),
+  };
 }
 
 function agentBatchIsRunning(batch) {
@@ -2221,6 +2254,9 @@ function updateAgentBatchInState(nodeId, batch) {
     subject_kind: batch.subject_kind || 'product',
     requested_model: batch.requested_model,
     base_revision: batch.base_revision,
+    base_execution_id: batch.base_execution_id || '',
+    freshness_status: batch.freshness_status || 'current',
+    stale_reason: batch.stale_reason || '',
     page: batch.page,
     progress: batch.progress,
     started_at: batch.started_at,
@@ -2240,17 +2276,29 @@ function renderAgentExecutionMonitor(nodeId) {
   }
   const progress = batch.progress || {};
   const running = agentBatchIsRunning(batch);
+  const stale = batch.freshness_status === 'stale' || batch.status === 'stale';
   const elapsedMs = running
     ? Math.max(0, Date.now() - Date.parse(batch.started_at || new Date().toISOString()))
     : Math.max(0, Date.parse(batch.finished_at || batch.updated_at || new Date().toISOString()) - Date.parse(batch.started_at || new Date().toISOString()));
   const proposals = (batch.proposals || []).filter(item => item.status === 'pending');
   const subjectLabel = batch.subject_kind === 'keyword' ? '关键词' : '商品';
+  const staleReason = batch.stale_reason === 'source_execution_changed'
+    ? '关键词数据已重新获取'
+    : '数据表已被修改';
+  const stalePanel = stale ? `
+      <div class="agent-batch-stale" data-agent-batch-stale="${escapeHtml(batch.batch_id)}">
+        <strong>本批次已过期</strong>
+        <span>原因：${escapeHtml(staleReason)}</span>
+        <span>批次 revision：${escapeHtml(batch.base_revision ?? '')} · 当前 revision：${escapeHtml(batch.current_revision ?? '')}</span>
+        <button data-agent-batch-regenerate="${escapeHtml(batch.page?.number || 1)}">按当前页重新生成</button>
+      </div>` : '';
   return `
-    <section class="agent-execution-monitor ${running ? 'is-running' : ''}" data-agent-execution-monitor data-schema-version="analysis-agent-batch-v1">
+    <section class="agent-execution-monitor ${running ? 'is-running' : ''} ${stale ? 'is-stale' : ''}" data-agent-execution-monitor data-schema-version="analysis-agent-batch-v1">
       <div class="agent-monitor-heading"><strong>当前页批量填充</strong><span class="badge ${batch.status === 'review_ready' ? 'done' : running ? 'waiting' : batch.status === 'completed' ? 'done' : 'failed'}">${escapeHtml(batch.status || 'unknown')}</span><span class="muted" data-agent-batch-elapsed>已运行 ${(elapsedMs / 1000).toFixed(0)} 秒</span></div>
       <div class="agent-monitor-stats"><span>对象：${subjectLabel}</span><span>模型：${escapeHtml(batch.requested_model || '未知')}</span><span>已完成 ${progress.completed_products || 0}/${progress.eligible_products || 0}</span><span>运行中 ${progress.running_products || 0}</span><span>缺少证据 ${progress.no_evidence_products || 0}</span><span>失败 ${progress.failed_products || 0}</span><span>已生成建议 ${progress.proposed_cells || 0}/${progress.target_cells || 0}</span>${progress.rejected_cells ? `<span class="call-warning">规则拒绝 ${progress.rejected_cells}</span>` : ''}</div>
       <p class="muted" data-agent-batch-stage>${escapeHtml(batch.public_stage || (running ? `正在处理${subjectLabel}` : '等待用户复核'))}</p>
-      ${batch.status === 'review_ready' ? `<button data-agent-batch-review="${escapeHtml(batch.batch_id)}" ${proposals.length ? '' : 'disabled'}>进入一键复核（${proposals.length}）</button>${proposals.length ? '' : '<span class="muted">本批次暂无可应用建议，请展开明细查看原因。</span>'}` : ''}
+      ${stalePanel}
+      ${!stale && batch.status === 'review_ready' ? `<button data-agent-batch-review="${escapeHtml(batch.batch_id)}" ${proposals.length ? '' : 'disabled'}>进入一键复核（${proposals.length}）</button>${proposals.length ? '' : '<span class="muted">本批次暂无可应用建议，请展开明细查看原因。</span>'}` : ''}
       ${running ? `<button class="secondary" data-agent-batch-cancel="${escapeHtml(batch.batch_id)}">停止批次</button>` : ''}
       ${batch.items?.length ? `<details><summary>${subjectLabel}明细</summary><div class="agent-batch-items">${batch.items.map(item => `<div class="agent-batch-item"><strong>${escapeHtml(item.keyword || item.product?.product_name || item.product?.product_id || item.row_id)}</strong><span>${escapeHtml(item.proposal_status || item.status || '')}</span><span>${escapeHtml((item.target_fields || []).join('、'))}</span><span>${escapeHtml(item.actual_model || item.requested_model || '模型未知')} · ${escapeHtml(item.model_comparison_reason || 'unknown')}</span><span>返回 ${Number(item.raw_patch_count || 0)} · 接受 ${Number(item.accepted_patch_count || 0)}</span>${Object.keys(item.evidence_values || {}).length ? `<span>提交证据：${escapeHtml(Object.entries(item.evidence_values).map(([key, value]) => `${key}=${Array.isArray(value) ? value.join('、') : value}`).join('；'))}</span>` : ''}${item.patch_diagnostics?.length ? `<span>Patch 解析：${escapeHtml(item.patch_diagnostics.map(diagnostic => `${diagnostic.patch_format || 'unknown'} -> ${diagnostic.normalized_field || '-'} (${diagnostic.status || 'unknown'}${diagnostic.reason ? `:${diagnostic.reason}` : ''})`).join('；'))}</span>` : ''}${item.proposal_risks?.length ? `<span class="call-warning">${escapeHtml(item.proposal_risks.join('、'))}</span>` : ''}${item.failure_reason ? `<span class="call-warning">${escapeHtml(item.failure_reason)}</span>` : ''}</div>`).join('')}</div></details>` : ''}
     </section>
@@ -2258,7 +2306,8 @@ function renderAgentExecutionMonitor(nodeId) {
 }
 
 function renderAgentBatchReview(nodeId) {
-  const batch = state.agentBatches[nodeId]?.batch;
+  const batch = latestAgentBatch(nodeId);
+  if (batch?.freshness_status === 'stale' || batch?.status === 'stale') return '';
   if (!batch || !['review_ready', 'completed'].includes(batch.status)) return '';
   const proposals = (batch.proposals || []).filter(item => item.status === 'pending');
   if (!proposals.length) return '';
@@ -2660,9 +2709,10 @@ function bindEvents() {
   }));
   const agentPanel = document.querySelector('.analysis-collaboration-agent');
   if (agentPanel) agentPanel.addEventListener('click', event => {
-    const target = event.target.closest('[data-agent-batch-start], [data-agent-batch-review], [data-agent-batch-review-close], [data-agent-batch-select-all], [data-agent-batch-apply], [data-agent-batch-cancel], [data-agent-call-retry], [data-agent-call-switch-retry], [data-agent-call-stop], [data-agent-continue-manual]');
+    const target = event.target.closest('[data-agent-batch-start], [data-agent-batch-regenerate], [data-agent-batch-review], [data-agent-batch-review-close], [data-agent-batch-select-all], [data-agent-batch-apply], [data-agent-batch-cancel], [data-agent-call-retry], [data-agent-call-switch-retry], [data-agent-call-stop], [data-agent-continue-manual]');
     if (!target) return;
     if (target.matches('[data-agent-batch-start]')) startAgentBatch(Number(target.getAttribute('data-page-number') || 1));
+    else if (target.matches('[data-agent-batch-regenerate]')) startAgentBatch(Number(target.getAttribute('data-agent-batch-regenerate') || 1));
     else if (target.matches('[data-agent-batch-review]')) {
       state.agentBatchReview[currentNode()?.id || ''] = { proposalIds: [] };
       render();
@@ -3396,7 +3446,15 @@ async function applyAgentBatchProposals(batchId) {
     await refreshCollaborationWorkspaces(node.id, { render: false });
   } catch (error) {
     if (error.status === 409) await refreshCollaborationWorkspaces(node.id, { render: false });
-    state.collaborationNotices[node.id] = { status: 'failed', message: error.status === 409 ? '数据已变化，批量建议已过期，请重新运行。' : `批量建议应用失败：${error.message}` };
+    if (error.message === 'agent_batch_stale') delete state.agentBatchReview[node.id];
+    state.collaborationNotices[node.id] = {
+      status: 'failed',
+      message: error.message === 'agent_batch_stale'
+        ? '本批次已过期，请按当前页重新生成。'
+        : error.status === 409
+          ? '数据已变化，批量建议无法应用。'
+          : `批量建议应用失败：${error.message}`,
+    };
   }
   render();
 }

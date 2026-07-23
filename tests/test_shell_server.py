@@ -1982,7 +1982,7 @@ process.stdout.write(JSON.stringify(result));
         self.assertIn('"主卖点": "防滑卖点11"', prompt_by_row["goods:desk-11"])
         self.assertNotIn("sk-test", json.dumps(batch, ensure_ascii=False))
 
-    def test_agent_batch_apply_only_selected_proposals_and_rejects_revision_conflict(self):
+    def test_agent_batch_apply_only_selected_proposals_and_marks_remaining_proposals_stale(self):
         self._write_collaboration_fixture()
         artifacts = self.app_root / "artifacts"
         batch_id = "batch-review-1"
@@ -2023,7 +2023,128 @@ process.stdout.write(JSON.stringify(result));
             {"base_revision": 0, "proposal_ids": ["batch-proposal-2"]},
         )
         self.assertEqual(status, 409)
-        self.assertEqual(conflict["error"], "revision_conflict")
+        self.assertEqual(conflict["error"], "agent_batch_stale")
+        self.assertEqual(conflict["base_revision"], 0)
+        self.assertEqual(conflict["current_revision"], 1)
+
+        status, loaded = self._direct(
+            "GET",
+            f"/api/nodes/collect_top_products/agent-thread/batches/{batch_id}",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(loaded["batch"]["status"], "stale")
+        self.assertEqual(loaded["batch"]["previous_status"], "review_ready")
+        self.assertEqual(loaded["batch"]["freshness_status"], "stale")
+        remaining = next(
+            proposal for proposal in loaded["batch"]["proposals"]
+            if proposal["proposal_id"] == "batch-proposal-2"
+        )
+        self.assertEqual(remaining["status"], "stale")
+
+    def test_agent_batch_response_marks_rerun_batch_stale_and_excludes_it_from_enrichment_status(self):
+        self._write_keyword_collaboration_fixture(count=1)
+        status, workspace_payload = self._direct(
+            "GET", "/api/nodes/collect_keywords/data-table-workspace"
+        )
+        self.assertEqual(status, 200)
+        workspace = workspace_payload["workspace"]
+        self.assertEqual(workspace["revision"], 0)
+
+        artifacts = self.app_root / "artifacts"
+        batch_id = "batch-keyword-before-rerun"
+        batch = {
+            "schema_version": "analysis-agent-batch-v1",
+            "batch_id": batch_id,
+            "node_id": "collect_keywords",
+            "base_revision": 0,
+            "base_execution_id": workspace["base_execution_id"],
+            "status": "review_ready",
+            "subject_kind": "keyword",
+            "requested_model": "aicodemirror/gpt-5.6-sol",
+            "page": {"number": 1, "size": 10, "row_ids": ["keyword:防水桌布1"]},
+            "progress": {"eligible_products": 1, "completed_products": 1, "target_cells": 2, "proposed_cells": 2},
+            "items": [],
+            "proposals": [
+                {"proposal_id": "keyword-proposal-root", "row_id": "keyword:防水桌布1", "field_path": "root_terms", "old_value": [], "new_value": ["防水", "桌布"], "status": "pending"},
+                {"proposal_id": "keyword-proposal-demand", "row_id": "keyword:防水桌布1", "field_path": "demand_type", "old_value": "", "new_value": "功能需求", "status": "pending"},
+            ],
+        }
+        (artifacts / f"collect_keywords.agent_batch.{batch_id}.json").write_text(
+            json.dumps(batch, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        thread = {
+            "schema_version": "analysis-collaboration-thread-v1",
+            "node_id": "collect_keywords",
+            "revision": 0,
+            "messages": [],
+            "agent_calls": [],
+            "agent_batches": [{
+                "batch_id": batch_id,
+                "schema_version": "analysis-agent-batch-v1",
+                "status": "review_ready",
+                "base_revision": 0,
+                "base_execution_id": workspace["base_execution_id"],
+                "page": batch["page"],
+                "progress": batch["progress"],
+            }],
+            "preferred_model": "aicodemirror/gpt-5.6-sol",
+        }
+        (artifacts / "collect_keywords.agent_thread.json").write_text(
+            json.dumps(thread, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        table_path = artifacts / "collect_keywords.data_table.json"
+        table = json.loads(table_path.read_text(encoding="utf-8"))
+        table["execution_id"] = "exec-keyword-fixture-2"
+        table_path.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        status, current_workspace = self._direct(
+            "GET", "/api/nodes/collect_keywords/data-table-workspace"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(current_workspace["workspace"]["revision"], 1)
+        self.assertEqual(
+            current_workspace["agent_enrichment"]["status"],
+            "agent_enrichment_pending",
+        )
+
+        status, loaded = self._direct(
+            "GET", f"/api/nodes/collect_keywords/agent-thread/batches/{batch_id}"
+        )
+        self.assertEqual(status, 200)
+        stale = loaded["batch"]
+        self.assertEqual(stale["status"], "stale")
+        self.assertEqual(stale["previous_status"], "review_ready")
+        self.assertEqual(stale["freshness_status"], "stale")
+        self.assertEqual(stale["stale_reason"], "source_execution_changed")
+        self.assertEqual(stale["current_revision"], 1)
+        self.assertEqual(stale["current_execution_id"], "exec-keyword-fixture-2")
+        self.assertTrue(all(item["status"] == "stale" for item in stale["proposals"]))
+
+        status, rejected = self._direct(
+            "POST",
+            f"/api/nodes/collect_keywords/agent-thread/batches/{batch_id}/apply",
+            {"base_revision": 1, "proposal_ids": ["keyword-proposal-root"]},
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(rejected["error"], "agent_batch_stale")
+        self.assertEqual(rejected["base_execution_id"], "exec-keyword-fixture-1")
+        self.assertEqual(rejected["current_execution_id"], "exec-keyword-fixture-2")
+
+    def test_new_agent_batch_binds_current_workspace_execution(self):
+        self._write_keyword_collaboration_fixture(count=1)
+        status, started = self._direct(
+            "POST",
+            "/api/nodes/collect_keywords/agent-thread/batches",
+            {"base_revision": 0, "page_number": 1, "page_size": 10},
+            env_extra={"PI_BIN": "/bin/false", "PI_RPC_TIMEOUT_MS": "100"},
+        )
+        self.assertEqual(status, 202)
+        batch = started["batch"]
+        self.assertEqual(batch["base_execution_id"], "exec-keyword-fixture-1")
+        self.assertEqual(batch["freshness_status"], "current")
+        self.assertEqual(batch["current_revision"], 0)
+        self.assertEqual(batch["current_execution_id"], "exec-keyword-fixture-1")
 
     def test_agent_thread_cell_query_only_sends_selected_rows_to_pi(self):
         self._write_collaboration_fixture()

@@ -898,6 +898,26 @@ button.secondary {
   border-color: #9db8d2;
 }
 
+.agent-execution-monitor.is-stale {
+  border-color: #d6b36a;
+  background: #fffaf0;
+}
+
+.agent-batch-stale {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #d6b36a;
+  border-radius: 6px;
+  color: #6f4d00;
+  overflow-wrap: anywhere;
+}
+
+.agent-batch-stale button {
+  justify-self: start;
+}
+
 .agent-monitor-heading,
 .agent-monitor-stats,
 .agent-batch-review-heading {

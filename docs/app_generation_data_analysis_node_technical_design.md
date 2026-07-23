@@ -660,11 +660,11 @@ P1 要求：
 
 数据表工作区固定使用 10 行一页。`POST /api/nodes/:node_id/agent-thread/batches` 只接受 `base_revision`、`page_number` 和 `page_size=10`，服务端重新从当前 `data-table-workspace-v1` 计算这一页的 `row_id`、空值目标字段和证据，不信任前端上传的任意商品行。
 
-批次产物使用 `analysis-agent-batch-v1`，保存至 `artifacts/<node_id>.agent_batch.<batch_id>.json`，线程只保留最近 20 个摘要。每个商品只创建一个 `table_edit_advice` 子调用，包含该行全部待补字段，最大并发 2；子调用超时 120 秒，批次总上限 10 分钟。批次只生成待审核 `proposals[]`，不直接修改表格，不自动重试，也不自动切换模型。
+批次产物使用 `analysis-agent-batch-v1`，保存至 `artifacts/<node_id>.agent_batch.<batch_id>.json`，线程只保留最近 20 个摘要。每个商品只创建一个 `table_edit_advice` 子调用，包含该行全部待补字段，最大并发 2；子调用超时 120 秒，批次总上限 10 分钟。批次只生成待审核 `proposals[]`，不直接修改表格，不自动重试，也不自动切换模型。新批次必须同时保存 `base_revision` 和 `base_execution_id`；读取时与当前 workspace 比较并返回 `freshness_status`、`stale_reason`、当前 revision 和当前 execution ID。旧合同缺少 execution ID 时至少继续按 revision 判断。
 
 执行状态通过 `GET /api/nodes/:node_id/agent-thread/batches/:batch_id/events` 发布公开阶段和计数：正在校验当前页、正在构造商品证据、正在处理商品、正在聚合结构化建议、等待用户复核。PI 隐藏思维事件只转换为公开阶段，不保存或展示原文。
 
-复核通过 `POST .../batches/:batch_id/apply` 一次原子写入所选 proposal。请求必须带当前 `base_revision`；每个 patch 必须属于批次页、目标字段、原值为空且当前值仍等于 `expected_value`。成功后覆盖层记录 `source_kind=pi_derived`、批次 ID、proposal ID、模型、理由、置信度和证据；冲突返回 `409 revision_conflict`，任何所选建议都不写入。
+复核通过 `POST .../batches/:batch_id/apply` 一次原子写入所选 proposal。请求必须带当前 `base_revision`；每个 patch 必须属于批次页、目标字段、原值为空且当前值仍等于 `expected_value`。成功后覆盖层记录 `source_kind=pi_derived`、批次 ID、proposal ID、模型、理由、置信度和证据。批次来源 revision 或 execution 已变化时返回 `409 agent_batch_stale` 并附旧/新身份，旧批次和未应用建议只作为审计记录展示；其它 workspace revision 冲突仍返回 `409 revision_conflict`，任何所选建议都不写入。一次部分应用会递增 workspace revision，因此同批未选择建议随即过期，不能二次应用。
 
 ### 右侧固定监视器与滚动契约
 
